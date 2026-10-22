@@ -1,0 +1,10 @@
+{
+  "protocol_version": "v1",
+  "project_id": "project_example-apt",
+  "title": "APT provenance study",
+  "research_question": "Can provenance features improve APT detection?",
+  "module": { "id": "apt-provenance", "version": "0.1.0" },
+  "status": "active",
+  "created_at": "2026-10-21T08:00:00.000Z",
+  "updated_at": "2026-10-21T08:00:00.000Z"
+}

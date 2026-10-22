@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.turbo/
+.trash/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/

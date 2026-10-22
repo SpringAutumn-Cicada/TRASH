@@ -1,0 +1,12 @@
+{
+  "name": "@trash/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": "./dist/index.js" },
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false", "test": "node --import tsx --test tests/*.test.ts" },
+  "dependencies": { "@trash/protocol": "workspace:*", "better-sqlite3": "^13.0.0" },
+  "devDependencies": { "@types/better-sqlite3": "^7.6.13" }
+}

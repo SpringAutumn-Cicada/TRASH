@@ -1,0 +1,9 @@
+{
+  "schema_version": "1",
+  "id": "apt-provenance",
+  "name": "APT 检测与溯源",
+  "version": "0.1.0",
+  "description": "用于 APT 检测与溯源分析的研究项目模块。",
+  "domain": ["cybersecurity", "apt", "provenance"],
+  "capabilities": ["literature", "research-plan", "experiments", "analysis", "writing"]
+}

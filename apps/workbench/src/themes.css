@@ -1,0 +1,23 @@
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.theme-control{height:32px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--muted);cursor:pointer}
+.theme-control select{max-width:92px;border:0;background:transparent;color:var(--ink);font-size:11px;cursor:pointer;outline:none}
+.theme-control:focus-within{outline:2px solid var(--focus-ring);outline-offset:2px}
+:root{--focus-ring:#378c74}
+:root[data-theme="blue"]{--ink:#1d2b3c;--muted:#687b91;--line:#dce5ef;--surface:#fff;--green:#2563c7;--green-soft:#e7f0ff;--coral:#c66a4f;--coral-soft:#fff1eb;--teal:#dce9fb;--focus-ring:#3478df;color:var(--ink);background:#f3f7fc}
+:root[data-theme="blue"] body{background:#f3f7fc;color:var(--ink)}
+:root[data-theme="blue"] .topbar{background:#fff}
+:root[data-theme="blue"] .sidebar{background:#f6f9fd}
+:root[data-theme="blue"] button:focus-visible,:root[data-theme="blue"] input:focus-visible,:root[data-theme="blue"] textarea:focus-visible,:root[data-theme="blue"] select:focus-visible{outline-color:var(--focus-ring)}
+:root[data-theme="blue"] .local-indicator i,:root[data-theme="blue"] .status-dot{background:#4583dc}
+:root[data-theme="blue"] .side-item:hover,:root[data-theme="blue"] .side-item.selected{background:#e7f0ff;color:#2258a8}
+:root[data-theme="blue"] .primary-button:hover{background:#174fa8}
+:root[data-theme="blue"] .secondary-button:hover{background:#f2f7fd;border-color:#bdcfe5}
+:root[data-theme="blue"] .project-row:hover,:root[data-theme="blue"] .source-row:hover{background:#f0f5fc}
+:root[data-theme="blue"] .project-symbol{background:#e5eefb;color:#2d5f9e}
+:root[data-theme="blue"] .tab span{background:#e7f0ff}
+:root[data-theme="blue"] .parse-dot{background:#4c83d1}
+:root[data-theme="blue"] .openalex-icon{background:#e5efff;color:#275bb5}
+:root[data-theme="blue"] .segment-list article{border-left-color:#c9dbf7}
+:root[data-theme="blue"] .error-notice{background:#fff1eb;color:#a5513a;border-color:#f2d7cb}
+:root[data-theme="blue"] .theme-control{background:#fff}
+@media(max-width:500px){.theme-control{gap:4px;padding:0 6px}.theme-control select{max-width:72px;font-size:10px}.topbar-right{gap:7px}.local-indicator{gap:5px}}

@@ -1,0 +1,32 @@
+{
+  "name": "trash",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "build": "pnpm --recursive --if-present build",
+    "typecheck": "pnpm --recursive --if-present typecheck",
+    "lint": "eslint .",
+    "test": "node --import tsx --test packages/*/tests/*.test.ts apps/*/tests/*.test.ts",
+    "dev": "pnpm build && pnpm --parallel --filter @trash/server --filter @trash/workbench dev",
+    "start": "pnpm build && pnpm --filter @trash/server start",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@eslint/js": "^9.38.0",
+    "@types/node": "^22.20.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "eslint": "^9.38.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.46.0",
+    "vite": "^7.3.0",
+    "zod": "^3.25.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  }
+}

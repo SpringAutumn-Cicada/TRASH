@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/protocol" },
+    { "path": "./packages/storage" },
+    { "path": "./packages/literature" },
+    { "path": "./apps/server" }
+  ]
+}

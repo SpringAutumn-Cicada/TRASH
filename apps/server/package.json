@@ -1,0 +1,12 @@
+{
+  "name": "@trash/server",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": { "dev": "tsx src/main.ts", "build": "tsc -b", "typecheck": "tsc -b --pretty false", "start": "node dist/main.js", "test": "node --import tsx --test tests/*.test.ts" },
+  "dependencies": {
+    "@trash/literature": "workspace:*",
+    "@trash/protocol": "workspace:*",
+    "@trash/storage": "workspace:*"
+  }
+}

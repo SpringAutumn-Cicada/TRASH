@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
+  "references": [
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/storage" },
+    { "path": "../../packages/literature" }
+  ],
+  "include": ["src/**/*.ts"]
+}

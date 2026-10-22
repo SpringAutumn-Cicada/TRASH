@@ -1,0 +1,19 @@
+{
+  "name": "@trash/literature",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": "./dist/index.js" },
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false", "test": "node --import tsx --test tests/*.test.ts" },
+  "dependencies": {
+    "@citation-js/core": "^0.7.18",
+    "@citation-js/plugin-bibtex": "^0.7.18",
+    "@citation-js/plugin-ris": "^0.7.18",
+    "@trash/protocol": "workspace:*",
+    "cheerio": "^1.2.0",
+    "ipaddr.js": "^2.2.0",
+    "pdfjs-dist": "^6.3.0"
+  }
+}
