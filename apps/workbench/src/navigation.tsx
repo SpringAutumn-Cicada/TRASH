@@ -18,10 +18,10 @@ export function writePreference(key: string, value: string): void {
   try { window.localStorage.setItem(key, value); } catch { /* Browser storage may be disabled. */ }
 }
 export function parseProjectRoute(value: string): { projectId: string; page?: ProjectPage; action?: string; focusId?: string; status?: string } | undefined {
-  const url = new URL(value, window.location.origin);
-  const match = url.pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?\/?$/);
-  if (!match) return undefined;
   try {
+    const url = new URL(value, window.location.origin);
+    const match = url.pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?\/?$/);
+    if (!match) return undefined;
     const page = projectPages.find(p => p.id === match[2])?.id;
     if (match[2] && !page) return undefined;
     return { projectId: decodeURIComponent(match[1]), page, action: url.searchParams.get("action") ?? undefined, focusId: url.searchParams.get("focus") ?? undefined, status: url.searchParams.get("status") ?? undefined };

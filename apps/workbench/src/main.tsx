@@ -49,6 +49,7 @@ function App() {
   useEffect(()=>{mounted.current=true;void refresh();return()=>{mounted.current=false;requestId.current++;};},[refresh]);
   useEffect(()=>{const media=window.matchMedia("(max-width: 899px)");const change=()=>{setNarrow(media.matches);setDrawer(false);};media.addEventListener("change",change);return()=>media.removeEventListener("change",change);},[]);
   useEffect(()=>{writePreference("trash-sidebar-hidden",String(hidden));},[hidden]);
+  useEffect(()=>{document.documentElement.dataset.theme=readPreference("trash-theme")==="blue"?"blue":"default";},[]);
   useEffect(()=>{
     if(!loaded)return;
     if(path==="/"){
@@ -79,7 +80,7 @@ function App() {
     if(navigate(nextPath)){void refresh();setProjectMenu(false);setNewMenu(false);if(narrow)closeDrawer();}
   };
   const goPage=(next:ProjectPage,options?:NavigateOptions)=>{if(project)go(project.project_id,next,options);};
-  const openCreate=()=>{if(!canLeave())return;setCreateOpen(true);setNewMenu(false);if(narrow)closeDrawer();};
+  const openCreate=()=>{if(!canLeave())return;setCreateOpen(true);setNewMenu(false);if(narrow)setDrawer(false);};
   const created=(value:ResearchProject)=>{
     setCreateOpen(false);setProjects(old=>[value,...old.filter(item=>item.project_id!==value.project_id)]);setLoaded(true);navigate(projectPath(value.project_id,"overview"),false,true);void refresh();
   };
