@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   PROTOCOL_VERSION, agentTaskEventSchema, agentTaskSchema, artifactSchema,
   experimentTaskEventSchema, experimentTaskSchema, makeId, researchProjectSchema,
-  workflowEventSchema, workflowRunSchema
+  workflowEventSchema, workflowRunSchema, knowledgeWriteSchema
 } from "../src/index.js";
 
 const time = "2026-10-21T08:00:00.000Z";
@@ -49,4 +49,22 @@ test("validates event types and creates namespaced IDs", () => {
   assert.equal(agentTaskEventSchema.safeParse({ protocol_version: PROTOCOL_VERSION, event_id: "event_2", agent_task_id: "agenttask_1", type: "task.completed", occurred_at: time, payload: {} }).success, true);
   assert.equal(experimentTaskEventSchema.safeParse({ protocol_version: PROTOCOL_VERSION, event_id: "event_3", experiment_task_id: "exptask_1", type: "task.completed", status: "completed", occurred_at: time }).success, true);
   assert.match(makeId("project"), /^project_[0-9a-f-]{36}$/);
+});
+
+// Compile-time contract: parsed create and update requests must have required content.
+function requireContent(input: { base_version: number; content: unknown }): unknown {
+  return input.content;
+}
+
+test("knowledge writes require object content for both create and update", () => {
+  const create = knowledgeWriteSchema;
+  const update = knowledgeWriteSchema.omit({ object_id: true });
+  for (const schema of [create, update]) {
+    assert.equal(schema.safeParse({ base_version: 0 }).success, false);
+    for (const content of [undefined, null, [], "text", 42]) {
+      assert.equal(schema.safeParse({ base_version: 0, content }).success, false);
+    }
+    const input = schema.parse({ base_version: 0, content: { title: "研究卡片" } });
+    assert.deepEqual(requireContent(input), { title: "研究卡片" });
+  }
 });

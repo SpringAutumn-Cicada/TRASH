@@ -36,7 +36,7 @@ export interface KnowledgeVersion {
   object_id: string; project_id: string; kind: KnowledgeKind; version: number; status: z.infer<typeof reviewStatusSchema>;
   title: string; content: KnowledgeContent; created_by: "user" | "agent"; created_at: string;
 }
-export const knowledgeWriteSchema = z.object({ object_id: z.string().optional(), base_version: z.number().int().nonnegative(), content: z.unknown() }).strict();
+export const knowledgeWriteSchema = z.object({ object_id: z.string().optional(), base_version: z.number().int().nonnegative(), content: z.record(z.unknown()) }).strict();
 export function parseKnowledge(kind: KnowledgeKind, value: unknown): KnowledgeContent {
   if (kind === "literature-card") return literatureCardSchema.parse(value);
   if (kind === "wiki-page") return wikiPageSchema.parse(value);
