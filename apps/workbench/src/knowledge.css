@@ -2,3 +2,11 @@
 .project-row .project-open{border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;min-width:0;padding:0}.project-row-actions{display:flex;justify-content:flex-end}
 
 .project-delete-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:#89929e;cursor:pointer;transition:background .15s,color .15s,border-color .15s}.project-delete-button:hover{background:#fef3f2;color:#b42318;border-color:#fee4e2}.project-delete-button:focus-visible{outline:2px solid #b42318;outline-offset:2px}.project-delete-button:active{background:#fee4e2}.project-delete-confirm{background:#b42318;border-color:#b42318;color:#fff}.project-delete-confirm:hover:not(:disabled){background:#912018;border-color:#912018}
+
+/* Compact result import action; use the shared theme colors. */
+.knowledge-panel .result-import-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:34px;padding:7px 11px;border:1px solid var(--line,#e3e8e5);border-radius:8px;background:var(--surface,#fff);color:var(--ink,#26352e);white-space:nowrap;transition:background .15s,border-color .15s,color .15s}
+.knowledge-panel .result-import-button>svg{flex-shrink:0;color:var(--green)}
+.knowledge-panel .result-import-format{padding:2px 5px;border-radius:4px;background:var(--green-soft);color:var(--green);font-size:10px;font-weight:600;line-height:1.2;letter-spacing:.3px}
+.knowledge-panel .result-import-button:hover:not(:disabled){border-color:var(--green);background:var(--green-soft);color:var(--green)}
+.knowledge-panel .result-import-button:focus-visible{outline:2px solid var(--focus-ring,var(--green));outline-offset:3px}
+.knowledge-panel .result-import-button:disabled{opacity:.55;cursor:not-allowed}
