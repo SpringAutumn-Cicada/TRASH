@@ -28,7 +28,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     const release=method!=="GET"?service.reproductions.acquire(projectId):()=>{};
     try{
     if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}
-    if(parts.length===1&&method==="POST"){send(response,201,{code:await service.reproductions.add(projectId,await readJson(request))});return true;}
+    if(parts.length===1&&method==="POST"){experimentError("REPRODUCTION_ZIP_REQUIRED",400);}
     if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")))});return true;}
     if(parts[1]){
       service.reproductions.get(projectId,parts[1]);

@@ -14,7 +14,7 @@ import type { ReproductionCode, ReproductionSnapshot } from "@trash/protocol";
 import type { RemoteConnection } from "./ssh.js";
 import { REPRO_ARCHIVE } from "./reproduction-archive.js";
 const execute=promisify(execFile);
-export const reproductionInput=z.object({name:z.string().trim().min(1).max(200),source_id:z.string().max(200).optional(),source_url:z.string().max(2000).default(""),notes:z.string().max(10000).default(""),path:z.string().min(1).max(4096).optional()}).strict();
+export const reproductionInput=z.object({name:z.string().trim().min(1).max(200),source_id:z.string().max(200).optional(),source_url:z.string().max(2000).default(""),notes:z.string().max(10000).default("")}).strict();
 export class ReproductionService {
  private pending=new Set<string>();
  constructor(private store:TrashStore){}
@@ -28,8 +28,8 @@ export class ReproductionService {
  get(project:string,id:string){const path=this.record(project,id);if(!existsSync(path))experimentError("REPRODUCTION_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionCode;}
  private save(value:ReproductionCode){mkdirSync(this.root(value.project_id),{recursive:true});const path=this.record(value.project_id,value.id),temp=`${path}.${randomUUID()}.tmp`;writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,path);return value;}
  private validateSource(project:string,input:z.infer<typeof reproductionInput>){if(input.source_id&&!this.store.listSources(project).some(s=>s.source_id===input.source_id))experimentError("SOURCE_NOT_FOUND",404);}
- async add(project:string,value:unknown){const input=reproductionInput.parse(value);this.validateSource(project,input);if(!input.path)experimentError("DIRECTORY_REQUIRED");const path=await realpath(input.path);if(!(await stat(path)).isDirectory())experimentError("NOT_A_DIRECTORY");return this.save({...input,path,id:`repro_${randomUUID()}`,project_id:project,created_at:new Date().toISOString(),imported:false});}
- update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.omit({path:true}).parse(value);this.validateSource(project,input);return this.save({...old,...input,source_id:input.source_id});}
+
+ update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.save({...old,...input,source_id:input.source_id});}
  remove(project:string,id:string){this.get(project,id);rmSync(this.record(project,id));}
  async importZip(project:string,request:IncomingMessage,name:string){
   const id=`repro_${randomUUID()}`,root=join(this.root(project),id);await mkdir(root,{recursive:true});const zip=join(root,"source.zip"),code=join(root,"code");let bytes=0;
