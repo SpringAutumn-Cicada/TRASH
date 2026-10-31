@@ -79,6 +79,8 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       const profile=service.data.profile(projectId,parts[1]);
       if(parts.length===3&&parts[2]==="directories"&&method==="GET"){
         const path=z.string().min(1).max(4096).parse(url.searchParams.get("path")??"/");
+        const connected=await service.terminals.directories(projectId,profile.profile_id,path);
+        if(connected){send(response,200,connected);return true;}
         const remote=await service.ssh.connect(profile);
         try{send(response,200,await remoteDirectories(remote,path));}finally{remote.close();}return true;
       }
