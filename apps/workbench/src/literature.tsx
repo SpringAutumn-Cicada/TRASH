@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Trash2, X } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
@@ -51,6 +52,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   const [importing, setImporting] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const [deleting, setDeleting] = useState<string>();
+  const [deleteTarget, setDeleteTarget] = useState<Source>();
+  const [deleteError, setDeleteError] = useState("");
 
   const alive = useRef(true);
   const sourceRequest = useRef(0);
@@ -127,8 +130,9 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   };
 
   const deleteSource = async (source: Source) => {
-    if (deleting || !window.confirm(`删除参考文献“${source.title}”？\n将移除记录、阅读信息及正文检索内容，原始文件保留。此操作无法撤销。`)) return;
-    setDeleting(source.source_id); setError("");
+    if (deleting) return;
+    if (importing || searching) { setDeleteError("正在导入或检索，请等待操作完成后再确认删除。"); return; }
+    setDeleting(source.source_id); setDeleteError(""); setError("");
     try {
       await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) });
       sourceRequest.current++;
@@ -136,9 +140,9 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
         setSelectedSource(current => current?.source.source_id === source.source_id ? undefined : current);
         setPassages(current => current.filter(item => item.source.source_id !== source.source_id));
         setDetail(current => current ? { ...current, sources: current.sources.filter(item => item.source_id !== source.source_id) } : current);
-        onChanged();
+        setDeleteTarget(undefined); onChanged();
       }
-    } catch (cause) { if (alive.current) setError(uiError(cause, "删除文献失败，请重试。")); }
+    } catch (cause) { if (alive.current) setDeleteError(uiError(cause, "删除文献失败，请重试。")); }
     finally { if (alive.current) setDeleting(undefined); }
   };
 
@@ -151,6 +155,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   if (!detail) return <div role="alert">{error || "未找到该项目。"}</div>;
   return <section className="literature-page">
+    {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {error && <div role="alert" className="notice error-notice">{error}</div>}
         <div className="literature-grid">
           <section className="literature-main">
@@ -158,7 +163,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
             <form className="url-import" onSubmit={(event) => void importUrl(event)}><Link size={15} className="link-icon" /><input type="url" required value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="导入公开网页地址"/><button className="secondary-button" disabled={importing}>{importing ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}添加网页</button></form>
             {detail.sources.length === 0 ? <div className="source-empty"><FileUp size={21}/><span>尚未导入文献</span></div> : <div className="source-table">
               <div className="source-table-header"><span>标题 / 作者</span><span>年份</span><span>类型</span><span>状态</span></div>
-              {detail.sources.map((source) => <div className="source-row-container" key={source.source_id}><button className="source-row" onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button><button type="button" className="source-delete-button" title="删除参考文献" aria-label={`删除参考文献：${source.title}`} disabled={Boolean(deleting) || importing || searching} onClick={() => void deleteSource(source)}>{deleting === source.source_id ? <LoaderCircle size={13} className="spin"/> : <Trash2 size={13}/>}</button></div>)}
+              {detail.sources.map((source) => <div className="source-row-container" key={source.source_id}><button className="source-row" onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button><button type="button" className="source-delete-button" title="删除参考文献" aria-label={`删除参考文献：${source.title}`} disabled={Boolean(deleting)} onClick={() => { setDeleteError(""); setDeleteTarget(source); }}>{deleting === source.source_id ? <LoaderCircle size={13} className="spin"/> : <Trash2 size={13}/>}</button></div>)}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />
@@ -178,4 +183,29 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
           </aside>
         </div>
   </section>;
+}
+
+function DeleteSourceDialog({ source, busy, blocked, error, onClose, onConfirm }: { source: Source; busy: boolean; blocked: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
+  const modal = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    modal.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
+  return createPortal(<div className="modal-backdrop source-delete-backdrop"><div ref={modal} className="modal source-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="source-delete-title" aria-describedby="source-delete-description" aria-busy={busy} onKeyDown={event => {
+    if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); }
+    if (event.key === "Tab") {
+      const buttons = Array.from(modal.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  }}>
+    <h2 id="source-delete-title">删除参考文献</h2><p className="source-delete-name">{source.title}</p>
+    <p id="source-delete-description">将删除此文献的记录、阅读信息与正文检索内容，原始文件保留。此操作无法撤销；被知识内容历史引用的文献不能删除。</p>
+    {blocked && <p role="status" className="notice">正在导入或检索，请等待操作结束后再确认删除。</p>}
+    {error && <p role="alert" className="notice error-notice">{error}</p>}
+    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button project-delete-confirm" disabled={busy || blocked} onClick={onConfirm}>{busy ? "正在删除…" : "确认删除"}</button></div>
+  </div></div>, document.body);
 }
