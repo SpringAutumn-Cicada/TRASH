@@ -10,6 +10,7 @@ import { TrashStore, KnowledgeStore } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
 import { CodeAgent } from "./code-agent.js";
+import { projectChatTool } from "./project-chat-tools.js";
 import { ExperimentService } from "./experiment/service.js";
 import { experimentRoute } from "./experiment/routes.js";
 import { projectOverview } from "./overview.js";
@@ -104,7 +105,7 @@ async function serveStatic(staticRoot: string, requestPath: string, response: Se
 function jsonError(error: unknown): { status: number; code: string } {
   const statusCode = error && typeof error === "object" && "statusCode" in error ? Number((error as { statusCode: unknown }).statusCode) : 0;
   if (error instanceof ZodError) return { status: 400, code: "INVALID_REQUEST" };
-  if ([400, 404, 409, 422].includes(statusCode)) return { status: statusCode, code: error instanceof Error ? error.message : "INVALID_REQUEST" };
+  if ([400, 403, 404, 409, 422].includes(statusCode)) return { status: statusCode, code: error instanceof Error ? error.message : "INVALID_REQUEST" };
   if (statusCode === 413) return { status: 413, code: "REQUEST_TOO_LARGE" };
   if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") return { status: 404, code: error.message };
   if (error instanceof Error && ["UNSUPPORTED_FILE_TYPE", "URL_SCHEME_OR_CREDENTIALS_NOT_ALLOWED", "URL_HOST_NOT_PUBLIC", "WEBPAGE_NOT_HTML", "WEBPAGE_TOO_LARGE", "WEBPAGE_REDIRECT_LIMIT"].includes(error.message)) return { status: 422, code: error.message };
@@ -144,8 +145,19 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (subpath === "agent-tools" && method === "POST") {
+      const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
+      const permission = codeAgent.authorizeTool(projectId, token);
+      const result = projectChatTool(store, projectId, await readJson(request), permission.writable);
+      codeAgent.recordTool(projectId, token, result); sendJson(response, 200, result); return;
+    }
+    if (subpath === "chat/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose === "project-chat").map(task => ({ ...task, logs: "" })) }); return; }
+    if (subpath === "chat/tasks" && method === "POST") {
+      const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
+      sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request), toolUrl) }); return;
+    }
     if (subpath === "code-agent/detect" && method === "GET") { sendJson(response, 200, await codeAgent.detect()); return; }
-    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).map(task => ({ ...task, logs: "", response: "" })) }); return; }
+    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose !== "project-chat").map(task => ({ ...task, logs: "", response: "" })) }); return; }
     if (subpath === "code-agent/tasks" && method === "POST") { sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request)) }); return; }
     const codeTask = subpath.match(/^code-agent\/tasks\/(code_[a-f0-9-]+)(?:\/(cancel|acknowledge))?$/);
     if (codeTask && method === "GET" && !codeTask[2]) { const task = codeAgent.list(projectId).find(t => t.task_id === codeTask[1]); if (!task) { sendJson(response, 404, { error: "NOT_FOUND" }); return; } sendJson(response, 200, { task }); return; }

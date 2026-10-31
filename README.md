@@ -112,3 +112,7 @@ pnpm dev
 ### 本机 Codex 开发入口
 
 项目“实验 → 代码”绑定仓库后，可使用“本机 Codex Agent”提交代码任务、选择权限、查看回复和事件、取消任务。当前直接调用运行 TRASH 的 WSL / 本机 Codex CLI，沿用本机登录和模型配置；每次独立任务，不是交互终端。实现尚未测试或真实模型验收，操作及边界见 [WSL Codex 开发 Agent](docs/16-wsl-codex-agent.md)。
+
+### 项目 Agent 对话
+
+“任务”右侧新增“Agent 对话”，支持项目级历史消息与 Codex 会话续聊，可通过平台工具读取文献、修订卡片/Wiki、登记真实实验结果，并在项目目录编辑论文草稿。未绑定代码仓库也可使用。实现尚未测试，详见 [项目 Agent 对话说明](docs/17-project-agent-chat.md)。
