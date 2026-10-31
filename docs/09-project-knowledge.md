@@ -1,0 +1,112 @@
+# 项目知识库与实验结果管理
+
+## 本次实现与状态
+
+实现方向：每项目独立的原始资料、文献卡片、数据库 Wiki 和实验结果；用户手动触发本地 Codex 生成候选。保留 FTS5，不引入向量 RAG。
+
+当前是待集中验证的首版实现。尚未测试：未执行 lint、类型检查、测试、构建、浏览器验证或真实 Agent 任务。新增回归测试仅编写，未运行。不得将以下操作说明当作验收通过记录。
+
+## 界面入口
+
+项目详情底部新增“项目知识与结果”，包含文献卡片与矩阵、研究 Wiki、实验结果、Agent 任务。
+
+1. 导入资料后，打开来源详情的“管理文献、原始文件和阅读状态”，维护元数据、标签、用途和阅读状态。可以补充 PDF、打开原始文件及指定页码。只有元数据的条目没有可打开的原始文件。
+来源详情可查找重复 DOI/文件并明确选择目标合并。首版采用保留历史的合并关联：将附件关联到目标、补充目标缺失元数据，原来源与其卡片保留；不会静默删除原始资料或重写历史引用。
+
+2. 在卡片页选择文献后新建，填写研究问题、方法、贡献、局限和启发。高级 JSON 可维护引用位置等字段。保存是草稿，采纳或拒绝另行记录。
+3. 矩阵提供内容查询、字段筛选、状态筛选、排序、分页及 JSON/CSV 导出。阅读状态筛选值为 unread/reading/organized，用途为 background/related-work/method/baseline/dataset/other。
+4. Wiki 可以从 APT 主题模板新建，编辑 Markdown、预览、选择版本化引用、查看历史并导出。预览首版支持标题、段落及 HTTP(S)/页内链接；正文保存完整 Markdown，复杂语法导出后可用标准阅读器打开。
+5. 实验结果通过表单或标准 JSON 录入；配置、环境、附件及运行时间使用高级 JSON。选择运行并填写指标名称，可汇总相同实验条件下的均值与样本标准差。单个样本的标准差返回 null。
+6. 项目列表可恢复知识包；项目详情可导出知识包。恢复要求目标工作区没有相同项目，不覆盖已有项目。
+
+## 数据与版本
+
+SQLite user_version 升至 2。旧 v1 数据库升级前通过 VACUUM INTO 创建 workspace-before-v2-时间.sqlite 备份。高版本数据库拒绝写入。旧资料保留原 files 路径，新附件登记到项目 raw 目录，原文由来源 ID 访问。
+
+数据库是卡片、Wiki、指标和版本的事实来源；导出的 JSON、CSV、Markdown 是派生文件，不自动回写。卡片引用当前文件哈希；附件变更后提示资料更新。Wiki 固定依赖版本，依赖卡片被修改或其文件变更时提示复核。
+
+每次修改创建新版本；审阅只改变该版本的审阅状态，并保存独立审阅日志。历史已采纳版本不因新候选出现而删除。列表展示最新版本，历史中可查看之前的已采纳内容。
+
+文献卡片记录作者报告的结果，不登记为本项目实际实验。实验结果记录实际运行条件；结果录入并不代表平台执行或独立验证了实验。
+
+## JSON 实验结果示例
+
+```json
+{
+  "schema_version": 1,
+  "title": "基线 A 第一次运行",
+  "method": "baseline-a",
+  "dataset": "dataset-a",
+  "dataset_version": "v1",
+  "task": "detection",
+  "split": "fixed-test",
+  "evaluation_protocol": "项目已确认的评价协议",
+  "config": {"epochs": 10},
+  "seed": 42,
+  "environment": {"python": "3.12"},
+  "external_run_id": "baseline-a-seed-42",
+  "metrics": [
+    {"name": "f1", "value": 0.81, "unit": "ratio", "condition": "test"}
+  ],
+  "attachments": [],
+  "notes": "示例数值，仅用于说明格式"
+}
+```
+
+缺失信息可保留为空，记录先保存为草稿；不得将未知指标写为 0。数值字段拒绝 null、非有限数值。external_run_id 在项目内唯一。聚合要求方法、数据集及版本、任务、划分、评价协议、配置、指标单位和条件一致；随机种子可不同。
+
+## 本地 Agent
+
+本机需已安装并配置 Codex CLI，服务进程的 PATH 能找到 codex。不增加平台 API key 配置，不修改全局配置。
+
+用户勾选文献或对象版本后启动任务。文献逐篇生成，单项目串行；各项目各自排队。任务目录保存 input.json、prompt.txt、metadata.json 和 output.json，事件存于数据库。任务目录可能包含选定正文，应按原始研究资料保护。
+
+Adapter 使用本机核对过的 exec、--sandbox read-only、--ephemeral、--json、--output-last-message。元数据记录 CLI 版本、提示词版本及输入指纹。只读是本类整理任务的执行策略，并不宣称具有容器级文件读取隔离；用户现有 Codex 配置和模型服务仍影响实际能力与内容发送范围。
+
+参考：[OpenAI 非交互模式文档](https://learn.chatgpt.com/docs/non-interactive-mode)。接入时仅读取 CLI 帮助，未执行真实模型任务。
+
+平台验证最终 JSON、项目引用及版本，成功后存为待审候选。输出失败、超时、取消、版本冲突均不会自动覆盖已采纳内容。取消先发送 TERM，随后在必要时发送 KILL。服务重启后旧排队或运行任务记为已中断，用户手动重试；重试生成新的尝试记录。
+
+默认超时 900 秒，可在创建任务时调整为 30–7200 秒。日志限制约 1 MiB，并对常见令牌形式脱敏；不要在自定义要求中填写密钥。当前不会将生成结果自动认定为真实科研结论。
+
+## API
+
+均位于 /api/v1/projects/:projectId 下：
+
+| 路径 | 方法 | 用途 |
+|---|---|---|
+| sources/:id/details | GET / PUT | 元数据、阅读状态、用途 |
+| sources/:id/original | GET | 原始文件，artifact_id 可选择历史附件 |
+| sources/:id/parsed | GET | 解析片段与定位 |
+| sources/:id/duplicates、merge | GET / POST | 查找重复与确认合并关联 |
+| sources/:id/attachments | GET / POST | 历史附件与补充 PDF |
+| literature-cards、wiki-pages、experiment-results | GET / POST | 查询与新建 |
+| 上述路径/:id | GET / PUT | 读取或修订，GET 可指定 version |
+| 上述路径/:id/history | GET | 历史与审阅日志 |
+| 上述路径/:id/review | POST | version、decision、comment |
+| experiment-results/aggregate | POST | ids、metric，同条件聚合 |
+| experiment-template、wiki-templates | GET | 首版输入模板 |
+| knowledge-tasks | GET / POST | 任务查询与创建 |
+| knowledge-tasks/:id | GET | 任务与日志 |
+| knowledge-tasks/:id/cancel、retry | POST | 取消或新尝试 |
+| wiki-export | GET | 项目 Markdown 合集与引用清单 |
+| knowledge-export | GET | 项目知识包，含原文 base64 和哈希 |
+
+恢复接口为 POST /api/v1/knowledge-restore。写入对象请求为 {base_version,content}；新建 base_version=0，修订使用当前版本。返回 {record}。查询默认 page=1、limit=20，最大 100；q 为内容搜索，status 为状态，其他字段名用于内容筛选；format=json/csv 导出全部筛选结果。
+
+知识包包含来源、附件、解析文本、卡片/Wiki/结果的全部版本及审阅记录；不包含 Agent 进程、认证环境或任务日志，也不自动下载外部 URI 指向的大文件。恢复保留对象 ID，验证文件哈希后事务写入，失败清理本轮生成文件。
+
+恢复请求上限 200 MiB；base64 会增加体积，较大项目后续需分卷或流式归档。目前导出在内存组包，适用于小规模课题首版。
+
+## 集中验收清单
+
+- v1 迁移备份与数据保留、高版本保护。
+- 跨项目引用拒绝、输入错误、版本冲突、失败补偿。
+- 原文件访问、补充附件、旧附件保留及资料更新提醒。
+- 卡片修订、候选采纳、Wiki 依赖版本与历史对比。
+- 实验 JSON 与表单一致、缺失指标拒绝、同条件聚合。
+- 知识包在新目录恢复，文件哈希与引用保持一致。
+- stub CLI 覆盖异常、取消、超时、中断与重试；真实 CLI 单独授权。
+- 浏览器完整流程与窄屏布局。
+
+以上均待集中验证。首版暂不提供自动 OCR、语义检索、跨项目文献复用、任意 SQL、外部 Markdown 双向同步、实验执行或多人云端同步。

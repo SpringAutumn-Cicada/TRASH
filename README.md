@@ -97,3 +97,7 @@ pnpm dev
 
 项目对象协议位于 `packages/protocol`，当前协议版本为 `v1`。选型和 Phase 0 脚手架见 [ADR 0001](docs/adr/0001-phase-0-tooling-and-protocol.md)；Phase 1 持久化、导入和检索边界见 [ADR 0002](docs/adr/0002-phase-1-local-literature.md)。
 
+
+## 项目知识库（待集中验证）
+
+项目详情新增文献卡片与矩阵、研究 Wiki、实验结果及本地 Agent 任务。原文留在本地，Wiki 由数据库管理并导出 Markdown；实验结果通过 JSON 或表单登记，不执行实验。支持知识包导出恢复。数据库升级会先备份现有 v1 数据；新能力尚未测试，使用前请保留工作区备份。操作和 API 见 [项目知识管理说明](docs/09-project-knowledge.md)。
