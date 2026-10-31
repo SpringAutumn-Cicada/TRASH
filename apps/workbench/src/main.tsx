@@ -4,6 +4,7 @@ import { ArrowLeft, BookOpen, ExternalLink, FileUp, FolderOpen, Link, LoaderCirc
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import "./styles.css";
 import "./themes.css";
+import { KnowledgePanel, SourceManager, RestoreKnowledge } from "./knowledge.js";
 
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
@@ -158,7 +159,7 @@ function ProjectList({ onOpen, theme, onThemeChange }: { onOpen: (id: string) =>
       <main className="main-content">
         <div className="page-heading">
           <div><div className="eyebrow">科研工作区</div><h1>项目</h1><p className="subheading">{projects.length} 个研究项目</p></div>
-          <button className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16} />新建项目</button>
+          <div className="knowledge-toolbar"><RestoreKnowledge onRestored={() => void refresh()} /><button className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16} />新建项目</button></div>
         </div>
         {error && <div role="alert" className="notice error-notice">{error}</div>}
         <section className="project-list" aria-label="研究项目">
@@ -288,6 +289,7 @@ function ProjectView({ projectId, onBack, theme, onThemeChange }: { projectId: s
               {detail.sources.map((source) => <button className="source-row" key={source.source_id} onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button>)}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => setSelectedSource(undefined)}><X size={16}/></button></div>
+              <SourceManager projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); void openSource(selectedSource.source); }} />
               {selectedSource.source.abstract && <p className="source-abstract">{selectedSource.source.abstract}</p>}
               {selectedSource.segments.length ? <div className="segment-list">{selectedSource.segments.map((segment, index) => <article key={`${segment.locator.kind}-${index}`}><span>{locatorLabel(segment.locator)}</span><p>{segment.text}</p></article>)}</div> : <div className="metadata-note">{selectedSource.source.parse_status === "no_text" ? "未能从该来源提取文本。" : "该记录仅包含元数据。"}</div>}
             </section>}
@@ -303,6 +305,7 @@ function ProjectView({ projectId, onBack, theme, onThemeChange }: { projectId: s
             <div className="source-format-note"><strong>支持导入</strong><span>PDF · BibTeX · RIS · Markdown · 公开网页</span></div>
           </aside>
         </div>
+        <KnowledgePanel projectId={projectId} sources={detail.sources} />
       </main>
     </div>
   </div>;
