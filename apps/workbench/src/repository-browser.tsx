@@ -5,11 +5,11 @@ type Entry = { name: string; path: string; directory: boolean; symlink: boolean 
 type Preview = { path: string; preview: boolean; text?: string; reason?: string; size_bytes: number };
 const languages: Record<string, string> = { py: "Python", ts: "TypeScript", tsx: "TSX", js: "JavaScript", jsx: "JSX", json: "JSON", md: "Markdown", yml: "YAML", yaml: "YAML", sh: "Shell", css: "CSS", html: "HTML", toml: "TOML", txt: "文本" };
 const language = (path: string) => languages[path.split(".").pop()?.toLowerCase() ?? ""] ?? "文本";
-export function RepositoryBrowser({ projectId, repositoryPath }: { projectId: string; repositoryPath: string }) {
+export function RepositoryBrowser({ projectId, repositoryPath, endpoint }: { projectId: string; repositoryPath: string; endpoint?:string }) {
   const [entries, setEntries] = useState<Entry[]>([]), [directory, setDirectory] = useState(""), [filter, setFilter] = useState("");
   const [preview, setPreview] = useState<Preview>(), [loading, setLoading] = useState(false), [opening, setOpening] = useState(false), [error, setError] = useState(""), [copied, setCopied] = useState(false), [lineLimit, setLineLimit] = useState(2000);
   const directoryRequest = useRef(0), fileRequest = useRef(0);
-  const base = `/api/v1/projects/${encodeURIComponent(projectId)}/repository`;
+  const base = endpoint ?? `/api/v1/projects/${encodeURIComponent(projectId)}/repository`;
   const read = async <T,>(path: string): Promise<T> => {
     const response = await fetch(base + path); const data = await response.json();
     if (!response.ok) throw new Error(data.error === "REPOSITORY_PATH_INVALID" ? "该路径不在绑定仓库内，不能访问。" : "读取失败，请刷新目录或检查本地仓库。");
@@ -21,7 +21,7 @@ export function RepositoryBrowser({ projectId, repositoryPath }: { projectId: st
     catch (cause) { if (directoryRequest.current === id) setError(cause instanceof Error ? cause.message : "读取目录失败。"); }
     finally { if (directoryRequest.current === id) setLoading(false); }
   };
-  useEffect(() => { void openDirectory(""); return () => { directoryRequest.current++; fileRequest.current++; }; }, [projectId, repositoryPath]);
+  useEffect(() => { void openDirectory(""); return () => { directoryRequest.current++; fileRequest.current++; }; }, [projectId, repositoryPath, endpoint]);
   const openFile = async (path: string) => {
     const id = ++fileRequest.current; setOpening(true); setError(""); setCopied(false);
     try { const data = await read<Preview>(`/file?path=${encodeURIComponent(path)}`); if (fileRequest.current === id) { setPreview({ ...data, path }); setLineLimit(2000); } }
@@ -45,7 +45,7 @@ export function RepositoryBrowser({ projectId, repositoryPath }: { projectId: st
         <div className="repository-preview-heading">{preview ? <><FileCode2 size={15}/><strong title={preview.path}>{preview.path}</strong><span className="repository-language">{language(preview.path)}</span><button type="button" className="icon-button" disabled={!preview.preview || opening} title={copied ? "已复制" : "复制文件内容"} aria-label={copied ? "文件内容已复制" : "复制文件内容"} onClick={() => void navigator.clipboard.writeText(preview.text ?? "").then(() => setCopied(true)).catch(() => setError("无法复制，请手动选择文件内容。"))}><Copy size={14}/></button></> : <span>文件预览</span>}</div>
         {error && <div role="alert" className="notice error-notice">{error}</div>}
         {opening ? <div className="repository-browser-empty repository-preview-empty"><LoaderCircle size={24} className="spin"/><span>正在打开文件…</span></div> : !preview ? <div className="repository-browser-empty repository-preview-empty"><span className="repository-empty-icon"><Code2 size={28}/></span><h3>从左侧选择一个文件</h3><p>浏览实验代码，查看脚本与配置。</p></div> : !preview.preview ? <div className="repository-browser-empty repository-preview-empty"><FileText size={28}/><h3>此文件无法预览</h3><p>{preview.reason || "不支持预览此类型文件"}</p></div> : <div className="repository-code-scroll" tabIndex={0} role="region" aria-label={`${preview.path} 文件内容`}><div className="repository-code-lines">{lines.slice(0, lineLimit).map((line, index) => <div className="repository-code-line" key={index}><span className="repository-line-number" aria-hidden="true">{index + 1}</span><code>{line || " "}</code></div>)}</div>{lines.length > lineLimit && <button type="button" className="repository-more-lines" onClick={() => setLineLimit(value => value + 2000)}>已显示 {lineLimit} / {lines.length} 行，继续显示</button>}</div>}
-        <footer className="repository-preview-footer"><span>{preview ? `${preview.size_bytes.toLocaleString("zh-CN")} bytes${preview.preview ? ` · ${lines.length} 行` : ""}` : "未选择文件"}</span><span>{copied ? "已复制文件内容" : "本地仓库 · 只读"}</span></footer>
+        <footer className="repository-preview-footer"><span>{preview ? `${preview.size_bytes.toLocaleString("zh-CN")} bytes${preview.preview ? ` · ${lines.length} 行` : ""}` : "未选择文件"}</span><span>{copied ? "已复制文件内容" : "本地代码 · 只读"}</span></footer>
       </div>
     </div>
   </section>;

@@ -1,5 +1,5 @@
 // Uploaded as a versioned source file. No Python or remote command is executed during development.
-export const RUNNER_VERSION = "1";
+export const RUNNER_VERSION = "2";
 export const REMOTE_RUNNER = String.raw`import sys, os, json, time, hashlib, subprocess, signal, threading, pathlib, fcntl, shlex, platform
 ROOT = pathlib.Path(sys.argv[2]).resolve()
 ACTION = sys.argv[1]
@@ -76,7 +76,7 @@ if (ROOT / 'status.json').exists():
     if old.get('state') in ['completed','failed','cancelled']: sys.exit(0)
 (ROOT / 'logs').mkdir(exist_ok=True)
 (ROOT / 'outputs').mkdir(exist_ok=True)
-status('waiting', runner_version='1')
+status('waiting', runner_version='2')
 host_lock = pathlib.Path('/tmp/trash-experiment-' + str(os.getuid()) + '.lock').open('a')
 while True:
     try:
@@ -86,16 +86,33 @@ while True:
         if (ROOT / 'cancel.json').exists():
             status('cancelled', exit_code=None)
             sys.exit(0)
-        status('waiting', runner_version='1')
+        status('waiting', runner_version='2')
         time.sleep(2)
 process = None
 try:
     if digest(ROOT / 'code.bundle') != M['bundle_sha256']: raise RuntimeError('BUNDLE_HASH_MISMATCH')
     code = ROOT / 'code'
-    if not code.exists(): subprocess.run(['git','clone',str(ROOT / 'code.bundle'),str(code)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    subprocess.run(['git','-C',str(code),'checkout','--detach',M['commit_sha']],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    head = subprocess.check_output(['git','-C',str(code),'rev-parse','HEAD'],text=True).strip()
-    if head != M['commit_sha']: raise RuntimeError('COMMIT_MISMATCH')
+    if M.get('code_source') == 'reproduction':
+        import zipfile,stat
+        if code.exists(): raise RuntimeError('CODE_DIRECTORY_EXISTS')
+        with zipfile.ZipFile(ROOT / 'code.bundle') as z:
+            entries=z.infolist()
+            if len(entries)>20000 or sum(i.file_size for i in entries)>200*1024*1024: raise RuntimeError('ARCHIVE_LIMIT')
+            for i in entries:
+                p=pathlib.PurePosixPath(i.filename)
+                kind=stat.S_IFMT(i.external_attr>>16)
+                if p.is_absolute() or '..' in p.parts or chr(92) in i.filename or kind not in (0,stat.S_IFREG,stat.S_IFDIR): raise RuntimeError('UNSAFE_ARCHIVE_PATH')
+            z.extractall(code)
+            for i in entries:
+                if not i.is_dir(): os.chmod(code / i.filename,0o700 if i.external_attr>>16&0o111 else 0o600)
+        for item in M['code_snapshot']['files']:
+            if digest(code / item['path']) != item['sha256']: raise RuntimeError('SNAPSHOT_FILE_HASH_MISMATCH')
+        head = None
+    else:
+        if not code.exists(): subprocess.run(['git','clone',str(ROOT / 'code.bundle'),str(code)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run(['git','-C',str(code),'checkout','--detach',M['commit_sha']],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        head = subprocess.check_output(['git','-C',str(code),'rev-parse','HEAD'],text=True).strip()
+        if head != M['commit_sha']: raise RuntimeError('COMMIT_MISMATCH')
     env = os.environ.copy()
     env.update(M['env'])
     env['TRASH_RUN_DIR'] = str(ROOT)
@@ -105,7 +122,7 @@ try:
     else: env['CUDA_VISIBLE_DEVICES'] = M['gpu']
     atomic('config.json', M['config'])
     environment = json.loads((ROOT / 'environment.json').read_text()) if (ROOT / 'environment.json').exists() else {}
-    environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version='1'))
+    environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version='2', code_snapshot=M.get('code_snapshot')))
     atomic('environment.json', environment)
     argv = M['command']
     if argv[0] in ['python','python3']: argv = [M['python']] + argv[1:]
@@ -128,7 +145,7 @@ try:
     for thread in threads: thread.start()
     reason = None
     while process.poll() is None:
-        status('running', pid=process.pid, started_at=started, runner_version='1', log_rotation=True)
+        status('running', pid=process.pid, started_at=started, runner_version='2', log_rotation=True)
         cancel = ROOT / 'cancel.json'
         if cancel.exists() and json.loads(cancel.read_text()).get('token') == TOKEN: reason = 'cancelled'
         if time.time() - started > M['timeout_seconds']: reason = 'timeout'

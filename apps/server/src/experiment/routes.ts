@@ -24,6 +24,28 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===3&&parts[2]==="input"&&method==="POST"){const input=z.object({text:z.string().min(1).max(32768)}).strict().parse(await readJson(request));service.terminals.input(projectId,parts[1],token,input.text);send(response,200,{accepted:true});return true;}
     if(parts.length===3&&parts[2]==="resize"&&method==="POST"){const input=z.object({cols:z.number().int().min(2).max(500),rows:z.number().int().min(1).max(200)}).strict().parse(await readJson(request));service.terminals.resize(projectId,parts[1],token,input.cols,input.rows);send(response,200,{accepted:true});return true;}
   }
+  if(parts[0]==="reproductions"){
+    const release=method!=="GET"?service.reproductions.acquire(projectId):()=>{};
+    try{
+    if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}
+    if(parts.length===1&&method==="POST"){send(response,201,{code:await service.reproductions.add(projectId,await readJson(request))});return true;}
+    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")))});return true;}
+    if(parts[1]){
+      service.reproductions.get(projectId,parts[1]);
+      if(parts.length===2&&method==="PUT"){send(response,200,{code:service.reproductions.update(projectId,parts[1],await readJson(request))});return true;}
+      if(parts.length===2&&method==="DELETE"){if(service.data.runs(projectId).some(r=>r.plan.reproduction?.reproduction_id===parts[1]&&service.data.active(r)))experimentError("EXPERIMENT_ACTIVE",409);service.reproductions.remove(projectId,parts[1]);send(response,200,{deleted:true});return true;}
+      if(parts[2]==="tree"&&method==="GET"){send(response,200,{entries:await service.reproductions.tree(projectId,parts[1],url.searchParams.get("path")??"")});return true;}
+      if(parts[2]==="file"&&method==="GET"){send(response,200,await service.reproductions.file(projectId,parts[1],url.searchParams.get("path")??""));return true;}
+      if(parts[2]==="snapshots"&&method==="POST"){send(response,201,{snapshot:await service.reproductions.snapshot(projectId,parts[1])});return true;}
+      if(parts[2]==="upload"&&method==="POST"){
+        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().min(1).max(2000),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        if(!input.directory.startsWith("/")||input.directory.split("/").includes("..")||/[\x00-\x1f]/.test(input.directory))experimentError("UPLOAD_PATH_INVALID");
+        const profile=service.data.profile(projectId,input.profile_id),snapshot=await service.reproductions.snapshot(projectId,parts[1]),remote=await service.ssh.connect(profile);
+        try{const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`,input.python);service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);send(response,201,deployed);}finally{remote.close();}return true;
+      }
+    }
+    }finally{release();}
+  }
   if(parts[0]==="repository"){
     if(parts.length===3&&parts[1]==="directories"&&parts[2]==="select"&&method==="POST"){send(response,200,await selectDirectory(await readJson(request)));return true;}
     if(parts.length===2&&parts[1]==="directories"&&method==="GET"){send(response,200,await browseDirectories(url.searchParams.get("path")??undefined));return true;}
@@ -94,7 +116,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       const input=z.object({version:z.number().int().positive(),confirm:z.literal(true).optional()}).strict().parse(await readJson(request));const plan=service.data.plan(projectId,parts[1],input.version);
       if(parts[2]==="preflight"){send(response,200,{environment:await service.preflight(plan)});return true;}
       if(parts[2]==="confirm"){if(!input.confirm)experimentError("CONFIRM_REQUIRED");send(response,200,{plan:await service.confirmPlan(projectId,parts[1],input.version)});return true;}
-      if(parts[2]==="preparation"){if(!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");send(response,200,{script:await service.repository.preparation(projectId,plan.content.commit_sha,plan.content.preparation_script),commit:plan.content.commit_sha});return true;}
+      if(parts[2]==="preparation"){if(!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");send(response,200,{script:await (plan.reproduction?service.reproductions.preparation(projectId,plan.reproduction,plan.content.preparation_script):service.repository.preparation(projectId,plan.content.commit_sha,plan.content.preparation_script)),commit:plan.content.commit_sha});return true;}
     }
   }
   if(parts[0]==="experiment-runs"){
