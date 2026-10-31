@@ -30,7 +30,9 @@ export class ExperimentService {
   }
   async diagnostics(projectId:string,profileId:string):Promise<Record<string,unknown>>{
     const profile=this.data.profile(projectId,profileId),remote=await this.ssh.connect(profile);
-    try{const environment=JSON.parse(await remote.exec(["python3","-c",DIAGNOSTICS,profile.remote_root])) as Record<string,unknown>;this.store.db.prepare("INSERT INTO experiment_environments VALUES (?,?,?,?)").run(`environment_${randomUUID()}`,projectId,profileId,JSON.stringify({at:new Date().toISOString(),environment}));return environment;}finally{remote.close();}
+    try{const environment=JSON.parse(await remote.exec(["python3","-c",DIAGNOSTICS,profile.remote_root])) as Record<string,unknown>;this.store.db.prepare("INSERT INTO experiment_environments VALUES (?,?,?,?)").run(`environment_${randomUUID()}`,projectId,profileId,JSON.stringify({at:new Date().toISOString(),environment}));return environment;}
+    catch(error){if(error instanceof Error&&error.message==="SSH_COMMAND_TIMEOUT")experimentError("SSH_COMMAND_TIMEOUT",422);experimentError("REMOTE_DIAGNOSTICS_FAILED",422);}
+    finally{remote.close();}
   }
   async checkDataset(projectId:string,id:string):Promise<DatasetRef>{
     const dataset=this.data.datasets(projectId).find(d=>d.dataset_id===id)??experimentError("DATASET_NOT_FOUND",404);
