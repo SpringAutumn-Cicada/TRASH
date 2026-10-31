@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ChartColumn, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { KnowledgePanel, RestoreKnowledge } from "./knowledge.js";
@@ -13,6 +13,8 @@ import { DirtyContext, parseProjectRoute, projectPages, projectPath, readPrefere
 import "./styles.css";
 import "./themes.css";
 import "./workspace.css";
+
+const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:NotebookText,experiments:FlaskConical,results:ChartColumn,tasks:ListTodo,chat:MessagesSquare};
 
 type NavigateOptions={action?:string;focus?:string;status?:string};
 function rememberedPage(id:string):ProjectPage {
@@ -37,11 +39,13 @@ function App() {
   const route=parseProjectRoute(path);
   const [projects,setProjects]=useState<ResearchProject[]>([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [notice,setNotice]=useState("");
   const [query,setQuery]=useState("");const [createOpen,setCreateOpen]=useState(false);const [deleteTarget,setDeleteTarget]=useState<ResearchProject>();
+  const [sidebarLayer,setSidebarLayer]=useState<"projects"|"project">(()=>route?"project":"projects");
   const [hidden,setHidden]=useState(()=>readPreference("trash-sidebar-hidden")==="true");
   const [narrow,setNarrow]=useState(()=>window.matchMedia("(max-width: 899px)").matches);const [drawer,setDrawer]=useState(false);const [newMenu,setNewMenu]=useState(false);const [projectMenu,setProjectMenu]=useState(false);
   const toggleRef=useRef<HTMLButtonElement>(null);const sidebarRef=useRef<HTMLElement>(null);const requestId=useRef(0);const mounted=useRef(true);
   const project=projects.find(item=>item.project_id===route?.projectId);
   const page=route?.page??"overview";
+  useEffect(()=>{setSidebarLayer(project?"project":"projects");setNewMenu(false);},[project?.project_id]);
   const refresh=useCallback(async()=>{
     const current=++requestId.current;setLoading(true);
     try {const data=await api<{projects:ResearchProject[]}>("/projects");if(mounted.current&&current===requestId.current){setProjects(data.projects);setLoaded(true);setError("");}return data.projects;}
@@ -56,7 +60,7 @@ function App() {
     if(!loaded)return;
     if(path==="/"){
       const last=parseProjectRoute(readPreference("trash-last-location")??"/");
-      const target=projects.find(item=>item.project_id===last?.projectId)??projects[0];
+      const target=projects.find(item=>item.project_id===last?.projectId);
       if(target)navigate(projectPath(target.project_id,last?.projectId===target.project_id?(last.page??rememberedPage(target.project_id)):rememberedPage(target.project_id)),true,true);
     }else if(project&&route&&!route.page)navigate(projectPath(project.project_id,rememberedPage(project.project_id)),true,true);
   },[loaded,projects,path,navigate]);
@@ -79,7 +83,7 @@ function App() {
   },[narrow,drawer,closeDrawer]);
   const go=(id:string,next:ProjectPage=rememberedPage(id),options?:NavigateOptions)=>{
     const nextPath=projectPath(id,next,options);
-    if(navigate(nextPath)){void refresh();setProjectMenu(false);setNewMenu(false);if(narrow)closeDrawer();}
+    if(navigate(nextPath)){setSidebarLayer("project");void refresh();setProjectMenu(false);setNewMenu(false);if(narrow)closeDrawer();}
   };
   const goPage=(next:ProjectPage,options?:NavigateOptions)=>{if(project)go(project.project_id,next,options);};
   const openCreate=()=>{if(!canLeave())return;setCreateOpen(true);setNewMenu(false);if(narrow)setDrawer(false);};
@@ -100,24 +104,32 @@ function App() {
     catch(cause){setError(uiError(cause,"项目导出失败，请重试。"));}
   };
   const visible=!narrow&&!hidden||narrow&&drawer;
+  const compact=!narrow&&hidden;
+  const showSidebar=!narrow||drawer;
+  const inside=sidebarLayer==="project"&&Boolean(project);
   const filtered=projects.filter(item=>`${item.title}\n${item.research_question}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  return <DirtyContext.Provider value={register}><div className={`workspace-shell ${visible?"with-sidebar":"without-sidebar"}`}>
+  return <DirtyContext.Provider value={register}><div className={`workspace-shell ${compact?"with-rail":visible?"with-sidebar":"without-sidebar"}`}>
     {narrow&&drawer&&<button className="workspace-shade" aria-label="关闭项目导航" onClick={closeDrawer}/>}
-    {visible&&<aside id="project-navigation" ref={sidebarRef} className={`project-sidebar ${narrow?"drawer":""}`} role={narrow?"dialog":undefined} aria-modal={narrow?true:undefined} aria-label="项目导航">
-      <div className="sidebar-brand"><span className="brand"><span className="brand-mark">t.</span><span>trash</span></span><button className="icon-button" title="隐藏导航" aria-label="隐藏导航" onClick={()=>narrow?closeDrawer():setHidden(true)}><PanelLeftClose size={17}/></button></div>
-      <div className="sidebar-create"><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button><button className="secondary-button" aria-label="更多项目操作" aria-expanded={newMenu} onClick={()=>{if(!newMenu&&!canLeave())return;setNewMenu(!newMenu);}}><ChevronDown size={15}/></button></div>
-      {newMenu&&<div className="sidebar-secondary"><RestoreKnowledge onRestored={(restored)=>{void refresh().then(()=>{if(restored)navigate(projectPath(restored.project_id,"overview"),false,true);});setNewMenu(false);}}/></div>}
-      <label className="sidebar-search"><Search size={15}/><input aria-label="搜索项目" placeholder="搜索项目…" value={query} onChange={event=>setQuery(event.target.value)}/></label>
-      <div className="sidebar-list-heading"><span>研究项目</span><span>{projects.length}</span><button className="icon-button" title="刷新项目" aria-label="刷新项目" disabled={loading} onClick={()=>void refresh()}><RefreshCw size={13} className={loading?"spin":""}/></button></div>
-      <nav className="sidebar-project-list" aria-label="研究项目">{filtered.map(item=><button key={item.project_id} className={`sidebar-project-link ${project?.project_id===item.project_id?"selected":""}`} aria-current={project?.project_id===item.project_id?"page":undefined} title={item.title} onClick={()=>go(item.project_id)}><FolderOpen size={16}/><span>{item.title}</span></button>)}{!loading&&!filtered.length&&<p className="sidebar-empty">{query?"没有匹配的项目":"还没有研究项目"}</p>}</nav>
-      <div className="sidebar-footer"><ThemeControl/><span className="local-indicator"><i/>本地工作区</span></div>
+    {showSidebar&&<aside id="project-navigation" ref={sidebarRef} className={`project-sidebar ${narrow?"drawer":""} ${compact?"compact":""}`} role={narrow?"dialog":undefined} aria-modal={narrow?true:undefined} aria-label="项目导航">
+      <div className="sidebar-brand">{!compact&&<span className="brand"><span className="brand-mark">t.</span><span>trash</span></span>}<button className="icon-button" title={compact?"展开导航":"隐藏导航"} aria-label={compact?"展开导航":"隐藏导航"} onClick={()=>narrow?closeDrawer():setHidden(!hidden)}>{compact?<PanelLeftOpen size={18}/>:<PanelLeftClose size={17}/>}</button></div>
+      {inside&&project?<>
+        <button type="button" className="sidebar-back" title="返回项目列表" aria-label="返回项目列表" onClick={()=>{setSidebarLayer("projects");setNewMenu(false);requestAnimationFrame(()=>sidebarRef.current?.querySelector<HTMLElement>('.sidebar-search input,.sidebar-create button')?.focus());}}><ArrowLeft size={16}/><span>返回项目列表</span></button>
+        <div className="sidebar-current-project" title={project.title}><span className="sidebar-current-symbol" aria-hidden="true">{project.title.slice(0,1)}</span><div><small>当前项目</small><strong>{project.title}</strong></div></div>
+        <nav className="sidebar-page-list" aria-label="项目功能">{projectPages.map(item=>{const Icon=pageIcons[item.id];return <button type="button" key={item.id} className={`sidebar-page-link ${page===item.id?"active":""}`} aria-current={page===item.id?"page":undefined} aria-label={item.label} title={item.label} onClick={()=>goPage(item.id)}><Icon size={18}/><span>{item.label}</span></button>;})}</nav>
+      </>:<>
+        <div className="sidebar-create"><button className="primary-button" aria-label="新建项目" title="新建项目" onClick={openCreate}><Plus size={16}/><span>新建项目</span></button>{!compact&&<button className="secondary-button" aria-label="更多项目操作" aria-expanded={newMenu} onClick={()=>{if(!newMenu&&!canLeave())return;setNewMenu(!newMenu);}}><ChevronDown size={15}/></button>}</div>
+        {newMenu&&!compact&&<div className="sidebar-secondary"><RestoreKnowledge onRestored={(restored)=>{void refresh().then(()=>{if(restored)navigate(projectPath(restored.project_id,"overview"),false,true);});setNewMenu(false);}}/></div>}
+        {!compact&&<label className="sidebar-search"><Search size={15}/><input aria-label="搜索项目" placeholder="搜索项目…" value={query} onChange={event=>setQuery(event.target.value)}/></label>}
+        <div className="sidebar-list-heading"><span>研究项目</span><span>{projects.length}</span><button className="icon-button" title="刷新项目" aria-label="刷新项目" disabled={loading} onClick={()=>void refresh()}><RefreshCw size={13} className={loading?"spin":""}/></button></div>
+        <nav className="sidebar-project-list" aria-label="研究项目">{(compact?projects:filtered).map(item=><button key={item.project_id} className={`sidebar-project-link ${project?.project_id===item.project_id?"selected":""}`} aria-current={project?.project_id===item.project_id?"page":undefined} aria-label={item.title} title={item.title} onClick={()=>go(item.project_id)}>{compact?<span className="sidebar-project-glyph" aria-hidden="true">{item.title.slice(0,1)}</span>:<FolderOpen size={16}/>}<span className="sidebar-project-name">{item.title}</span></button>)}{!loading&&!(compact?projects:filtered).length&&<p className="sidebar-empty">{query&&!compact?"没有匹配的项目":"还没有研究项目"}</p>}</nav>
+      </>}
+      <div className="sidebar-footer">{compact?<button type="button" className="icon-button" title="展开导航以设置主题" aria-label="展开导航以设置主题" onClick={()=>setHidden(false)}><Palette size={17}/></button>:<><ThemeControl/><span className="local-indicator"><i/>本地工作区</span></>}</div>
     </aside>}
     <div className="workspace-main">
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
         <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{project?.research_question??"整理文献、记录思路，逐步推进研究。"}</p></div>
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
-      {project&&<nav className="workspace-pages" aria-label="项目功能">{projectPages.map(item=><button key={item.id} className={page===item.id?"active":""} aria-current={page===item.id?"page":undefined} onClick={()=>goPage(item.id)}>{item.label}</button>)}</nav>}
       <main className="workspace-content">
         {error&&<div className="notice error-notice" role="alert">{error}</div>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+":"+path}>

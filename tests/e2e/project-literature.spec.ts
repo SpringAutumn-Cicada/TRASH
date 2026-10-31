@@ -7,6 +7,11 @@ test("项目功能导航不误报未保存，实验五页签可用，删除无�
   await page.getByLabel("研究问题").fill("验证实验与项目导航的完整流程");
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await expect(page.getByRole("heading", { name: "实验导航与删除测试" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "项目功能" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "研究项目" })).toHaveCount(0);
+  await page.getByRole("button", { name: "返回项目列表", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "实验导航与删除测试" })).toBeVisible();
+  await page.getByRole("navigation", { name: "研究项目" }).getByRole("button", { name: "实验导航与删除测试", exact: true }).click();
   const dialogs: string[] = [];
   page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
   const navigation = page.getByRole("navigation", { name: "项目功能" });
@@ -100,21 +105,22 @@ test("主题切换即时生效并在刷新后保留，且蓝色主题适配窄�
 });
 
 
-test("项目导航可完全隐藏并恢复偏好，窄屏作为抽屉展开", async ({ page }) => {
+test("两层导航可收起为图标栏并恢复偏好，窄屏作为抽屉展开", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: "研究项目" })).toBeVisible();
   await page.getByRole("button", { name: "隐藏导航", exact: true }).first().click();
-  await expect(page.getByRole("navigation", { name: "研究项目" })).toHaveCount(0);
+  await expect(page.locator(".project-sidebar.compact")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "研究项目" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("button", { name: "展开导航", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "展开导航", exact: true }).click();
+  await expect(page.locator(".workspace-header").getByRole("button", { name: "展开导航", exact: true })).toBeVisible();
+  await page.locator(".workspace-header").getByRole("button", { name: "展开导航", exact: true }).click();
   await expect(page.getByLabel("搜索项目", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("navigation", { name: "研究项目" })).toHaveCount(0);
-  await page.getByRole("button", { name: "展开导航", exact: true }).click();
+  await page.locator(".workspace-header").getByRole("button", { name: "展开导航", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "项目导航" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "项目导航" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "展开导航", exact: true })).toBeFocused();
+  await expect(page.locator(".workspace-header").getByRole("button", { name: "展开导航", exact: true })).toBeFocused();
 });
