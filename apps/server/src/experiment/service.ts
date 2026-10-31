@@ -15,7 +15,7 @@ export class ExperimentService {
   readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;readonly terminals:TerminalService;
   private inFlight=new Set<string>();private closed=false;private timer:ReturnType<typeof setInterval>;
   constructor(readonly store:TrashStore){
-    this.data=new ExperimentStore(store.db);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data);this.terminals=new TerminalService(this.ssh);
+    this.data=new ExperimentStore(store.db);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
     this.timer=setInterval(()=>{void this.tick();},5000);this.timer.unref();
   }

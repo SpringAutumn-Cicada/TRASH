@@ -18,7 +18,7 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     const controller = new AbortController(); let alive = true;
     setLoadingPassword(true); setPassword(""); setOriginalPassword("");
     void fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/ssh-profiles/${encodeURIComponent(selectedId)}/credentials`, { cache: "no-store", signal: controller.signal }).then(async response => {
-      if (!response.ok) throw new Error("无法读取已保存的会话密码，请关闭弹窗后重试。");
+      if (!response.ok) throw new Error("无法读取已保存的密码，请关闭弹窗后重试。");
       return await response.json() as { password: string | null };
     }).then(data => { if (alive) { setPassword(data.password ?? ""); setOriginalPassword(data.password ?? ""); } }).catch(cause => { if (alive) setError(cause instanceof Error ? cause.message : "读取密码失败。"); }).finally(() => { if (alive) setLoadingPassword(false); });
     return () => { alive = false; controller.abort(); };
@@ -30,7 +30,7 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     try {
       const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/ssh-profiles/${mode === "add" ? "from-command" : encodeURIComponent(selectedId)}`, { method: mode === "add" ? "POST" : "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, command, password: credential }) });
       const data = await response.json();
-      if (!response.ok) throw new Error(({ TERMINAL_PROFILE_BUSY: "该主机有终端连接，请先在 AutoDL 工作区断开后再编辑。", SSH_LOGIN_COMMAND_INVALID: "请填写 ssh -p 端口 用户名@主机，不要附带其他命令。", SSH_NEW_CONNECTION_PASSWORD_REQUIRED: "连接信息改变后，请填写新实例的密码。", SSH_PROFILE_DUPLICATE: "已存在相同连接的主机，请选择原主机进行编辑。", EXPERIMENT_ACTIVE: "此主机有未结束实验，暂不能修改配置。", INVALID_REQUEST: "请检查主机名、SSH 指令与密码。" } as Record<string, string>)[data.error] ?? "保存实例失败，请检查输入后重试。");
+      if (!response.ok) throw new Error(({ SSH_CREDENTIAL_STORE_FAILED: "本机密码保存失败，请检查数据目录权限及设备密钥。", TERMINAL_PROFILE_BUSY: "该主机有终端连接，请先在 AutoDL 工作区断开后再编辑。", SSH_LOGIN_COMMAND_INVALID: "请填写 ssh -p 端口 用户名@主机，不要附带其他命令。", SSH_NEW_CONNECTION_PASSWORD_REQUIRED: "连接信息改变后，请填写新实例的密码。", SSH_PROFILE_DUPLICATE: "已存在相同连接的主机，请选择原主机进行编辑。", EXPERIMENT_ACTIVE: "此主机有未结束实验，暂不能修改配置。", INVALID_REQUEST: "请检查主机名、SSH 指令与密码。" } as Record<string, string>)[data.error] ?? "保存实例失败，请检查输入后重试。");
       onSaved(data.profile);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败。"); }
     finally { setBusy(false); }
@@ -50,9 +50,9 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     <label>SSH 登录指令<input className="autodl-ssh-command" required autoComplete="off" spellCheck={false} value={command} disabled={busy} onChange={event => setCommand(event.target.value)} placeholder="ssh -p 14325 root@connect.bjb3.seetacloud.com"/></label>
     <label>实例密码<input required={mode === "add"} type="password" autoComplete="new-password" value={password} disabled={busy || loadingPassword} onChange={event => setPassword(event.target.value)} placeholder={loadingPassword ? "正在读取原密码…" : "填写 SSH 登录密码"}/></label>
     {mode === "edit" && loadingPassword && <p className="autodl-dialog-hint" role="status">正在读取当前主机的原密码…</p>}
-    {mode === "edit" && !loadingPassword && selected?.auth === "password" && !originalPassword && <p className="autodl-dialog-hint" role="status">当前服务没有保存该主机的密码，可能已重启，请重新输入。</p>}
+    {mode === "edit" && !loadingPassword && selected?.auth === "password" && !originalPassword && <p className="autodl-dialog-hint" role="status">该实例尚未保存密码，请输入一次并保存，后续重启平台无需重复填写。</p>}
     {mode === "edit" && selected && selected.auth !== "password" && <p className="autodl-dialog-hint">当前使用私钥或 SSH Agent；填写新密码将切换为密码认证，留空保留原认证方式。</p>}
-    <p className="autodl-dialog-hint">主机名仅用于平台显示。原密码以遮罩回填，可直接修改；密码只在本次服务及弹窗内存中使用。更换连接后需核对指纹并填写对应密码。</p>
+    <p className="autodl-dialog-hint">主机名仅用于平台显示。原密码以遮罩回填，可直接修改；密码在本机加密保存，重启平台后仍可使用。更换连接后需核对指纹并填写对应密码。</p>
     {error && <p role="alert" className="notice error-notice">{error}</p>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || loadingPassword || !command.trim() || (mode === "add" ? !password : !selectedId)}>{busy && <LoaderCircle size={14} className="spin"/>}{busy ? "正在保存…" : "保存实例"}</button></div>
   </form></div>, document.body);

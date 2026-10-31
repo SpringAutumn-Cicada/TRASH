@@ -190,7 +190,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const input = z.object({ confirm_title: z.string() }).strict().parse(await readJson(request));
       if (input.confirm_title !== project.title) { sendJson(response, 400, { error: "PROJECT_TITLE_MISMATCH" }); return; }
       if (agent.isProjectBusy(projectId) || experiments.busyProject(projectId) || codeAgent.busy(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
-      sendJson(response, 200, store.deleteProject(projectId));
+      const sshProfiles = experiments.data.profiles(projectId);
+      const deleted = store.deleteProject(projectId);
+      for (const profile of sshProfiles) experiments.ssh.forget(profile.profile_id);
+      sendJson(response, 200, deleted);
       return;
     }
     if (await knowledgeRoute(request, response, url, projectId, subpath, store, knowledge, readJson, sendJson, agent)) return;

@@ -3,17 +3,24 @@ import { readFile } from "node:fs/promises";
 import { Client, type SFTPWrapper } from "ssh2";
 import { ExperimentStore, experimentError } from "@trash/storage";
 import type { SshProfile } from "@trash/protocol";
+import { CredentialStore } from "./credential-store.js";
 export const quote = (value:string):string => `'${value.replace(/'/g, `'"'"'`)}'`;
 export function redact(value:string):string {return value.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+/g,"[REDACTED]").replace(/((?:password|passphrase|token|secret|api[_-]?key)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");}
 export class SshService {
   private credentials=new Map<string,{password?:string;passphrase?:string}>();
   private observed=new Map<string,string>();
   private clients=new Set<Client>();private closed=false;
-  constructor(readonly store:ExperimentStore) {}
-  setCredential(id:string,value:{password?:string;passphrase?:string}):void{this.credentials.set(id,value);}
-  passwordForEditing(profile:SshProfile):string|null{return profile.auth==="password"?this.credentials.get(profile.profile_id)?.password??null:null;}
-  forget(id:string):void{this.credentials.delete(id);this.observed.delete(id);}
-  hasCredential(profile:SshProfile):boolean{return profile.auth==="agent"?Boolean(process.env.SSH_AUTH_SOCK):profile.auth==="key"?true:this.credentials.has(profile.profile_id);}
+  private saved:CredentialStore;
+  constructor(readonly store:ExperimentStore,root:string) {this.saved=new CredentialStore(root);}
+  private credential(id:string):{password?:string;passphrase?:string}{
+    const current=this.credentials.get(id);if(current?.password)return current;
+    const password=this.saved.read(id);const value={...current,...(password?{password}:{})};
+    if(password)this.credentials.set(id,value);return value;
+  }
+  setCredential(id:string,value:{password?:string;passphrase?:string}):void{if(value.password)this.saved.save(id,value.password);this.credentials.set(id,{...this.credentials.get(id),...value});}
+  passwordForEditing(profile:SshProfile):string|null{return profile.auth==="password"?this.credential(profile.profile_id).password??null:null;}
+  forget(id:string):void{this.saved.remove(id);this.credentials.delete(id);this.observed.delete(id);}
+  hasCredential(profile:SshProfile):boolean{return profile.auth==="agent"?Boolean(process.env.SSH_AUTH_SOCK):profile.auth==="key"?true:Boolean(this.credential(profile.profile_id).password);}
   close():void{this.closed=true;for(const client of this.clients)client.destroy();this.clients.clear();this.credentials.clear();this.observed.clear();}
   async probe(profile:SshProfile):Promise<string>{
     return new Promise((resolve,reject)=>{
@@ -28,7 +35,7 @@ export class SshService {
   async connect(profile:SshProfile):Promise<RemoteConnection>{
     if(this.closed)experimentError("SERVER_STOPPING",409);
     if(!profile.fingerprint)experimentError("SSH_FINGERPRINT_REQUIRED",409);
-    const credentials=this.credentials.get(profile.profile_id)??{};
+    const credentials=this.credential(profile.profile_id);
     if(profile.auth==="password"&&!credentials.password)experimentError("SSH_CREDENTIAL_REQUIRED",409);
     const key=profile.auth==="key"?await readFile(profile.key_path??experimentError("SSH_KEY_REQUIRED")):undefined;
     if(profile.auth==="agent"&&!process.env.SSH_AUTH_SOCK)experimentError("SSH_AGENT_UNAVAILABLE",409);
