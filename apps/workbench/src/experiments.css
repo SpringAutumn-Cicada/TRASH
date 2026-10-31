@@ -100,3 +100,14 @@
 .reproduction-record-actions{display:flex;justify-content:flex-end;margin-bottom:12px}
 @media(max-width:900px){.reproduction-operation-modules{grid-template-columns:1fr}.reproduction-operation-card{padding:16px}.reproduction-operation-heading{margin-bottom:13px}}
 @media(max-width:480px){.reproduction-deploy-module .reproduction-module-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.reproduction-module-actions .secondary-button{min-width:0;padding:8px;font-size:11px}}
+
+.reproduction-upload-dialog{width:640px;max-width:100%;padding:25px;border-radius:16px;gap:14px}
+.reproduction-upload-dialog .modal-heading{align-items:flex-start;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.reproduction-upload-dialog .modal-heading h2{display:flex;align-items:center;gap:9px;margin:0;color:var(--ink);font-size:22px}
+.reproduction-upload-dialog .modal-heading h2 svg{color:var(--green)}
+.reproduction-upload-dialog .modal-heading p{margin:8px 0 0;color:var(--muted);overflow-wrap:anywhere}
+.reproduction-upload-dialog>p{font-size:12px;line-height:1.8;color:var(--muted)}
+.reproduction-upload-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:8px;padding-top:16px;border-top:1px solid var(--line)}
+.reproduction-upload-footer>span{font-size:11px;color:var(--muted);line-height:1.7}
+.reproduction-upload-footer>button{flex:none}
+@media(max-width:600px){.reproduction-upload-dialog{padding:18px}.reproduction-upload-dialog .repository-path-control{flex-wrap:wrap}.reproduction-upload-footer{align-items:flex-start}}
