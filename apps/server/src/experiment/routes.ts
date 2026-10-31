@@ -39,10 +39,10 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="file"&&method==="GET"){send(response,200,await service.reproductions.file(projectId,parts[1],url.searchParams.get("path")??""));return true;}
       if(parts[2]==="snapshots"&&method==="POST"){send(response,201,{snapshot:await service.reproductions.snapshot(projectId,parts[1])});return true;}
       if(parts[2]==="upload"&&method==="POST"){
-        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().min(1).max(2000),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().max(2000).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
         if(!input.directory.startsWith("/")||input.directory.split("/").includes("..")||/[\x00-\x1f]/.test(input.directory))experimentError("UPLOAD_PATH_INVALID");
         const profile=service.data.profile(projectId,input.profile_id),snapshot=await service.reproductions.snapshot(projectId,parts[1]),remote=await service.ssh.connect(profile);
-        try{const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`,input.python);let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}send(response,201,{...deployed,record_saved});}finally{remote.close();}return true;
+        try{const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`);let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}send(response,201,{...deployed,record_saved});}finally{remote.close();}return true;
       }
     }
     }finally{release();}
