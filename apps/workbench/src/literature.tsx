@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, X } from "lucide-react";
+import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Trash2, X } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
@@ -50,6 +50,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   const [selectedSource, setSelectedSource] = useState<{ source: Source; segments: Array<{ locator: SourceLocator; text: string }> }>();
   const [importing, setImporting] = useState(false);
   const [urlValue, setUrlValue] = useState("");
+  const [deleting, setDeleting] = useState<string>();
 
   const alive = useRef(true);
   const sourceRequest = useRef(0);
@@ -125,6 +126,22 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
     catch (cause) { setError(uiError(cause, "无法打开文献来源，请重试。")); }
   };
 
+  const deleteSource = async (source: Source) => {
+    if (deleting || !window.confirm(`删除参考文献“${source.title}”？\n将移除记录、阅读信息及正文检索内容，原始文件保留。此操作无法撤销。`)) return;
+    setDeleting(source.source_id); setError("");
+    try {
+      await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+      sourceRequest.current++;
+      if (alive.current) {
+        setSelectedSource(current => current?.source.source_id === source.source_id ? undefined : current);
+        setPassages(current => current.filter(item => item.source.source_id !== source.source_id));
+        setDetail(current => current ? { ...current, sources: current.sources.filter(item => item.source_id !== source.source_id) } : current);
+        onChanged();
+      }
+    } catch (cause) { if (alive.current) setError(uiError(cause, "删除文献失败，请重试。")); }
+    finally { if (alive.current) setDeleting(undefined); }
+  };
+
   const toggleResult = (ref: string) => setSelectedResults((previous) => {
     const next = new Set(previous);
     if (next.has(ref)) next.delete(ref); else next.add(ref);
@@ -141,7 +158,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
             <form className="url-import" onSubmit={(event) => void importUrl(event)}><Link size={15} className="link-icon" /><input type="url" required value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="导入公开网页地址"/><button className="secondary-button" disabled={importing}>{importing ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}添加网页</button></form>
             {detail.sources.length === 0 ? <div className="source-empty"><FileUp size={21}/><span>尚未导入文献</span></div> : <div className="source-table">
               <div className="source-table-header"><span>标题 / 作者</span><span>年份</span><span>类型</span><span>状态</span></div>
-              {detail.sources.map((source) => <button className="source-row" key={source.source_id} onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button>)}
+              {detail.sources.map((source) => <div className="source-row-container" key={source.source_id}><button className="source-row" onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button><button type="button" className="source-delete-button" title="删除参考文献" aria-label={`删除参考文献：${source.title}`} disabled={Boolean(deleting) || importing || searching} onClick={() => void deleteSource(source)}>{deleting === source.source_id ? <LoaderCircle size={13} className="spin"/> : <Trash2 size={13}/>}</button></div>)}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />

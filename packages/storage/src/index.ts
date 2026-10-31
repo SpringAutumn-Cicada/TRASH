@@ -269,6 +269,27 @@ export class TrashStore {
     return row ? sourceSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
+  deleteSource(projectId: string, sourceId: string): { deleted: true; original_files_preserved: true } {
+    return this.db.transaction(() => {
+      const source = this.getSource(sourceId);
+      if (!source || source.project_id !== projectId) throw Object.assign(new Error("SOURCE_NOT_FOUND"), { statusCode: 404 });
+      if (this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(projectId)) throw Object.assign(new Error("PROJECT_HAS_ACTIVE_TASKS"), { statusCode: 409 });
+      const versions = this.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=?").all(projectId) as { data: string }[];
+      const merged = this.db.prepare("SELECT 1 FROM source_details WHERE source_id<>? AND json_extract(data,'$.merged_into')=? LIMIT 1").get(sourceId, sourceId);
+      // Preserve evidence references in every historical version, including Wiki text.
+      if (versions.some(version => version.data.includes(sourceId)) || merged) throw Object.assign(new Error("SOURCE_IN_USE"), { statusCode: 409 });
+      this.db.prepare("DELETE FROM source_segments_fts WHERE source_id=?").run(sourceId);
+      this.db.prepare("DELETE FROM source_segments WHERE source_id=?").run(sourceId);
+      this.db.prepare("DELETE FROM source_attachments WHERE source_id=?").run(sourceId);
+      this.db.prepare("DELETE FROM source_details WHERE source_id=?").run(sourceId);
+      this.db.prepare("DELETE FROM sources WHERE source_id=? AND project_id=?").run(sourceId, projectId);
+      const at = new Date().toISOString();
+      this.db.prepare("UPDATE projects SET updated_at=?,data=json_set(data,'$.updated_at',?) WHERE project_id=?").run(at, at, projectId);
+      // Imported bibliography files can be shared by several sources.
+      return { deleted: true as const, original_files_preserved: true as const };
+    })();
+  }
+
   listSourceSegments(sourceId: string): StoredSourceSegment[] {
     const rows = this.db.prepare("SELECT source_id, ordinal, locator_json, content FROM source_segments WHERE source_id = ? ORDER BY ordinal").all(sourceId) as Array<{ source_id: string; ordinal: number; locator_json: string; content: string }>;
     return rows.map((row) => ({ source_id: row.source_id, ordinal: row.ordinal, locator: JSON.parse(row.locator_json) as SourceLocator, text: row.content }));

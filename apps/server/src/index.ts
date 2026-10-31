@@ -145,6 +145,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    const deleteSourceRoute = subpath.match(/^sources\/([^/]+)$/);
+    if (deleteSourceRoute && method === "DELETE") {
+      z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
+      if (agent.isProjectBusy(projectId) || codeAgent.busy(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
+      sendJson(response, 200, store.deleteSource(projectId, decodeURIComponent(deleteSourceRoute[1]))); return;
+    }
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
       const permission = codeAgent.authorizeTool(projectId, token);
