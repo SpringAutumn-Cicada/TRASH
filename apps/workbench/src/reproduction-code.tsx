@@ -77,7 +77,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
   if(editingId)({code}=await call<{code:ReproductionCode}>(`/reproductions/${editingId}`,metadata,"PUT"));
   else if(zip){
    if(zip.size>200*1024*1024)throw new Error("ZIP 文件不能超过 200 MiB。");
-   const response=await fetch(`${base}/reproductions/import?${new URLSearchParams({name})}`,{method:"POST",headers:{"content-type":"application/zip"},body:zip});const data=await response.json();if(!response.ok)throw new Error(messages[data.error]??"ZIP 导入失败。");
+   const response=await fetch(`${base}/reproductions/import?${new URLSearchParams({name,filename:zip.name})}`,{method:"POST",headers:{"content-type":"application/zip"},body:zip});const data=await response.json();if(!response.ok)throw new Error(messages[data.error]??"ZIP 导入失败。");
    code=data.code;if(alive.current){setEditingId(code.id);setSelected(code.id);}({code}=await call<{code:ReproductionCode}>(`/reproductions/${code.id}`,metadata,"PUT"));
   }else throw new Error("请选择 ZIP 压缩包后保存。");
   if(alive.current){setEditing(false);setSelected(code.id);await load();setNotice("复现代码已保存，无需 Git 仓库。");}

@@ -29,7 +29,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     try{
     if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}
     if(parts.length===1&&method==="POST"){experimentError("REPRODUCTION_ZIP_REQUIRED",400);}
-    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")))});return true;}
+    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")),z.string().max(255).optional().parse(url.searchParams.get("filename")??undefined))});return true;}
     if(parts[1]){
       service.reproductions.get(projectId,parts[1]);
       if(parts.length===2&&method==="PUT"){send(response,200,{code:service.reproductions.update(projectId,parts[1],await readJson(request))});return true;}
@@ -49,7 +49,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         try{
           const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
           service.terminals.connection(projectId,profile.profile_id);
-          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`,report);
+          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,input.directory,report);
           let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}
           send(response,201,{...deployed,record_saved});
         }catch(error){report("failed");throw error;}return true;

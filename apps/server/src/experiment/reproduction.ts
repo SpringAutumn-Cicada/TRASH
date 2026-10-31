@@ -27,6 +27,10 @@ export class ReproductionService {
  recordUpload(project:string,id:string,profile:string,value:{path:string;snapshot:ReproductionSnapshot}){const code=this.get(project,id);this.save({...code,uploads:[...(code.uploads??[]),{profile_id:profile,path:value.path,snapshot_id:value.snapshot.snapshot_id,sha256:value.snapshot.sha256,at:new Date().toISOString()}].slice(-50)});}
 
  private root(project:string){return join(this.store.root,"projects",project,"reproductions");}
+ private archiveName(name:string){
+  if(!name||name==="."||name===".."||/[\\/\x00-\x1f\x7f]/.test(name)||!name.toLowerCase().endsWith(".zip")||Buffer.byteLength(name,"utf8")>255)experimentError("REPRODUCTION_ARCHIVE_NAME_INVALID",400);
+  return name;
+ }
  private directoryName(name:string){
   const cleaned=name.normalize("NFC").replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_").trim().replace(/[. ]+$/g,"");
   let slug="";for(const char of cleaned){if(Buffer.byteLength(slug+char,"utf8")>180)break;slug+=char;}
@@ -58,20 +62,23 @@ export class ReproductionService {
 
  update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.namedDirectory(this.save({...old,...input,source_id:input.source_id}));}
  remove(project:string,id:string){this.get(project,id);rmSync(this.record(project,id));}
- async importZip(project:string,request:IncomingMessage,name:string){
+ async importZip(project:string,request:IncomingMessage,name:string,filename?:string){
+  const archive_name=this.archiveName(filename??`${this.directoryName(name).slice(6)}.zip`);
   const id=`repro_${randomUUID()}`,root=this.allocateDirectory(project,name);const zip=join(root,"source.zip"),code=join(root,"code");let bytes=0;
-  try{await pipeline(request,new Transform({transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;callback(bytes>200*1024*1024?new Error("ARCHIVE_LIMIT"):null,chunk);}}),createWriteStream(zip,{flags:"wx",mode:0o600}));await this.python("extract",zip,code);await rm(zip);return this.save({id,project_id:project,name:name.slice(0,200)||"复现代码",path:code,source_url:"",notes:"",created_at:new Date().toISOString(),imported:true});}
+  try{await pipeline(request,new Transform({transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;callback(bytes>200*1024*1024?new Error("ARCHIVE_LIMIT"):null,chunk);}}),createWriteStream(zip,{flags:"wx",mode:0o600}));await this.python("extract",zip,code);await rm(zip);return this.save({id,project_id:project,name:name.slice(0,200)||"复现代码",archive_name,path:code,source_url:"",notes:"",created_at:new Date().toISOString(),imported:true});}
   catch{await rm(root,{recursive:true,force:true});experimentError("REPRODUCTION_IMPORT_FAILED",422);}
  }
  private async python(mode:string,source:string,target:string){try{return JSON.parse((await execute("python3",["-c",REPRO_ARCHIVE,mode,source,target],{timeout:120000,maxBuffer:16*1024*1024})).stdout);}catch{experimentError("REPRODUCTION_ARCHIVE_FAILED",422);}}
  private async safe(project:string,id:string,path:string){const root=await realpath(this.get(project,id).path);if(isAbsolute(path)||path.split(/[\\/]/).some(p=>p===".."||p===".git")||path.includes("\0"))experimentError("REPOSITORY_PATH_INVALID");const target=await realpath(resolve(root,path||".")),rel=relative(root,target);if(rel===".."||rel.startsWith(`..${sep}`)||isAbsolute(rel)||rel.split(sep).includes(".git"))experimentError("REPOSITORY_PATH_INVALID");return target;}
  async tree(project:string,id:string,path:string){return (await readdir(await this.safe(project,id,path),{withFileTypes:true})).filter(e=>e.name!==".git").slice(0,1000).map(e=>({name:e.name,path:path?`${path}/${e.name}`:e.name,directory:e.isDirectory(),symlink:e.isSymbolicLink()}));}
  async file(project:string,id:string,path:string){const target=await this.safe(project,id,path),info=await stat(target);if(!info.isFile())experimentError("NOT_A_FILE");if(info.size>1024*1024)return {path,size_bytes:info.size,preview:false,reason:"文件超过 1 MiB"};const data=await readFile(target);try{if(data.includes(0))throw new Error();return {path,size_bytes:data.length,preview:true,text:new TextDecoder("utf8",{fatal:true}).decode(data)};}catch{return {path,size_bytes:info.size,preview:false,reason:"二进制或非 UTF-8 文件"};}}
- async snapshot(project:string,id:string):Promise<ReproductionSnapshot>{const code=this.get(project,id),snapshot_id=`snapshot_${randomUUID()}`,root=join(this.root(project),"snapshots",snapshot_id);const rel=relative(code.path,root);if(rel===""||!rel.startsWith(`..${sep}`)&&rel!==".."&&!isAbsolute(rel))experimentError("REPRODUCTION_DIRECTORY_INVALID");await mkdir(root,{recursive:true});const path=join(root,"code.zip");try{const manifest=await this.python("snapshot",code.path,path);const bytes=await readFile(path);if(bytes.length>200*1024*1024)experimentError("ARCHIVE_LIMIT");const value:ReproductionSnapshot={snapshot_id,reproduction_id:id,name:code.name,source_id:code.source_id,sha256:createHash("sha256").update(bytes).digest("hex"),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,"manifest.json"),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}}
+ async snapshot(project:string,id:string):Promise<ReproductionSnapshot>{const code=this.get(project,id),snapshot_id=`snapshot_${randomUUID()}`,root=join(this.root(project),"snapshots",snapshot_id);const rel=relative(code.path,root);if(rel===""||!rel.startsWith(`..${sep}`)&&rel!==".."&&!isAbsolute(rel))experimentError("REPRODUCTION_DIRECTORY_INVALID");await mkdir(root,{recursive:true});const path=join(root,"code.zip");try{const manifest=await this.python("snapshot",code.path,path);const bytes=await readFile(path);if(bytes.length>200*1024*1024)experimentError("ARCHIVE_LIMIT");const value:ReproductionSnapshot={snapshot_id,reproduction_id:id,name:code.name,archive_name:code.archive_name??`${this.directoryName(code.name).slice(6)}.zip`,source_id:code.source_id,sha256:createHash("sha256").update(bytes).digest("hex"),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,"manifest.json"),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}}
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
  async preparation(project:string,snapshot:ReproductionSnapshot,path:string){await this.bundle(project,snapshot);const script=String.raw`import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);i=z.getinfo(sys.argv[2]);assert i.file_size<=1048576;sys.stdout.write(z.read(i).decode('utf8'))`;return (await execute("python3",["-c",script,join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),path],{maxBuffer:2*1024*1024})).stdout;}
  async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{}){
+  const archiveName=this.archiveName(snapshot.archive_name??`${this.directoryName(snapshot.name).slice(6)}.zip`);
+  const parent=directory;
   let stage="REPRODUCTION_SNAPSHOT_READ_FAILED";
   try{
    const bundle=await this.bundle(project,snapshot);
@@ -83,20 +90,29 @@ export class ReproductionService {
    stage="REPRODUCTION_REMOTE_DIRECTORY_FAILED";
    const sftp=await remote.sftp();
    try{
-    await new Promise<void>((resolve,reject)=>sftp.mkdir(directory,{mode:0o700},error=>error?reject(error):resolve()));
+    const stem=this.directoryName(archiveName.slice(0,-4)).slice(6);
+    let allocated=false;
+    for(let index=1;index<=10000;index++){
+     const candidate=posix.join(parent,index===1?stem:`${stem}_${index}`);
+     const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(candidate,error=>{if(!error)resolve(true);else if(Number((error as Error & {code?:number}).code)===2)resolve(false);else reject(error);}));
+     if(exists)continue;
+     await new Promise<void>((resolve,reject)=>sftp.mkdir(candidate,{mode:0o700},error=>error?reject(error):resolve()));
+     directory=candidate;allocated=true;break;
+    }
+    if(!allocated)throw new Error("UPLOAD_NAME_CONFLICT");
     await new Promise<void>((resolve,reject)=>sftp.mkdir(posix.join(directory,"code"),{mode:0o700},error=>error?reject(error):resolve()));
    }finally{sftp.end();}
    stage="REPRODUCTION_TRANSFER_FAILED";
    report("uploading",0,bundle.size);
-   await remote.upload(bundle.path,posix.join(directory,"code.zip"),(sent,total)=>report("uploading",sent,total));
+   await remote.upload(bundle.path,posix.join(directory,archiveName),(sent,total)=>report("uploading",sent,total));
    report("verifying",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_HASH_FAILED";
-   const output=await remote.exec(["sha256sum","--",posix.join(directory,"code.zip")],undefined,120000,16384);
+   const output=await remote.exec(["sha256sum","--",posix.join(directory,archiveName)],undefined,120000,16384);
    const hash=/^([a-fA-F0-9]{64})[ \t]/.exec(output.trim())?.[1].toLowerCase();
    if(hash!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
    report("extracting",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
-   await remote.exec(["unzip","-q","-n",posix.join(directory,"code.zip"),"-d",posix.join(directory,"code")],undefined,120000);
+   await remote.exec(["unzip","-q","-n",posix.join(directory,archiveName),"-d",posix.join(directory,"code")],undefined,120000);
    report("saving",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_MANIFEST_FAILED";
    await remote.write(posix.join(directory,"snapshot.json"),JSON.stringify(snapshot));
