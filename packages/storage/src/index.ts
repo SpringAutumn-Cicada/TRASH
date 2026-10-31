@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { makeId, researchProjectSchema, sourceSchema, type Artifact, type EvidencePassage, type ResearchProject, type Source, type SourceLocator } from "@trash/protocol";
@@ -22,6 +22,9 @@ export function getWorkspaceRoot(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "trash");
 }
 
+export { KnowledgeStore } from "./knowledge.js";
+export type { KnowledgeTask } from "./knowledge.js";
+
 export class TrashStore {
   readonly root: string;
   readonly db: Database.Database;
@@ -42,7 +45,12 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version >= 1) return;
+    if (version > 2) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 2) return;
+    if (version === 1) {
+      this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
+    }
+    if (version < 1) {
     this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE projects (
@@ -86,6 +94,23 @@ export class TrashStore {
       PRAGMA user_version = 1;
       COMMIT;
     `);
+    }
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE managed_files (artifact_id TEXT PRIMARY KEY REFERENCES artifacts(artifact_id), relative_path TEXT NOT NULL);
+      CREATE TABLE source_details (source_id TEXT PRIMARY KEY REFERENCES sources(source_id), data TEXT NOT NULL);
+      CREATE TABLE source_attachments (source_id TEXT NOT NULL REFERENCES sources(source_id), artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id), created_at TEXT NOT NULL, PRIMARY KEY(source_id,artifact_id));
+      CREATE TABLE knowledge_versions (object_id TEXT NOT NULL, version INTEGER NOT NULL, project_id TEXT NOT NULL REFERENCES projects(project_id), kind TEXT NOT NULL, title TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(object_id,version));
+      CREATE INDEX knowledge_project_kind ON knowledge_versions(project_id,kind,title);
+      CREATE TABLE knowledge_keys (project_id TEXT NOT NULL, kind TEXT NOT NULL, natural_key TEXT NOT NULL, object_id TEXT NOT NULL, PRIMARY KEY(project_id,kind,natural_key));
+      CREATE TABLE knowledge_metrics (object_id TEXT NOT NULL, version INTEGER NOT NULL, name TEXT NOT NULL, value REAL NOT NULL, unit TEXT NOT NULL, condition TEXT NOT NULL, project_id TEXT NOT NULL);
+      CREATE INDEX knowledge_metric_lookup ON knowledge_metrics(project_id,name,unit);
+      CREATE TABLE knowledge_reviews (object_id TEXT NOT NULL, version INTEGER NOT NULL, decision TEXT NOT NULL, comment TEXT NOT NULL, actor TEXT NOT NULL, at TEXT NOT NULL);
+      CREATE TABLE knowledge_tasks (task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(project_id), status TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE TABLE knowledge_task_events (seq INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES knowledge_tasks(task_id), at TEXT NOT NULL, message TEXT NOT NULL);
+      PRAGMA user_version = 2;
+      COMMIT;
+    `);
   }
 
   createProject(input: Omit<ResearchProject, "protocol_version" | "project_id" | "status" | "created_at" | "updated_at">): ResearchProject {
@@ -116,7 +141,7 @@ export class TrashStore {
     if (!this.getProject(projectId)) throw new Error("PROJECT_NOT_FOUND");
     const artifactId = makeId("artifact");
     const safeName = [...basename(name)].map((character) => character < " " || "\\/:*?\"<>|".includes(character) ? "_" : character).join("").slice(0, 180) || "source-file";
-    const directory = join(this.root, "projects", projectId, "files");
+    const directory = join(this.root, "projects", projectId, "raw");
     const target = join(directory, `${artifactId}-${safeName}`);
     const temporary = `${target}.tmp`;
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -137,7 +162,10 @@ export class TrashStore {
         created_at: new Date().toISOString(),
         verification_status: "verified"
       };
-      this.db.prepare("INSERT INTO artifacts VALUES (?, ?, ?, ?)").run(artifactId, projectId, JSON.stringify(artifact), sha256);
+      this.db.transaction(() => {
+        this.db.prepare("INSERT INTO artifacts VALUES (?, ?, ?, ?)").run(artifactId, projectId, JSON.stringify(artifact), sha256);
+        this.db.prepare("INSERT INTO managed_files VALUES (?,?)").run(artifactId, `projects/${projectId}/raw/${artifactId}-${safeName}`);
+      })();
       return artifact;
     } catch (error) {
       rmSync(temporary, { force: true });
@@ -168,6 +196,8 @@ export class TrashStore {
       }
     });
     transaction();
+    const at = new Date().toISOString();
+    for (const projectId of new Set(sources.map(source => source.project_id))) this.db.prepare("UPDATE projects SET updated_at=?,data=json_set(data,'$.updated_at',?) WHERE project_id=?").run(at,at,projectId);
   }
 
   listSources(projectId: string): Source[] {
@@ -183,6 +213,28 @@ export class TrashStore {
   listSourceSegments(sourceId: string): StoredSourceSegment[] {
     const rows = this.db.prepare("SELECT source_id, ordinal, locator_json, content FROM source_segments WHERE source_id = ? ORDER BY ordinal").all(sourceId) as Array<{ source_id: string; ordinal: number; locator_json: string; content: string }>;
     return rows.map((row) => ({ source_id: row.source_id, ordinal: row.ordinal, locator: JSON.parse(row.locator_json) as SourceLocator, text: row.content }));
+  }
+
+  artifactFile(projectId: string, artifactId: string): { artifact: Artifact; path: string } | undefined {
+    const row = this.db.prepare("SELECT data FROM artifacts WHERE artifact_id=? AND project_id=?").get(artifactId, projectId) as { data: string } | undefined;
+    if (!row) return undefined;
+    const artifact = JSON.parse(row.data) as Artifact;
+    const managed = this.db.prepare("SELECT relative_path FROM managed_files WHERE artifact_id=?").get(artifactId) as { relative_path: string } | undefined;
+    const path = managed ? resolve(this.root, managed.relative_path) : join(this.root, "projects", projectId, "files", `${artifactId}-${artifact.name}`);
+    if (!path.startsWith(`${this.root}/`) || !existsSync(path)) return undefined;
+    return { artifact, path };
+  }
+
+  discardArtifact(projectId: string, artifactId: string): void {
+    const file = this.artifactFile(projectId, artifactId);
+    this.db.prepare("DELETE FROM managed_files WHERE artifact_id=?").run(artifactId);
+    this.db.prepare("DELETE FROM artifacts WHERE artifact_id=? AND project_id=?").run(artifactId, projectId);
+    if (file) rmSync(file.path, { force: true });
+  }
+
+  readArtifact(projectId: string, artifactId: string): Uint8Array | undefined {
+    const file = this.artifactFile(projectId, artifactId);
+    return file ? readFileSync(file.path) : undefined;
   }
 
   search(projectId: string, query: string, limit = 20): EvidencePassage[] {

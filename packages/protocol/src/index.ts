@@ -185,3 +185,5 @@ export function makeId(prefix: "project" | "wfrun" | "agenttask" | "exptask" | "
 export function parseProtocolRecord<T>(schema: z.ZodType<T>, input: unknown): T {
   return schema.parse(input);
 }
+
+export * from "./knowledge.js";
