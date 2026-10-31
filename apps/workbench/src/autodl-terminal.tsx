@@ -15,17 +15,10 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
   useEffect(() => () => { void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token }, keepalive: true }).catch(() => {}); }, [projectId, session.id]);
   useEffect(() => {
     const controller = new AbortController(); let alive = true, connected = false;
-    const term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace', scrollback: 5000, convertEol: false, theme: { background: "#ffffff", foreground: "#26352e", cursor: "#27764d", selectionBackground: "#a8cdb780", black: "#26352e", red: "#b34747", green: "#27764d", yellow: "#926c15", blue: "#366db0", magenta: "#89549d", cyan: "#277f8b", white: "#657570", brightBlack: "#77877e", brightRed: "#c34b4b", brightGreen: "#328254", brightYellow: "#9d761a", brightBlue: "#467dc0", brightMagenta: "#9964ad", brightCyan: "#378f9b", brightWhite: "#36453e" } });
+    const term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace', scrollback: 5000, convertEol: false, theme: { background: "#10151d", foreground: "#d7e0eb", cursor: "#8bd5b0", selectionBackground: "#365678", black: "#253141", red: "#ed8796", green: "#a6da95", yellow: "#eed49f", blue: "#8aadf4", magenta: "#c6a0f6", cyan: "#8bd5ca", white: "#cad3f5", brightBlack: "#6e7e96", brightRed: "#f5a0ad", brightGreen: "#b8e5a9", brightYellow: "#f4deb3", brightBlue: "#a4bef8", brightMagenta: "#d5b7fa", brightCyan: "#a6e3db", brightWhite: "#f2f5fa" } });
     const fit = new FitAddon(); term.loadAddon(fit);
     term.open(container.current!);
     const element = container.current!;
-    const updateTheme = () => {
-      const style = getComputedStyle(element);
-      term.options.theme = { ...term.options.theme, background: style.backgroundColor, foreground: style.color, cursor: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#27764d" };
-    };
-    updateTheme();
-    const themeObserver = new MutationObserver(updateTheme);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
     term.attachCustomKeyEventHandler(event => {
       if (event.code === "KeyD" && event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault(); event.stopPropagation();
@@ -34,13 +27,28 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
       }
       return true;
     });
+    const legacyCopy = (text: string) => {
+      const previousFocus = document.activeElement;
+      const field = document.createElement("textarea");
+      field.value = text; field.readOnly = true;
+      field.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;z-index:2147483647";
+      document.body.appendChild(field);
+      try { field.focus(); field.select(); return document.execCommand("copy"); }
+      catch { return false; }
+      finally { field.remove(); if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true }); }
+    };
     const copySelection = (event: MouseEvent) => {
       const selection = term.getSelection();
       if (!selection) return;
       event.preventDefault(); event.stopPropagation();
+      // The synchronous fallback retains the right-click user gesture and works on HTTP LAN origins.
+      if (legacyCopy(selection)) { setCopyNotice("已复制选中文字"); return; }
       void (async () => {
-        try { await navigator.clipboard.writeText(selection); if (alive) setCopyNotice("已复制选中文字"); }
-        catch { if (alive) setCopyNotice("复制失败，请按 Ctrl+Shift+C 复制选区，或检查浏览器剪贴板权限。"); }
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+          await navigator.clipboard.writeText(selection);
+          if (alive) setCopyNotice("已复制选中文字");
+        } catch { if (alive) setCopyNotice("浏览器阻止复制：请在选中文字后按 Ctrl+Shift+C，或通过 localhost / HTTPS 访问。"); }
       })();
     };
     element.addEventListener("contextmenu", copySelection, true);
@@ -89,7 +97,7 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
       } catch (cause) { if (alive) { connected = false; term.options.disableStdin = true; setError(cause instanceof Error ? cause.message : "终端连接中断。"); setState("终端显示已中断"); } }
     };
     void stream();
-    return () => { alive = false; controller.abort(); clearTimeout(resizeTimer); observer.disconnect(); themeObserver.disconnect(); element.removeEventListener("contextmenu", copySelection, true); input.dispose(); term.dispose(); };
+    return () => { alive = false; controller.abort(); clearTimeout(resizeTimer); observer.disconnect(); element.removeEventListener("contextmenu", copySelection, true); input.dispose(); term.dispose(); };
   }, [projectId, session.id, attempt]);
-  return <section className="autodl-terminal-panel" aria-label={`终端窗口 ${number}`}><header><div className="autodl-terminal-identity"><TerminalSquare size={17}/><strong>{session.name}</strong><span className="autodl-terminal-number">{String(number).padStart(2,"0")}</span></div><div className="autodl-terminal-actions"><button type="button" className="icon-button" title="新建分屏（Shift+Alt+D）" aria-label="新建终端分屏" disabled={splitDisabled} onClick={onSplit}><Columns2 size={15}/></button><button type="button" className="icon-button" title="恢复终端显示" aria-label="恢复终端显示" disabled={closed || session.ended} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={15}/></button><button type="button" className="icon-button" title="关闭终端窗口" aria-label="关闭终端窗口" onClick={() => void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token } }).then(response => { if (!response.ok && response.status !== 404) throw new Error(); callbacks.current.onDisconnect(); }).catch(() => setError("断开失败，请检查服务状态。"))}><X size={15}/></button></div></header><div className="autodl-terminal-connection"><span title={`${session.username}@${session.host}:${session.port}`}>{session.username}@{session.host}:{session.port}</span><span role="status" className="autodl-terminal-status">{state}</span></div>{error && <p role="alert" className="notice error-notice">{error}</p>}<div ref={container} className="autodl-terminal-screen"/><footer><span>独立 Shell · Ctrl+C 中断前台命令</span><span role="status">{copyNotice || "长任务请使用 tmux 或实验 Runner"}</span></footer></section>;
+  return <section className="autodl-terminal-panel" aria-label={`终端窗口 ${number}`}><header><div className="autodl-terminal-identity"><TerminalSquare size={17}/><strong>Shell {number}</strong><span className="autodl-terminal-number">{String(number).padStart(2,"0")}</span></div><div className="autodl-terminal-actions"><button type="button" className="icon-button" title="新建分屏（Shift+Alt+D）" aria-label="新建终端分屏" disabled={splitDisabled} onClick={onSplit}><Columns2 size={15}/></button><button type="button" className="icon-button" title="恢复终端显示" aria-label="恢复终端显示" disabled={closed || session.ended} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={15}/></button><button type="button" className="icon-button" title="关闭终端窗口" aria-label="关闭终端窗口" onClick={() => void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token } }).then(response => { if (!response.ok && response.status !== 404) throw new Error(); callbacks.current.onDisconnect(); }).catch(() => setError("断开失败，请检查服务状态。"))}><X size={15}/></button></div></header><div className="autodl-terminal-connection"><span title={`${session.username}@${session.host}:${session.port}`}>{session.username}@{session.host}:{session.port}</span><span role="status" className="autodl-terminal-status">{state}</span></div>{error && <p role="alert" className="notice error-notice">{error}</p>}<div ref={container} className="autodl-terminal-screen"/><footer><span>共享 SSH 连接 · 独立 Shell</span><span role="status">{copyNotice || "长任务请使用 tmux 或实验 Runner"}</span></footer></section>;
 }

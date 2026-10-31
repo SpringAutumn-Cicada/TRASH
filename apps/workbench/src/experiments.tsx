@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Download, FolderOpen, LoaderCircle, Pencil, Play, Plus, RefreshCw } from "lucide-react";
+import { Download, FolderOpen, LoaderCircle, Columns2, Pencil, Play, Plus, RefreshCw } from "lucide-react";
 import type { DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { useUnsavedChanges } from "./navigation.js";
 import "./experiments.css";
@@ -51,13 +51,14 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
     catch(cause){if(alive.current){setConnectionState("error");setConnectionMessage(controller.signal.aborted?"诊断请求超时，请检查实例和网络后重试。":cause instanceof Error?cause.message:"诊断失败，请重试。");}}
     finally{clearTimeout(timer);}
   };
-  const connectTerminal=async(sourceProfile=profileId,split=false)=>{
+  const connectTerminal=async(sourceProfile=profileId,source?:TerminalSession)=>{
     if(terminalConnecting.current)return;
-    if(!split&&terminalSessions.some(session=>!session.ended&&session.profile_id===sourceProfile)){setTab("workspace");return;}
+    if(!source&&terminalSessions.some(session=>!session.ended&&session.profile_id===sourceProfile)){setTab("workspace");return;}
+    if(!source&&terminalSessions.some(session=>!session.ended)){setError("当前工作区已连接其他主机，请先关闭现有终端再切换主机。");return;}
     if(terminalSessions.length>=3){setError("最多打开 3 个终端分屏，请先关闭不用的窗口。");return;}
     terminalConnecting.current=true;
-    setConnecting(true);setError("");setNotice("正在建立 SSH 终端连接，不执行环境诊断…");
-    try{const result=await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current,result.terminal]);setTab("workspace");setNotice("SSH 终端已连接，可直接在 AutoDL 工作区操作。");}}
+    setConnecting(true);setError("");setNotice(source?"正在现有 SSH 连接中打开 Shell…":"正在建立 SSH 终端连接，不执行环境诊断…");
+    try{const result=source?await (async()=>{const response=await fetch(`${base}/terminals/${source.id}/split`,{method:"POST",headers:{"content-type":"application/json","x-terminal-token":source.token},body:JSON.stringify({confirm:true})});const value=await response.json();if(!response.ok)throw new Error(failures[value.error]??"无法在当前 SSH 连接中打开 Shell，请检查连接状态。");return value as {terminal:TerminalSession};})():await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current,result.terminal]);setTab("workspace");setNotice("SSH 终端已连接，可直接在 AutoDL 工作区操作。");}}
     catch(cause){if(alive.current){setNotice("");setError(cause instanceof Error?cause.message:"终端连接失败。");}}
     finally{terminalConnecting.current=false;if(alive.current)setConnecting(false);}
   };
@@ -94,7 +95,7 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
       <div className="experiment-form"><h3>远端数据引用</h3><button className="secondary-button" disabled={!profileId} onClick={()=>setDatasetJson(JSON.stringify({name:"数据集",version:"v1",path:"/root/autodl-tmp/data",profile_id:profileId,notes:""},null,2))}>新增数据引用</button>{datasetJson&&<><textarea aria-label="数据引用 JSON" value={datasetJson} onChange={e=>setDatasetJson(e.target.value)}/><button className="primary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,"/datasets",JSON.parse(datasetJson));setDatasetJson("");await load();})}>保存数据引用</button></>}{datasets.map(d=><div key={d.dataset_id}><strong>{d.name} · {d.version}</strong><code>{d.path}</code><span>{d.verification_status==="verified"?"已校验":"未校验"}</span><button className="text-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,`/datasets/${d.dataset_id}/check`,{});await load();setNotice("可访问性检查完成；未提供预期哈希不会标为已校验。");})}>检查引用</button></div>)}</div>
     </>}
     <div hidden={tab!=="workspace"} className="autodl-workspace">
-      {terminalSessions.length>0?<><div className="autodl-workspace-heading"><div><strong>AutoDL 终端</strong><span>{terminalSessions.length} / 3 个独立窗口</span></div><span>Shift + Alt + D 新建分屏 · 选中文字后右键复制</span></div><div className={`autodl-terminal-grid panes-${terminalSessions.length}`}>{terminalSessions.map((session,index)=><AutoDlTerminal key={session.id} projectId={projectId} session={session} number={index+1} splitDisabled={connecting||terminalSessions.length>=3} onSplit={()=>void connectTerminal(session.profile_id,true)} onDisconnect={()=>{setTerminalSessions(current=>current.filter(item=>item.id!==session.id));setNotice("终端窗口已关闭。");}} onEnded={()=>setTerminalSessions(current=>current.map(item=>item.id===session.id?{...item,ended:true}:item))}/>)}</div></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>AutoDL 工作区</h3><p>在 AutoDL 信息中选择主机并点击连接，即可打开远端交互终端。</p><button type="button" className="primary-button" disabled={busy||!profileId} onClick={()=>void run(()=>connectTerminal())}>{connecting?"正在连接…":"连接所选主机"}</button><button type="button" className="secondary-button" onClick={()=>switchTab("hosts")}>选择主机</button></div>}
+      {terminalSessions.length>0?<><div className="autodl-workspace-heading"><div><strong>{terminalSessions[0]?.name} · AutoDL 终端</strong><span>{terminalSessions.length} / 3 个独立窗口</span></div><div><span>Shift + Alt + D 分屏 · 右键复制选区</span><button type="button" className="secondary-button" disabled={connecting||terminalSessions.length>=3||!terminalSessions.some(item=>!item.ended)} onClick={()=>{const source=terminalSessions.find(item=>!item.ended);if(source)void connectTerminal(source.profile_id,source);}}><Columns2 size={14}/>分屏</button></div></div><div className={`autodl-terminal-grid panes-${terminalSessions.length}`}>{terminalSessions.map((session,index)=><AutoDlTerminal key={session.id} projectId={projectId} session={session} number={index+1} splitDisabled={connecting||terminalSessions.length>=3||Boolean(session.ended)} onSplit={()=>void connectTerminal(session.profile_id,session)} onDisconnect={()=>{setTerminalSessions(current=>current.filter(item=>item.id!==session.id));setNotice("终端窗口已关闭。");}} onEnded={()=>setTerminalSessions(current=>current.map(item=>item.id===session.id?{...item,ended:true}:item))}/>)}</div></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>AutoDL 工作区</h3><p>在 AutoDL 信息中选择主机并点击连接，即可打开远端交互终端。</p><button type="button" className="primary-button" disabled={busy||!profileId} onClick={()=>void run(()=>connectTerminal())}>{connecting?"正在连接…":"连接所选主机"}</button><button type="button" className="secondary-button" onClick={()=>switchTab("hosts")}>选择主机</button></div>}
 
     </div>
     {tab==="plans"&&<>

@@ -12,6 +12,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
   const method=request.method??"GET",parts=subpath.split("/");
   if(parts[0]==="terminals"&&parts[1]){
     const token=typeof request.headers["x-terminal-token"]==="string"?request.headers["x-terminal-token"]:"";
+    if(parts.length===3&&parts[2]==="split"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,201,{terminal:await service.terminals.split(projectId,parts[1],token)});return true;}
     if(parts.length===2&&method==="DELETE"){service.terminals.remove(projectId,parts[1],token);send(response,200,{closed:true});return true;}
     if(parts.length===3&&parts[2]==="events"&&method==="GET"){service.terminals.attach(projectId,parts[1],token,response,z.coerce.number().int().nonnegative().parse(url.searchParams.get("after")??0));return true;}
     if(parts.length===3&&parts[2]==="input"&&method==="POST"){const input=z.object({text:z.string().min(1).max(32768)}).strict().parse(await readJson(request));service.terminals.input(projectId,parts[1],token,input.text);send(response,200,{accepted:true});return true;}

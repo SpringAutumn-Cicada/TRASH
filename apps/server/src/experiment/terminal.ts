@@ -8,7 +8,7 @@ import { SshService, type RemoteConnection } from "./ssh.js";
 interface Output { seq: number; data: string; size: number }
 interface Session {
   id: string; token: string; project: string; profile: SshProfile; remote: RemoteConnection; channel: ClientChannel;
-  output: Output[]; size: number; seq: number; viewers: Set<ServerResponse>; lastSeen: number; attached: boolean;
+  output: Output[]; size: number; seq: number; viewers: Set<ServerResponse>; lastSeen: number; attached: boolean; onRemoteClose: () => void;
 }
 export class TerminalService {
   private sessions = new Map<string, Session>();
@@ -21,24 +21,30 @@ export class TerminalService {
   }
   hasProject(project: string) { return this.opening.has(project) || [...this.sessions.values()].some(session => session.project === project); }
   hasProfile(profile: string) { return this.openingProfiles.has(profile) || [...this.sessions.values()].some(session => session.profile.profile_id === profile); }
-  async connect(project: string, profile: SshProfile) {
+  async split(project: string, id: string, token: string) {
+    const source = this.get(project, id, token);
+    return this.connect(project, source.profile, source);
+  }
+  async connect(project: string, profile: SshProfile, source?: Session) {
     if (this.closed) experimentError("SERVER_STOPPING", 409);
     if (this.opening.has(project)) experimentError("TERMINAL_CONNECTING", 409);
     if (this.sessions.size + this.opening.size >= 20 || [...this.sessions.values()].filter(s => s.project === project).length >= 3) experimentError("TERMINAL_LIMIT", 409);
     this.opening.add(project); this.openingProfiles.add(profile.profile_id); let remote: RemoteConnection | undefined;
     try {
-      remote = await this.ssh.connect(profile);
+      remote = source ? source.remote : await this.ssh.connect(profile);
+      if (source && !this.sessions.has(source.id)) experimentError("TERMINAL_NOT_FOUND", 404);
       if (this.closed) experimentError("SERVER_STOPPING", 409);
       const connection = remote;
       const channel = await new Promise<ClientChannel>((resolve, reject) => {
         let settled = false;
         const finish = (error?: Error, stream?: ClientChannel) => { if (settled) { stream?.close(); return; } settled = true; clearTimeout(timeout); connection.client.off("close", onClose); if (error) reject(error); else resolve(stream!); };
         const onClose = () => finish(new Error("SSH_TERMINAL_FAILED"));
-        const timeout = setTimeout(() => { finish(new Error("SSH_TERMINAL_FAILED")); connection.client.destroy(); }, 15000);
+        const timeout = setTimeout(() => { finish(new Error("SSH_TERMINAL_FAILED")); }, 15000);
         connection.client.once("close", onClose);
         connection.client.shell({ term: "xterm-256color", cols: 100, rows: 30, width: 0, height: 0 }, (error, stream) => finish(error ? new Error("SSH_TERMINAL_FAILED") : undefined, stream));
       });
-      const session: Session = { id: randomUUID(), token: randomUUID(), project, profile, remote, channel, output: [], size: 0, seq: 0, viewers: new Set(), lastSeen: Date.now(), attached: false };
+      const session: Session = { id: randomUUID(), token: randomUUID(), project, profile, remote, channel, output: [], size: 0, seq: 0, viewers: new Set(), lastSeen: Date.now(), attached: false, onRemoteClose: () => {} };
+      session.onRemoteClose = () => this.disconnect(session, "SSH 连接已断开。");
       this.sessions.set(session.id, session);
       const output = (data: Buffer) => {
         if (!this.sessions.has(session.id)) return;
@@ -50,10 +56,10 @@ export class TerminalService {
       channel.on("data", output); channel.stderr.on("data", output);
       channel.on("error", () => this.disconnect(session, "终端通道发生错误。"));
       channel.on("close", () => this.disconnect(session, "远端终端已退出。"));
-      remote.client.once("close", () => this.disconnect(session, "SSH 连接已断开。"));
+      remote.client.once("close", session.onRemoteClose);
       if (this.closed) { this.disconnect(session); experimentError("SERVER_STOPPING", 409); }
       return { id: session.id, token: session.token, profile_id: profile.profile_id, name: profile.name, host: profile.host, port: profile.port, username: profile.username };
-    } catch (error) { remote?.close(); if (error instanceof Error && error.message === "SSH_TERMINAL_FAILED") experimentError("SSH_TERMINAL_FAILED", 422); throw error; }
+    } catch (error) { if (!source) remote?.close(); if (error instanceof Error && error.message === "SSH_TERMINAL_FAILED") experimentError("SSH_TERMINAL_FAILED", 422); throw error; }
     finally { this.opening.delete(project); this.openingProfiles.delete(profile.profile_id); }
   }
   private get(project: string, id: string, token: string) {
@@ -84,7 +90,11 @@ export class TerminalService {
   private disconnect(session: Session, message = "终端已断开。") {
     if (!this.sessions.delete(session.id)) return;
     for (const viewer of session.viewers) { this.send(session, viewer, { type: "closed", message }); viewer.end(); }
-    session.viewers.clear(); try { session.channel.close(); } catch { /* Already closed. */ } try { session.remote.close(); } catch { /* Already closed. */ }
+    session.viewers.clear(); session.remote.client.off("close", session.onRemoteClose);
+    try { session.channel.close(); } catch { /* Already closed. */ }
+    if (![...this.sessions.values()].some(other => other.remote === session.remote)) {
+      try { session.remote.close(); } catch { /* Already closed. */ }
+    }
   }
   close() { this.closed = true; clearInterval(this.timer); for (const session of this.sessions.values()) this.disconnect(session); }
 }
