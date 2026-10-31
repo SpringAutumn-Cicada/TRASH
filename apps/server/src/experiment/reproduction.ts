@@ -67,5 +67,25 @@ export class ReproductionService {
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
  async preparation(project:string,snapshot:ReproductionSnapshot,path:string){await this.bundle(project,snapshot);const script=String.raw`import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);i=z.getinfo(sys.argv[2]);assert i.file_size<=1048576;sys.stdout.write(z.read(i).decode('utf8'))`;return (await execute("python3",["-c",script,join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),path],{maxBuffer:2*1024*1024})).stdout;}
- async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,python:string){const bundle=await this.bundle(project,snapshot);await remote.exec([python,"-c","import os,sys;os.makedirs(sys.argv[1],mode=0o700,exist_ok=False)",directory]);await remote.upload(bundle.path,posix.join(directory,"code.zip"));await remote.exec([python,"-c","import hashlib,sys;assert hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()==sys.argv[2]",posix.join(directory,"code.zip"),snapshot.sha256]);await remote.exec([python,"-c",REPRO_ARCHIVE,"extract",posix.join(directory,"code.zip"),posix.join(directory,"code")]);await remote.write(posix.join(directory,"snapshot.json"),JSON.stringify(snapshot));return {path:posix.join(directory,"code"),snapshot};}
+ async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,python:string){
+  let stage="REPRODUCTION_SNAPSHOT_READ_FAILED";
+  try{
+   const bundle=await this.bundle(project,snapshot);
+   stage="REPRODUCTION_REMOTE_DIRECTORY_FAILED";
+   await remote.exec([python,"-c","import os,sys; os.makedirs(sys.argv[1],mode=0o700,exist_ok=False)",directory]);
+   stage="REPRODUCTION_TRANSFER_FAILED";
+   await remote.upload(bundle.path,posix.join(directory,"code.zip"));
+   stage="REPRODUCTION_REMOTE_HASH_FAILED";
+   await remote.exec([python,"-c","import hashlib,sys;assert hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()==sys.argv[2]",posix.join(directory,"code.zip"),snapshot.sha256]);
+   stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
+   await remote.exec([python,"-c",REPRO_ARCHIVE,"extract",posix.join(directory,"code.zip"),posix.join(directory,"code")]);
+   stage="REPRODUCTION_REMOTE_MANIFEST_FAILED";
+   await remote.write(posix.join(directory,"snapshot.json"),JSON.stringify(snapshot));
+   return {path:posix.join(directory,"code"),snapshot};
+  }catch(error){
+   if(error instanceof Error&&"statusCode" in error)throw error;
+   if(error instanceof Error&&error.message==="SSH_COMMAND_TIMEOUT")experimentError("REPRODUCTION_REMOTE_TIMEOUT",422);
+   experimentError(stage,422);
+  }
+ }
 }

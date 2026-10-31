@@ -6,7 +6,15 @@ import { X, Archive, FileUp, FolderOpen, Pencil, Plus, Trash2, Upload, Play, Loa
 import type { ReproductionCode, ReproductionSnapshot, SshProfile } from "@trash/protocol";
 import { RepositoryBrowser } from "./repository-browser.js";
 import { useUnsavedChanges } from "./navigation.js";
-const messages:Record<string,string>={REPRODUCTION_DIRECTORY_INVALID:"请选择独立代码目录，不要选择包含 TRASH 数据目录的上级文件夹。",REPRODUCTION_BUSY:"该项目正在导入、创建快照或上传代码，请稍候再试。",REPRODUCTION_IMPORT_FAILED:"ZIP 导入失败：请检查格式、路径、重复条目和解压大小；本机需要 Python 3。",REPRODUCTION_ARCHIVE_FAILED:"快照创建失败：请检查 Python 3、文件权限、符号链接、敏感文件及代码大小。",EXPERIMENT_ACTIVE:"该代码仍有活动实验，请先结束实验。",SNAPSHOT_HASH_MISMATCH:"快照校验失败，请重新生成。",SOURCE_NOT_FOUND:"关联文献不存在，请重新选择。",SSH_CREDENTIAL_REQUIRED:"请先在 AutoDL 信息保存认证凭据。",SSH_FINGERPRINT_REQUIRED:"请先在 AutoDL 信息核对主机指纹。"};
+const messages:Record<string,string>={
+ REPRODUCTION_SNAPSHOT_READ_FAILED:"无法读取本机代码快照，请检查文件和目录权限。",
+ REPRODUCTION_REMOTE_DIRECTORY_FAILED:"无法创建远端运行目录：请检查远端 Python 解释器是否可用，以及目标目录权限和空间。SSH 连接成功不代表 Python 可运行。",
+ REPRODUCTION_TRANSFER_FAILED:"SFTP 上传失败，请检查网络、远端目录写权限及磁盘空间。",
+ REPRODUCTION_REMOTE_HASH_FAILED:"远端代码包校验失败，请检查远端 Python 和文件完整性。",
+ REPRODUCTION_REMOTE_EXTRACT_FAILED:"远端 ZIP 解压失败，请检查磁盘空间、Python 版本和压缩包路径。",
+ REPRODUCTION_REMOTE_MANIFEST_FAILED:"代码已解压，但快照清单写入失败，请检查远端写权限。",
+ REPRODUCTION_REMOTE_TIMEOUT:"远端操作超时，请先确认远端文件状态，再决定是否重新上传。",
+REPRODUCTION_DIRECTORY_INVALID:"请选择独立代码目录，不要选择包含 TRASH 数据目录的上级文件夹。",REPRODUCTION_BUSY:"该项目正在导入、创建快照或上传代码，请稍候再试。",REPRODUCTION_IMPORT_FAILED:"ZIP 导入失败：请检查格式、路径、重复条目和解压大小；本机需要 Python 3。",REPRODUCTION_ARCHIVE_FAILED:"快照创建失败：请检查 Python 3、文件权限、符号链接、敏感文件及代码大小。",EXPERIMENT_ACTIVE:"该代码仍有活动实验，请先结束实验。",SNAPSHOT_HASH_MISMATCH:"快照校验失败，请重新生成。",SOURCE_NOT_FOUND:"关联文献不存在，请重新选择。",SSH_CREDENTIAL_REQUIRED:"请先在 AutoDL 信息保存认证凭据。",SSH_FINGERPRINT_REQUIRED:"请先在 AutoDL 信息核对主机指纹。"};
 export function ReproductionCodes({projectId,profiles,profileId,onPlan,connectedProfiles,connecting,onConnect}:{projectId:string;profiles:SshProfile[];profileId:string;onPlan:(snapshot:ReproductionSnapshot)=>void;connectedProfiles:string[];connecting:boolean;onConnect:(host:string)=>Promise<void>}){
  const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
  const [codes,setCodes]=useState<ReproductionCode[]>([]),[selected,setSelected]=useState("");
@@ -39,9 +47,9 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
   if(!host||!remoteDir.trim()||!python.trim()){setError("请填写目标主机、远端目录和 Python 解释器。");return;}
   uploadPending.current=true;setUploading(true);
   try{await action(async()=>{
-    const data=await call<{path:string;snapshot:ReproductionSnapshot}>(`/reproductions/${current.id}/upload`,{profile_id:host,directory:remoteDir,python,confirm:true});
+    const data=await call<{path:string;snapshot:ReproductionSnapshot;record_saved?:boolean}>(`/reproductions/${current.id}/upload`,{profile_id:host,directory:remoteDir,python,confirm:true});
     if(alive.current){
-      setNotice(`上传完成：${data.path}；快照 SHA-256：${data.snapshot.sha256}`);
+      setNotice(`上传完成：${data.path}；快照 SHA-256：${data.snapshot.sha256}${data.record_saved===false?"；本机上传记录保存失败，请保留远端路径。":""}`);
       try{await load();}catch{if(alive.current)setError("代码已上传成功，但列表刷新失败，请稍后重新进入页面查看记录。");}
     }
   });}finally{uploadPending.current=false;if(alive.current)setUploading(false);}
