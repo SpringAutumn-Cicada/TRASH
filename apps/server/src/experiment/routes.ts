@@ -6,6 +6,7 @@ import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCred
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
+import { remoteDirectories } from "./remote-directories.js";
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
@@ -76,6 +77,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="POST"){const value=sshProfileInputSchema.parse(await readJson(request));const profile={...value,profile_id:`ssh_${randomUUID()}`,project_id:projectId,created_at:new Date().toISOString()};service.data.saveProfile(profile);send(response,201,{profile});return true;}
     if(parts[1]){
       const profile=service.data.profile(projectId,parts[1]);
+      if(parts.length===3&&parts[2]==="directories"&&method==="GET"){
+        const path=z.string().min(1).max(4096).parse(url.searchParams.get("path")??"/");
+        const remote=await service.ssh.connect(profile);
+        try{send(response,200,await remoteDirectories(remote,path));}finally{remote.close();}return true;
+      }
       if(parts.length===3&&parts[2]==="connect"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,201,{terminal:await service.terminals.connect(projectId,profile)});return true;}
       if(parts.length===3&&parts[2]==="credentials"&&method==="GET"){send(response,200,{password:service.ssh.passwordForEditing(profile)});return true;}
       if(parts.length===2&&method==="PUT"){
