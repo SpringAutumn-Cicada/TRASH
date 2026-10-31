@@ -37,14 +37,22 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="tree"&&method==="GET"){send(response,200,{entries:await service.reproductions.tree(projectId,parts[1],url.searchParams.get("path")??"")});return true;}
       if(parts[2]==="file"&&method==="GET"){send(response,200,await service.reproductions.file(projectId,parts[1],url.searchParams.get("path")??""));return true;}
       if(parts[2]==="snapshots"&&method==="POST"){send(response,201,{snapshot:await service.reproductions.snapshot(projectId,parts[1])});return true;}
+      if(parts[2]==="upload-progress"&&method==="GET"){const requestId=z.string().uuid().parse(url.searchParams.get("request_id"));response.setHeader("cache-control","no-store");send(response,200,{progress:service.reproductions.progress(projectId,parts[1],requestId)});return true;}
       if(parts[2]==="upload"&&method==="POST"){
-        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().max(2000).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().max(2000).optional(),request_id:z.string().uuid().optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
         if(!input.directory.startsWith("/")||input.directory.split("/").includes("..")||/[\x00-\x1f]/.test(input.directory))experimentError("UPLOAD_PATH_INVALID");
         const profile=service.data.profile(projectId,input.profile_id);
         const remote=service.terminals.connection(projectId,profile.profile_id);
-        const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
-        service.terminals.connection(projectId,profile.profile_id);
-        {const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`);let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}send(response,201,{...deployed,record_saved});}return true;
+        const requestId=input.request_id??randomUUID();
+        const report=(stage:string,sent=0,total=0)=>service.reproductions.report(projectId,parts[1],requestId,stage,sent,total);
+        report("snapshot");
+        try{
+          const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
+          service.terminals.connection(projectId,profile.profile_id);
+          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`,report);
+          let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}
+          send(response,201,{...deployed,record_saved});
+        }catch(error){report("failed");throw error;}return true;
       }
     }
     }finally{release();}

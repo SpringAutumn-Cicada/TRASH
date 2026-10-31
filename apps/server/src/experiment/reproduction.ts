@@ -17,6 +17,10 @@ const execute=promisify(execFile);
 export const reproductionInput=z.object({name:z.string().trim().min(1).max(200),source_id:z.string().max(200).optional(),source_url:z.string().max(2000).default(""),notes:z.string().max(10000).default("")}).strict();
 export class ReproductionService {
  private pending=new Set<string>();
+ private uploads=new Map<string,{request_id:string;stage:string;sent:number;total:number}>();
+ progress(project:string,id:string,request:string){const value=this.uploads.get(`${project}:${id}`);return value?.request_id===request?value:null;}
+ report(project:string,id:string,request:string,stage:string,sent=0,total=0){this.uploads.set(`${project}:${id}`,{request_id:request,stage,sent,total});}
+
  constructor(private store:TrashStore){}
  busy(project:string){return this.pending.has(project);}
  acquire(project:string){if(this.pending.has(project))experimentError("REPRODUCTION_BUSY",409);this.pending.add(project);return ()=>this.pending.delete(project);}
@@ -67,10 +71,11 @@ export class ReproductionService {
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
  async preparation(project:string,snapshot:ReproductionSnapshot,path:string){await this.bundle(project,snapshot);const script=String.raw`import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);i=z.getinfo(sys.argv[2]);assert i.file_size<=1048576;sys.stdout.write(z.read(i).decode('utf8'))`;return (await execute("python3",["-c",script,join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),path],{maxBuffer:2*1024*1024})).stdout;}
- async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string){
+ async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{}){
   let stage="REPRODUCTION_SNAPSHOT_READ_FAILED";
   try{
    const bundle=await this.bundle(project,snapshot);
+   report("preparing",0,bundle.size);
    stage="REPRODUCTION_UNZIP_UNAVAILABLE";
    await remote.exec(["sh","-c","command -v unzip >/dev/null 2>&1"]);
    stage="REPRODUCTION_REMOTE_DIRECTORY_FAILED";
@@ -80,15 +85,20 @@ export class ReproductionService {
     await new Promise<void>((resolve,reject)=>sftp.mkdir(posix.join(directory,"code"),{mode:0o700},error=>error?reject(error):resolve()));
    }finally{sftp.end();}
    stage="REPRODUCTION_TRANSFER_FAILED";
-   await remote.upload(bundle.path,posix.join(directory,"code.zip"));
+   report("uploading",0,bundle.size);
+   await remote.upload(bundle.path,posix.join(directory,"code.zip"),(sent,total)=>report("uploading",sent,total));
+   report("verifying",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_HASH_FAILED";
    const hash=createHash("sha256");
    const size=await remote.consume(posix.join(directory,"code.zip"),bundle.size+1,chunk=>hash.update(chunk));
    if(size!==bundle.size||hash.digest("hex")!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
+   report("extracting",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
    await remote.exec(["unzip","-q","-n",posix.join(directory,"code.zip"),"-d",posix.join(directory,"code")],undefined,120000);
+   report("saving",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_MANIFEST_FAILED";
    await remote.write(posix.join(directory,"snapshot.json"),JSON.stringify(snapshot));
+   report("completed",bundle.size,bundle.size);
    return {path:posix.join(directory,"code"),snapshot};
   }catch(error){
    if(error instanceof Error&&"statusCode" in error)throw error;

@@ -68,7 +68,7 @@ export class RemoteConnection {
     });
   }
   sftp():Promise<SFTPWrapper>{return new Promise((resolve,reject)=>this.client.sftp((error,sftp)=>error?reject(new Error("SFTP_FAILED")):resolve(sftp)));}
-  async upload(local:string,remote:string):Promise<void>{const sftp=await this.sftp();try{await new Promise<void>((resolve,reject)=>sftp.fastPut(local,remote,error=>error?reject(new Error("SFTP_UPLOAD_FAILED")):resolve()));}finally{sftp.end();}}
+  async upload(local:string,remote:string,onProgress?:(sent:number,total:number)=>void):Promise<void>{const sftp=await this.sftp();try{await new Promise<void>((resolve,reject)=>sftp.fastPut(local,remote,{step:(total:number,_chunk:number,size:number)=>onProgress?.(total,size)},error=>error?reject(new Error("SFTP_UPLOAD_FAILED")):resolve()));}finally{sftp.end();}}
   async write(remote:string,value:string):Promise<void>{const sftp=await this.sftp();try{await new Promise<void>((resolve,reject)=>sftp.writeFile(remote,value,{mode:0o600},error=>error?reject(new Error("SFTP_WRITE_FAILED")):resolve()));}finally{sftp.end();}}
   async consume(remote:string,maxBytes:number,onChunk:(chunk:Buffer)=>void,offset=0):Promise<number>{
     const sftp=await this.sftp();let handle:Buffer|undefined;let size=0;
