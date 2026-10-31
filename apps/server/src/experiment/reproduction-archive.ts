@@ -53,7 +53,7 @@ elif mode in ('snapshot','analysis-snapshot'):
     if mode=='analysis-snapshot':
      low=name.lower();suffix=pathlib.Path(name).suffix.lower()
      eligible=low.startswith(('readme','requirements','dockerfile')) or low in ['makefile','pipfile','pipfile.lock','poetry.lock','uv.lock','pnpm-lock.yaml'] or suffix in ['.py','.md','.rst','.txt','.toml','.yaml','.yml','.json','.cfg','.ini','.c','.cpp','.h','.cu','.js','.ts','.r','.sh','.bat','.ps1']
-     if low in ['agents.md','skill.md'] or not eligible:
+     if low in ['agents.md','skill.md','.mcp.json','mcp.json','.npmrc','.pypirc'] or not eligible:
       excluded.append({'path':rel,'reason':'not_analysis_source'});continue
     h=hashlib.sha256();size=0;info=zipfile.ZipInfo.from_file(path,rel,strict_timestamps=False)
     info.compress_type=zipfile.ZIP_DEFLATED

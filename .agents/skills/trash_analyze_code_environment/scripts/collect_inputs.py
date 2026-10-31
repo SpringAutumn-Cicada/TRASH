@@ -30,7 +30,7 @@ with zipfile.ZipFile(archive) as source:
         name = path.name.lower()
         if path.is_absolute() or '..' in path.parts or '\\' in item.filename:
             raise ValueError('UNSAFE_INPUT_PATH')
-        if any(part.lower() in skip_dirs for part in path.parts) or name in {'agents.md', 'skill.md', 'auth.json', 'credentials', 'id_rsa', 'id_ed25519'} or (name.startswith('.env') and name != '.env.example') or path.suffix.lower() in {'.pem', '.key', '.p12', '.pfx'}:
+        if any(part.lower() in skip_dirs for part in path.parts) or name in {'agents.md', 'skill.md', 'auth.json', 'credentials', 'id_rsa', 'id_ed25519', '.mcp.json', 'mcp.json', '.npmrc', '.pypirc'} or (name.startswith('.env') and name != '.env.example') or path.suffix.lower() in {'.pem', '.key', '.p12', '.pfx'}:
             reason = 'excluded_sensitive_or_non_source'
         elif not (priority(path) < 2 or path.suffix.lower() in {'.py', '.md', '.rst', '.txt', '.toml', '.yaml', '.yml', '.json', '.cfg', '.ini', '.c', '.cpp', '.h', '.cu', '.js', '.ts', '.r'}):
             reason = 'not_analysis_text'
@@ -49,7 +49,7 @@ with zipfile.ZipFile(archive) as source:
         except (UnicodeDecodeError, ValueError):
             skipped.append({'path': item.filename, 'reason': 'binary_or_non_utf8'})
             continue
-        text = re.sub(r'(?i)((?:password|passwd|api[_-]?key|secret|token)\s*[=:]\s*)[^\n,;]+', r'\1[REDACTED]', text)
+        text = re.sub(r"(?i)((?:password|passwd|api[_-]?key|secret|token)[\"']?\s*[=:]\s*)[^\n,;]+", r'\1[REDACTED]', text)
         text = re.sub(r'\bsk-[A-Za-z0-9_-]+', '[REDACTED]', text)
         text = re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----', lambda match: '[REDACTED PRIVATE KEY]' + '\n' * match.group(0).count('\n'), text)
         files.append({'path': item.filename, 'text': text, 'line_count': len(text.split('\n')), 'sha256': hashlib.sha256(data).hexdigest()})
