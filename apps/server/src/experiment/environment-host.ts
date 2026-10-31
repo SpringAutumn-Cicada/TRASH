@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { CodeEnvironmentReport, HostEnvironmentComparison } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
@@ -35,14 +36,14 @@ const normalize=(value:string)=>value.toLowerCase().replace(/[-_.]+/g,"-");
 export async function compareEnvironment(remote:RemoteConnection,report:CodeEnvironmentReport,profile:string,python:string):Promise<HostEnvironmentComparison>{
  if(!python||/[\x00-\x1f]/.test(python))experimentError("ENVIRONMENT_PYTHON_INVALID",400);
  let environment:Record<string,unknown>;
- try{environment=JSON.parse(await remote.exec([python,"-I","-B","-c",PROBE],undefined,90000,2*1024*1024));}
+ try{environment=z.object({python:z.string(),python_executable:z.string(),packages:z.record(z.string()),tools:z.record(z.string().nullable()),gpu:z.string(),packages_truncated:z.boolean()}).passthrough().parse(JSON.parse(await remote.exec([python,"-I","-B","-c",PROBE],undefined,90000,2*1024*1024)));}
  catch{experimentError("ENVIRONMENT_HOST_PROBE_FAILED",422);}
  const packages=environment.packages as Record<string,string>,tools=environment.tools as Record<string,string|null>;
  const items:HostEnvironmentComparison["items"]=report.content.requirements.map(requirement=>{
   const {check}=requirement;let actual="未知",status:"satisfied"|"unsatisfied"|"unknown"="unknown",reason="需要人工确认";
   if(check.kind==="python")actual=String(environment.python);
   if(check.kind==="package")actual=Object.entries(packages).find(([name])=>normalize(name)===normalize(check.name))?.[1]??"未检测到";
-  if(check.kind==="tool")actual=tools[check.name]??"未检测到";
+  if(check.kind==="tool")actual=Object.hasOwn(tools,check.name)?tools[check.name]??"未检测到":"未支持的工具检查";
   if(check.kind==="gpu")actual=environment.gpu?String(environment.gpu):"未检测到";
   const supported=check.kind==="python"||check.kind==="package"||check.kind==="gpu"||check.kind==="tool"&&Object.hasOwn(tools,check.name);
   const complex=/[,|*~^]|\bor\b|\band\b/i.test(requirement.requirement)||(requirement.requirement.match(/[<>]=?|==|!=/g)?.length??0)>1;

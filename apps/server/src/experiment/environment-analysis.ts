@@ -30,7 +30,7 @@ export class EnvironmentAnalysisService {
  private taskRoot(task:EnvironmentAnalysisTask){return join(this.root(task.project_id,task.reproduction_id),task.id);}
  private atomic(path:string,value:unknown){mkdirSync(dirname(path),{recursive:true});const temporary=`${path}.${randomUUID()}.tmp`;writeFileSync(temporary,JSON.stringify(value,null,2),{mode:0o600});renameSync(temporary,path);}
  private save(task:EnvironmentAnalysisTask){this.atomic(join(this.taskRoot(task),"task.json"),task);}
- tasks(project:string,code:string):EnvironmentAnalysisTask[]{const root=this.root(project,code);return existsSync(root)?readdirSync(root).filter(id=>/^env_[a-f0-9-]+$/.test(id)).map(id=>JSON.parse(readFileSync(join(root,id,"task.json"),"utf8")) as EnvironmentAnalysisTask).sort((a,b)=>b.created_at.localeCompare(a.created_at)):[];}
+ tasks(project:string,code:string):EnvironmentAnalysisTask[]{const root=this.root(project,code);return existsSync(root)?readdirSync(root).filter(id=>/^env_[a-f0-9-]+$/.test(id)&&existsSync(join(root,id,"task.json")))).map(id=>JSON.parse(readFileSync(join(root,id,"task.json"),"utf8")) as EnvironmentAnalysisTask).sort((a,b)=>b.created_at.localeCompare(a.created_at)):[];}
  reports(project:string,code:string):CodeEnvironmentReport[]{return this.tasks(project,code).filter(task=>task.status==="completed").map(task=>JSON.parse(readFileSync(join(this.taskRoot(task),"report.json"),"utf8")) as CodeEnvironmentReport);}
  report(project:string,code:string,id:string){return this.reports(project,code).find(report=>report.id===id)??experimentError("ENVIRONMENT_REPORT_NOT_FOUND",404);}
  busy(project:string){return this.running.has(project);}
@@ -48,12 +48,12 @@ export class EnvironmentAnalysisService {
  private execute(active:Active,command:string,args:string[],cwd:string,input?:string){
   if(!pending(active.task))throw new Error("ENVIRONMENT_TASK_STOPPED");
   return new Promise<string>((resolve,reject)=>{
-   const child=spawn(command,args,{cwd,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});active.child=child;let stdout="",bytes=0;
-   child.stdout?.on("data",(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>8*1024*1024){this.terminate(child);reject(new Error("ENVIRONMENT_CLI_OUTPUT_TOO_LARGE"));}else stdout+=chunk.toString();});
+   const child=spawn(command,args,{cwd,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});active.child=child;let stdout="",bytes=0,overflow=false;
+   child.stdout?.on("data",(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>8*1024*1024){if(!overflow){overflow=true;this.terminate(child);}}else stdout+=chunk.toString();});
    // Drain diagnostics without storing untrusted code or potential secrets in logs.
    child.stderr?.on("data",()=>{});child.stdin?.on("error",()=>{});
    child.once("error",error=>reject(new Error((error as NodeJS.ErrnoException).code==="ENOENT"?(command==="python3"?"ENVIRONMENT_LOCAL_PYTHON_MISSING":"ENVIRONMENT_CODEX_UNAVAILABLE"):"ENVIRONMENT_PROCESS_FAILED")));
-   child.once("close",code=>{active.child=undefined;code===0?resolve(stdout):reject(new Error(active.timedOut?"ENVIRONMENT_ANALYSIS_TIMEOUT":"ENVIRONMENT_PROCESS_FAILED"));});child.stdin?.end(input);
+   child.once("close",code=>{active.child=undefined;code===0&&!overflow?resolve(stdout):reject(new Error(overflow?"ENVIRONMENT_CLI_OUTPUT_TOO_LARGE":active.timedOut?"ENVIRONMENT_ANALYSIS_TIMEOUT":"ENVIRONMENT_PROCESS_FAILED"));});child.stdin?.end(input);
   });
  }
  private async run(active:Active){
@@ -76,7 +76,8 @@ export class EnvironmentAnalysisService {
    await this.execute(active,cli,["exec","--sandbox","read-only","-c",'approval_policy="never"',"-c",'web_search="disabled"',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-o",join(directory,"output.json"),"-"],directory,prompt);
    if(!pending(task))return;
    if(statSync(join(directory,"output.json")).size>1024*1024)throw new Error("ENVIRONMENT_INVALID_REPORT");
-   const content=codeEnvironmentContentSchema.parse(JSON.parse(readFileSync(join(directory,"output.json"),"utf8")));
+   let content;
+   try{content=codeEnvironmentContentSchema.parse(JSON.parse(readFileSync(join(directory,"output.json"),"utf8")));}catch{throw new Error("ENVIRONMENT_INVALID_REPORT");}
    const files=new Map(packet.files.map(file=>[file.path,file]));
    for(const item of [...content.requirements,...content.commands,...content.resources,...content.issues]){
     if(item.attribution!=="unknown"&&!item.evidence.length)throw new Error("ENVIRONMENT_INVALID_EVIDENCE");

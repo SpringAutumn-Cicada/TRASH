@@ -120,3 +120,11 @@ pnpm dev
 ### 文献自动分析
 
 文献页提供“Agent 分析”按钮，依次生成文献卡片与主题 Wiki，并显示进度、失败数量和停止入口。内容保存为待审版本，真实模型流程尚未测试，见 [文献 Agent 分析说明](docs/19-literature-agent-analysis.md)。
+
+### 文献复现部署环境分析
+
+在“文献复现”选中论文代码后，点击“分析部署环境”，本机 Codex CLI 会按项目 Skill `trash_analyze_code_environment` 只读分析筛选后的代码文本。可在“部署环境报告”查看依赖、依据行号、建议命令、历史报告及代码变化提示。建议命令不自动执行，报告均标记未运行验证。
+
+报告下方可选择已连接 AutoDL 主机和 Python 解释器进行只读对照；不自动连接、安装依赖或运行论文模块。CUDA/驱动与复杂版本条件保持待确认。本机需要 Python 3 和已登录的 Codex CLI；可用 `TRASH_CODEX_COMMAND` 指定 CLI。新接口需要重启后端加载。
+
+所有自研 Skill 位于项目 `.agents/skills/`，目录和 `name` 必须以 `trash_` 开头，不修改全局配置。实现与尚未执行的验收清单见 [环境分析交付记录](docs/61-environment-analysis-delivery.md)。
