@@ -1,9 +1,9 @@
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, rmSync, rmdirSync } from "node:fs";
 import { realpath, stat, readdir, readFile, rm, mkdir } from "node:fs/promises";
-import { join, resolve, relative, isAbsolute, sep, posix } from "node:path";
+import { join, resolve, relative, isAbsolute, sep, posix, dirname, basename } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createWriteStream } from "node:fs";
@@ -23,16 +23,39 @@ export class ReproductionService {
  recordUpload(project:string,id:string,profile:string,value:{path:string;snapshot:ReproductionSnapshot}){const code=this.get(project,id);this.save({...code,uploads:[...(code.uploads??[]),{profile_id:profile,path:value.path,snapshot_id:value.snapshot.snapshot_id,sha256:value.snapshot.sha256,at:new Date().toISOString()}].slice(-50)});}
 
  private root(project:string){return join(this.store.root,"projects",project,"reproductions");}
+ private directoryName(name:string){
+  const cleaned=name.normalize("NFC").replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_").trim().replace(/[. ]+$/g,"");
+  let slug="";for(const char of cleaned){if(Buffer.byteLength(slug+char,"utf8")>180)break;slug+=char;}
+  return `repro_${slug||"未命名"}`;
+ }
+ private allocateDirectory(project:string,name:string){
+  mkdirSync(this.root(project),{recursive:true});const base=this.directoryName(name);
+  for(let suffix=1;suffix<=10000;suffix++){
+   const path=join(this.root(project),suffix===1?base:`${base}_${suffix}`);
+   try{mkdirSync(path,{mode:0o700});return path;}
+   catch(error){if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;}
+  }
+  return experimentError("REPRODUCTION_NAME_CONFLICT",409);
+ }
+ private namedDirectory(value:ReproductionCode){
+  const previous=dirname(value.path),base=this.directoryName(value.name),current=basename(previous);
+  if(!value.imported||dirname(previous)!==this.root(value.project_id)||basename(value.path)!=="code"||!existsSync(previous))return value;
+  if(current===base||current.startsWith(`${base}_`)&&/^\d+$/.test(current.slice(base.length+1)))return value;
+  const next=this.allocateDirectory(value.project_id,value.name);
+  try{renameSync(previous,next);}catch(error){try{rmdirSync(next);}catch{/* Only remove our empty reservation directory. */}throw error;}
+  try{return this.save({...value,path:join(next,"code")});}
+  catch(error){renameSync(next,previous);throw error;}
+ }
  private record(project:string,id:string){if(!/^repro_[a-f0-9-]+$/.test(id))experimentError("REPRODUCTION_NOT_FOUND",404);return join(this.root(project),`${id}.json`);}
- list(project:string):ReproductionCode[]{const root=this.root(project);return existsSync(root)?readdirSync(root).filter(n=>/^repro_[a-f0-9-]+\.json$/.test(n)).map(n=>JSON.parse(readFileSync(join(root,n),"utf8")) as ReproductionCode):[];}
+ list(project:string):ReproductionCode[]{const root=this.root(project);return existsSync(root)?readdirSync(root).filter(n=>/^repro_[a-f0-9-]+\.json$/.test(n)).map(n=>JSON.parse(readFileSync(join(root,n),"utf8")) as ReproductionCode).map(code=>this.busy(project)?code:this.namedDirectory(code)):[];}
  get(project:string,id:string){const path=this.record(project,id);if(!existsSync(path))experimentError("REPRODUCTION_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionCode;}
  private save(value:ReproductionCode){mkdirSync(this.root(value.project_id),{recursive:true});const path=this.record(value.project_id,value.id),temp=`${path}.${randomUUID()}.tmp`;writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,path);return value;}
  private validateSource(project:string,input:z.infer<typeof reproductionInput>){if(input.source_id&&!this.store.listSources(project).some(s=>s.source_id===input.source_id))experimentError("SOURCE_NOT_FOUND",404);}
 
- update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.save({...old,...input,source_id:input.source_id});}
+ update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.namedDirectory(this.save({...old,...input,source_id:input.source_id}));}
  remove(project:string,id:string){this.get(project,id);rmSync(this.record(project,id));}
  async importZip(project:string,request:IncomingMessage,name:string){
-  const id=`repro_${randomUUID()}`,root=join(this.root(project),id);await mkdir(root,{recursive:true});const zip=join(root,"source.zip"),code=join(root,"code");let bytes=0;
+  const id=`repro_${randomUUID()}`,root=this.allocateDirectory(project,name);const zip=join(root,"source.zip"),code=join(root,"code");let bytes=0;
   try{await pipeline(request,new Transform({transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;callback(bytes>200*1024*1024?new Error("ARCHIVE_LIMIT"):null,chunk);}}),createWriteStream(zip,{flags:"wx",mode:0o600}));await this.python("extract",zip,code);await rm(zip);return this.save({id,project_id:project,name:name.slice(0,200)||"复现代码",path:code,source_url:"",notes:"",created_at:new Date().toISOString(),imported:true});}
   catch{await rm(root,{recursive:true,force:true});experimentError("REPRODUCTION_IMPORT_FAILED",422);}
  }
