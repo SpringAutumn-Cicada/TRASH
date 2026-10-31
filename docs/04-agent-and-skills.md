@@ -129,3 +129,7 @@ Skill 不应执行秘密外传、绕过平台 Runner 或修改项目外路径。
 
 每个 Skill 至少准备一组正例、边界例和负例，检查是否触发、是否使用正确来源、结构输出是否通过 Schema、是否修改允许路径外文件。Agent 评估重点应是行为与产物，不只比较最终自然语言质量。
 
+
+## TRASH 自研技能命名
+
+本项目自研 Skill 统一存放于仓库 .agents/skills/，目录名及 frontmatter name 必须以 trash_ 开头，例如 trash_analyze_code_environment。不安装到用户全局目录、不修改全局 Codex 配置；技能并不授权部署或安装等额外操作。
