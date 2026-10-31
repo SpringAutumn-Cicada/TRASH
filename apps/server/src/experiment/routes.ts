@@ -5,10 +5,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
+import { browseDirectories, createDirectory } from "./directories.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
   if(parts[0]==="repository"){
+    if(parts.length===2&&parts[1]==="directories"&&method==="GET"){send(response,200,await browseDirectories(url.searchParams.get("path")??undefined));return true;}
+    if(parts.length===2&&parts[1]==="directories"&&method==="POST"){send(response,201,await createDirectory(await readJson(request)));return true;}
     if(parts.length===1&&method==="GET"){send(response,200,{repository:service.data.repository(projectId)??null});return true;}
     if(parts.length===1&&method==="PUT"){send(response,200,{repository:await service.repository.bind(projectId,await readJson(request))});return true;}
     if(parts[1]==="status"&&method==="GET"){send(response,200,await service.repository.status(projectId));return true;}
