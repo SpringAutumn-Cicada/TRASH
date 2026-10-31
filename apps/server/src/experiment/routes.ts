@@ -24,6 +24,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===3&&parts[2]==="input"&&method==="POST"){const input=z.object({text:z.string().min(1).max(32768)}).strict().parse(await readJson(request));service.terminals.input(projectId,parts[1],token,input.text);send(response,200,{accepted:true});return true;}
     if(parts.length===3&&parts[2]==="resize"&&method==="POST"){const input=z.object({cols:z.number().int().min(2).max(500),rows:z.number().int().min(1).max(200)}).strict().parse(await readJson(request));service.terminals.resize(projectId,parts[1],token,input.cols,input.rows);send(response,200,{accepted:true});return true;}
   }
+  if(parts[0]==="reproduction-snapshots"&&parts.length===2&&method==="GET"){send(response,200,{snapshot:service.reproductions.snapshotInfo(projectId,parts[1])});return true;}
   if(parts[0]==="reproductions"){
     const release=method!=="GET"?service.reproductions.acquire(projectId):()=>{};
     try{
