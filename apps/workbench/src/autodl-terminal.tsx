@@ -64,12 +64,20 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
       queue = queue.then(async () => { if (controller.signal.aborted) return; for (let i = 0; i < text.length;) { if (!connected) return; let end = Math.min(i + 8192, text.length); const last = text.charCodeAt(end - 1); if (end < text.length && last >= 0xd800 && last <= 0xdbff) end--; await post("/input", { text: text.slice(i, end) }); i = end; } }).catch(cause => { if (alive) { connected = false; setError(cause instanceof Error ? cause.message : "输入失败。"); term.options.disableStdin = true; } }).finally(() => { queued -= text.length; });
     });
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let resizeFrame: number | undefined;
     const resize = () => {
-      if (!alive || !container.current?.clientWidth || !container.current.clientHeight) return;
-      fit.fit(); clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => { if (connected) void post("/resize", { cols: Math.min(500, Math.max(2, term.cols)), rows: Math.min(200, Math.max(1, term.rows)) }).catch(() => {}); }, 120);
+      if (!alive) return;
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = undefined;
+        if (!alive || !element.clientWidth || !element.clientHeight) return;
+        // Fit against the padding-free content box after the split layout has settled.
+        fit.fit(); clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { if (connected) void post("/resize", { cols: Math.min(500, Math.max(2, term.cols)), rows: Math.min(200, Math.max(1, term.rows)) }).catch(() => {}); }, 120);
+      });
     };
-    const observer = new ResizeObserver(resize); observer.observe(container.current!); resize();
+    const observer = new ResizeObserver(resize); observer.observe(element); resize();
+    void document.fonts.ready.then(() => { if (alive) resize(); });
     const stream = async () => {
       setError(""); setClosed(false); setState("正在读取终端输出…"); term.options.disableStdin = true;
       try {
@@ -97,7 +105,7 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
       } catch (cause) { if (alive) { connected = false; term.options.disableStdin = true; setError(cause instanceof Error ? cause.message : "终端连接中断。"); setState("终端显示已中断"); } }
     };
     void stream();
-    return () => { alive = false; controller.abort(); clearTimeout(resizeTimer); observer.disconnect(); element.removeEventListener("contextmenu", copySelection, true); input.dispose(); term.dispose(); };
+    return () => { alive = false; controller.abort(); clearTimeout(resizeTimer); if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame); observer.disconnect(); element.removeEventListener("contextmenu", copySelection, true); input.dispose(); term.dispose(); };
   }, [projectId, session.id, attempt]);
-  return <section className="autodl-terminal-panel" aria-label={`终端窗口 ${number}`}><header><div className="autodl-terminal-identity"><TerminalSquare size={17}/><strong>Shell {number}</strong><span className="autodl-terminal-number">{String(number).padStart(2,"0")}</span></div><div className="autodl-terminal-actions"><button type="button" className="icon-button" title="新建分屏（Shift+Alt+D）" aria-label="新建终端分屏" disabled={splitDisabled} onClick={onSplit}><Columns2 size={15}/></button><button type="button" className="icon-button" title="恢复终端显示" aria-label="恢复终端显示" disabled={closed || session.ended} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={15}/></button><button type="button" className="icon-button" title="关闭终端窗口" aria-label="关闭终端窗口" onClick={() => void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token } }).then(response => { if (!response.ok && response.status !== 404) throw new Error(); callbacks.current.onDisconnect(); }).catch(() => setError("断开失败，请检查服务状态。"))}><X size={15}/></button></div></header><div className="autodl-terminal-connection"><span title={`${session.username}@${session.host}:${session.port}`}>{session.username}@{session.host}:{session.port}</span><span role="status" className="autodl-terminal-status">{state}</span></div>{error && <p role="alert" className="notice error-notice">{error}</p>}<div ref={container} className="autodl-terminal-screen"/><footer><span>共享 SSH 连接 · 独立 Shell</span><span role="status">{copyNotice || "长任务请使用 tmux 或实验 Runner"}</span></footer></section>;
+  return <section className="autodl-terminal-panel" aria-label={`终端窗口 ${number}`}><header><div className="autodl-terminal-identity"><TerminalSquare size={17}/><strong>Shell {number}</strong><span className="autodl-terminal-number">{String(number).padStart(2,"0")}</span></div><div className="autodl-terminal-actions"><button type="button" className="icon-button" title="新建分屏（Shift+Alt+D）" aria-label="新建终端分屏" disabled={splitDisabled} onClick={onSplit}><Columns2 size={15}/></button><button type="button" className="icon-button" title="恢复终端显示" aria-label="恢复终端显示" disabled={closed || session.ended} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={15}/></button><button type="button" className="icon-button" title="关闭终端窗口" aria-label="关闭终端窗口" onClick={() => void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token } }).then(response => { if (!response.ok && response.status !== 404) throw new Error(); callbacks.current.onDisconnect(); }).catch(() => setError("断开失败，请检查服务状态。"))}><X size={15}/></button></div></header><div className="autodl-terminal-connection"><span title={`${session.username}@${session.host}:${session.port}`}>{session.username}@{session.host}:{session.port}</span><span role="status" className="autodl-terminal-status">{state}</span></div>{error && <p role="alert" className="notice error-notice">{error}</p>}<div className="autodl-terminal-screen"><div ref={container} className="autodl-terminal-mount"/></div><footer><span>共享 SSH 连接 · 独立 Shell</span><span role="status">{copyNotice || "长任务请使用 tmux 或实验 Runner"}</span></footer></section>;
 }
