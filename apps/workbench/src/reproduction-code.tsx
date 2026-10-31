@@ -11,7 +11,8 @@ const messages:Record<string,string>={SSH_NOT_CONNECTED:"所选主机尚未连�
  REPRODUCTION_SNAPSHOT_READ_FAILED:"无法读取本机代码快照，请检查文件和目录权限。",
  REPRODUCTION_REMOTE_DIRECTORY_FAILED:"SFTP 创建远端目录失败，请检查父目录是否存在、写入权限及磁盘空间。",
  REPRODUCTION_TRANSFER_FAILED:"SFTP 上传失败，请检查网络、远端目录写权限及磁盘空间。",
- REPRODUCTION_REMOTE_HASH_FAILED:"通过 SFTP 回读代码包校验失败，请检查连接及文件完整性。",
+ REPRODUCTION_SHA256SUM_UNAVAILABLE:"远端未找到 sha256sum，请安装后重试；平台不会自动安装。",
+ REPRODUCTION_REMOTE_HASH_FAILED:"远端 SHA-256 校验失败，请检查代码包完整性和文件读取权限。",
  REPRODUCTION_REMOTE_EXTRACT_FAILED:"远端 unzip 解压失败，请检查磁盘空间及目录写入权限。",
  REPRODUCTION_REMOTE_MANIFEST_FAILED:"代码已解压，但快照清单写入失败，请检查远端写权限。",
  REPRODUCTION_REMOTE_TIMEOUT:"远端操作超时，请先确认远端文件状态，再决定是否重新上传。",
@@ -56,7 +57,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
    if(!controller.signal.aborted)timer=setTimeout(()=>void poll(),700);
   };void poll();return()=>{controller.abort();clearTimeout(timer);};
  },[uploading,uploadRequest,base]);
- const stageLabels:Record<string,string>={snapshot:"正在生成代码快照",preparing:"正在准备远端目录",uploading:"正在传输代码包",verifying:"传输完成，正在校验",extracting:"正在远端解压",saving:"正在写入快照清单",completed:"远端处理完成",failed:"上传失败"};
+ const stageLabels:Record<string,string>={snapshot:"正在生成代码快照",preparing:"正在准备远端目录",uploading:"正在传输代码包",verifying:"传输完成，正在远端校验 SHA-256",extracting:"正在远端解压",saving:"正在写入快照清单",completed:"远端处理完成",failed:"上传失败"};
  const upload=async()=>{
   if(!current||busy||connecting||uploadPending.current)return;
   if(!connectedProfiles.includes(host)){setError("请先连接所选主机，再上传代码。");return;}

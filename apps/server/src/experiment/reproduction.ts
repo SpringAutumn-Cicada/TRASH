@@ -78,6 +78,8 @@ export class ReproductionService {
    report("preparing",0,bundle.size);
    stage="REPRODUCTION_UNZIP_UNAVAILABLE";
    await remote.exec(["sh","-c","command -v unzip >/dev/null 2>&1"]);
+   stage="REPRODUCTION_SHA256SUM_UNAVAILABLE";
+   await remote.exec(["sh","-c","command -v sha256sum >/dev/null 2>&1"]);
    stage="REPRODUCTION_REMOTE_DIRECTORY_FAILED";
    const sftp=await remote.sftp();
    try{
@@ -89,9 +91,9 @@ export class ReproductionService {
    await remote.upload(bundle.path,posix.join(directory,"code.zip"),(sent,total)=>report("uploading",sent,total));
    report("verifying",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_HASH_FAILED";
-   const hash=createHash("sha256");
-   const size=await remote.consume(posix.join(directory,"code.zip"),bundle.size+1,chunk=>hash.update(chunk));
-   if(size!==bundle.size||hash.digest("hex")!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
+   const output=await remote.exec(["sha256sum","--",posix.join(directory,"code.zip")],undefined,120000,16384);
+   const hash=/^([a-fA-F0-9]{64})[ \t]/.exec(output.trim())?.[1].toLowerCase();
+   if(hash!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
    report("extracting",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
    await remote.exec(["unzip","-q","-n",posix.join(directory,"code.zip"),"-d",posix.join(directory,"code")],undefined,120000);
