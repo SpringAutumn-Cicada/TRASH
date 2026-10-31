@@ -67,7 +67,8 @@ export class EnvironmentAnalysisService {
    const skill=readFileSync(join(skillDirectory,"SKILL.md"),"utf8"),format=readFileSync(join(skillDirectory,"references/report-format.md"),"utf8");
    mkdirSync(join(directory,"references"),{recursive:true});writeFileSync(join(directory,"SKILL.md"),skill);writeFileSync(join(directory,"references/report-format.md"),format);
    await this.execute(active,"python3",[join(skillDirectory,"scripts/collect_inputs.py"),bundle.path,join(directory,"input.json")],directory);
-   const packet=JSON.parse(readFileSync(join(directory,"input.json"),"utf8")) as Packet;if(!packet.files.length)throw new Error("ENVIRONMENT_NO_READABLE_INPUT");
+   const packet=JSON.parse(readFileSync(join(directory,"input.json"),"utf8")) as Packet;packet.coverage.skipped=[...(snapshot.analysis_excluded??[]),...packet.coverage.skipped];if(!packet.files.length)throw new Error("ENVIRONMENT_NO_READABLE_INPUT");
+   this.atomic(join(directory,"input.json"),packet);
    const cli=process.env.TRASH_CODEX_COMMAND||"codex";
    const cliVersion=(await this.execute(active,cli,["--version"],directory)).trim().slice(0,200);
    if(!pending(task))return;task.status="analyzing";this.save(task);

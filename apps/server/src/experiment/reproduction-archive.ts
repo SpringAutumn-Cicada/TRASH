@@ -34,9 +34,12 @@ if mode=='extract':
    os.chmod(out,0o700 if i.external_attr>>16&0o111 else 0o600)
  print(json.dumps({'extracted':True}))
 elif mode in ('snapshot','analysis-snapshot'):
- records=[];total=0
+ records=[];excluded=[];total=0
  with zipfile.ZipFile(target,'x',compression=zipfile.ZIP_DEFLATED) as z:
   for root,dirs,files in os.walk(source,followlinks=False):
+   if mode=='analysis-snapshot':
+    for d in dirs:
+     if d in ['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor']: excluded.append({'path':os.path.relpath(os.path.join(root,d),source).replace(os.sep,'/'),'reason':'excluded_directory'})
    dirs[:]=sorted(d for d in dirs if d not in (['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor'] if mode=='analysis-snapshot' else ['.git','__pycache__']))
    for d in dirs:
     if os.path.islink(os.path.join(root,d)): raise ValueError('SYMLINK_UNSUPPORTED')
@@ -44,8 +47,14 @@ elif mode in ('snapshot','analysis-snapshot'):
     path=os.path.join(root,name);rel=os.path.relpath(path,source).replace(os.sep,'/');safe(rel)
     if not stat.S_ISREG(os.lstat(path).st_mode): raise ValueError('SYMLINK_OR_SPECIAL_FILE')
     if (name=='.env' or name.startswith('.env.') and name!='.env.example' or name in ['id_rsa','id_ed25519','auth.json','credentials'] or mode=='analysis-snapshot' and pathlib.Path(name).suffix.lower() in ['.pem','.key','.p12','.pfx']):
-     if mode=='analysis-snapshot': continue
+     if mode=='analysis-snapshot':
+      excluded.append({'path':rel,'reason':'excluded_sensitive'});continue
      raise ValueError('SENSITIVE_FILE')
+    if mode=='analysis-snapshot':
+     low=name.lower();suffix=pathlib.Path(name).suffix.lower()
+     eligible=low.startswith(('readme','requirements','dockerfile')) or low in ['makefile','pipfile','pipfile.lock','poetry.lock','uv.lock','pnpm-lock.yaml'] or suffix in ['.py','.md','.rst','.txt','.toml','.yaml','.yml','.json','.cfg','.ini','.c','.cpp','.h','.cu','.js','.ts','.r','.sh','.bat','.ps1']
+     if low in ['agents.md','skill.md'] or not eligible:
+      excluded.append({'path':rel,'reason':'not_analysis_source'});continue
     h=hashlib.sha256();size=0;info=zipfile.ZipInfo.from_file(path,rel,strict_timestamps=False)
     info.compress_type=zipfile.ZIP_DEFLATED
     with open(path,'rb') as inp,z.open(info,'w') as out:
@@ -58,5 +67,5 @@ elif mode in ('snapshot','analysis-snapshot'):
     records.append({'path':rel,'size_bytes':size,'sha256':h.hexdigest()})
     if len(records)>MAXFILES: raise ValueError('ARCHIVE_LIMIT')
  if not records: raise ValueError('EMPTY_CODE_DIRECTORY')
- print(json.dumps({'files':records,'size_bytes':total}))
+ print(json.dumps({'files':records,'size_bytes':total,**({'analysis_excluded':excluded} if mode=='analysis-snapshot' else {})}))
 `;
