@@ -9,6 +9,7 @@ import { OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, 
 import { TrashStore, KnowledgeStore } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
+import { CodeAgent } from "./code-agent.js";
 import { ExperimentService } from "./experiment/service.js";
 import { experimentRoute } from "./experiment/routes.js";
 import { projectOverview } from "./overview.js";
@@ -112,7 +113,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if (url.pathname === "/api/v1/health" && method === "GET") {
@@ -143,6 +144,17 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (subpath === "code-agent/detect" && method === "GET") { sendJson(response, 200, await codeAgent.detect()); return; }
+    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).map(task => ({ ...task, logs: "", response: "" })) }); return; }
+    if (subpath === "code-agent/tasks" && method === "POST") { sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request)) }); return; }
+    const codeTask = subpath.match(/^code-agent\/tasks\/(code_[a-f0-9-]+)(?:\/(cancel|acknowledge))?$/);
+    if (codeTask && method === "GET" && !codeTask[2]) { const task = codeAgent.list(projectId).find(t => t.task_id === codeTask[1]); if (!task) { sendJson(response, 404, { error: "NOT_FOUND" }); return; } sendJson(response, 200, { task }); return; }
+    if (codeTask && method === "POST" && codeTask[2]) {
+      z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
+      if (codeTask[2] === "cancel") codeAgent.cancel(projectId, codeTask[1]); else codeAgent.acknowledge(projectId, codeTask[1]);
+      sendJson(response, 200, { accepted: true }); return;
+    }
+    if (codeAgent.busy(projectId) && ((subpath.startsWith("repository") && method !== "GET") || ((subpath === "experiment-runs" || /^experiment-runs\/[^/]+\/retry$/.test(subpath)) && method === "POST"))) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
     if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson)) return;
     if (subpath === "overview" && method === "GET") {
       sendJson(response, 200, projectOverview(store, projectId));
@@ -151,7 +163,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (!subpath && method === "DELETE") {
       const input = z.object({ confirm_title: z.string() }).strict().parse(await readJson(request));
       if (input.confirm_title !== project.title) { sendJson(response, 400, { error: "PROJECT_TITLE_MISMATCH" }); return; }
-      if (agent.isProjectBusy(projectId) || experiments.busyProject(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
+      if (agent.isProjectBusy(projectId) || experiments.busyProject(projectId) || codeAgent.busy(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
       sendJson(response, 200, store.deleteProject(projectId));
       return;
     }
@@ -283,6 +295,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const knowledge = new KnowledgeStore(store.db);
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
+  const codeAgent = new CodeAgent(store, experiments);
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
     const origin = request.headers.origin;
@@ -305,9 +318,9 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
       } catch (error) { onError(error); }
       return;
     }
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments).catch(onError);
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent).catch(onError);
   });
-  server.on("close", () => { experiments.close(); agent.close(); });
+  server.on("close", () => { codeAgent.close(); experiments.close(); agent.close(); });
   return { server, store };
 }
 
