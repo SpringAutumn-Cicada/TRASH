@@ -30,7 +30,7 @@ export class KnowledgeStore {
         Object.assign(c, source ? JSON.parse(source.data) : {}, details ? JSON.parse(details.data) : {});
       }
       return Object.entries(filters).every(([key, value]) => !value || ["status", "page", "limit", "format", "sort"].includes(key) ||
-        String(key === "q" ? JSON.stringify(c) : c[key] ?? "").toLowerCase().includes(value.toLowerCase()));
+        String(key === "q" ? JSON.stringify(c) : typeof c[key] === "object" ? JSON.stringify(c[key]) : c[key] ?? "").toLowerCase().includes(value.toLowerCase()));
     }).sort((a, b) => filters.sort === "title" ? a.title.localeCompare(b.title) : b.created_at.localeCompare(a.created_at));
   }
   validateRefs(projectId: string, kind: KnowledgeKind, content: ReturnType<typeof parseKnowledge>): void {

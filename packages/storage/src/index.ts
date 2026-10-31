@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { makeId, researchProjectSchema, sourceSchema, type Artifact, type EvidencePassage, type ResearchProject, type Source, type SourceLocator } from "@trash/protocol";
 
 export interface SourceSegmentInput {
@@ -221,7 +221,7 @@ export class TrashStore {
     const artifact = JSON.parse(row.data) as Artifact;
     const managed = this.db.prepare("SELECT relative_path FROM managed_files WHERE artifact_id=?").get(artifactId) as { relative_path: string } | undefined;
     const path = managed ? resolve(this.root, managed.relative_path) : join(this.root, "projects", projectId, "files", `${artifactId}-${artifact.name}`);
-    if (!path.startsWith(`${this.root}/`) || !existsSync(path)) return undefined;
+    if (!path.startsWith(`${this.root}${sep}`) || !existsSync(path)) return undefined;
     return { artifact, path };
   }
 
