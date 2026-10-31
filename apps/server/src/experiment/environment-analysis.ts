@@ -6,6 +6,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { experimentError, type TrashStore } from "@trash/storage";
 import { codeEnvironmentContentSchema, type CodeEnvironmentReport, type EnvironmentAnalysisTask, type EnvironmentCoverage, type ReproductionSnapshot } from "@trash/protocol";
+import { compareEnvironment } from "./environment-host.js";
+import type { TerminalService } from "./terminal.js";
+import type { HostEnvironmentComparison } from "@trash/protocol";
 import { ReproductionService } from "./reproduction.js";
 
 const SKILL="trash_analyze_code_environment" as const;
@@ -82,6 +85,13 @@ export class EnvironmentAnalysisService {
    this.atomic(join(directory,"report.json"),report);task.status="completed";task.report_id=report.id;task.finished_at=new Date().toISOString();this.save(task);
   }catch(error){if(pending(task)){task.status="failed";task.error=error instanceof Error&&/^ENVIRONMENT_[A-Z_]+$/.test(error.message)?error.message:"ENVIRONMENT_ANALYSIS_FAILED";task.finished_at=new Date().toISOString();this.save(task);}}
   finally{clearTimeout(timer);}
+ }
+ comparisons(project:string,code:string,report:string):HostEnvironmentComparison[]{
+  const root=join(this.root(project,code),"comparisons");return existsSync(root)?readdirSync(root).filter(name=>/^comparison_[a-f0-9-]+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(join(root,name),"utf8")) as HostEnvironmentComparison).filter(value=>value.report_id===report).sort((a,b)=>b.created_at.localeCompare(a.created_at)):[];
+ }
+ async compare(project:string,code:string,reportId:string,profile:string,python:string,terminals:TerminalService){
+  const report=this.report(project,code,reportId),remote=terminals.connection(project,profile),release=this.reproductions.acquire(project);
+  try{const result=await compareEnvironment(remote,report,profile,python);this.atomic(join(this.root(project,code),"comparisons",`${result.id}.json`),result);return result;}finally{release();}
  }
  async freshness(project:string,code:string,reportId:string){const report=this.report(project,code,reportId),release=this.reproductions.acquire(project);let snapshot:ReproductionSnapshot|undefined;try{snapshot=await this.reproductions.snapshot(project,code,true);const current=fingerprint(snapshot);return {stale:current!==report.code_fingerprint,current_fingerprint:current,checked_at:new Date().toISOString()};}finally{try{if(snapshot)await rm(join(this.store.root,"projects",project,"reproductions","snapshots",snapshot.snapshot_id),{recursive:true,force:true});}finally{release();}}}
 }

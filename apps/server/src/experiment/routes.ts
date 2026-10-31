@@ -33,6 +33,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts.length===5&&parts[3]==="tasks"&&method==="GET"){const task=service.environmentAnalysis.tasks(projectId,parts[1]).find(task=>task.id===parts[4])??experimentError("ENVIRONMENT_TASK_NOT_FOUND",404);send(response,200,{task});return true;}
       if(parts.length===6&&parts[3]==="tasks"&&parts[5]==="cancel"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{task:service.environmentAnalysis.cancel(projectId,parts[1],parts[4])});return true;}
       if(parts.length===5&&parts[3]==="reports"&&method==="GET"){send(response,200,{report:service.environmentAnalysis.report(projectId,parts[1],parts[4])});return true;}
+      if(parts.length===6&&parts[3]==="reports"&&parts[5]==="comparisons"&&method==="GET"){service.environmentAnalysis.report(projectId,parts[1],parts[4]);send(response,200,{comparisons:service.environmentAnalysis.comparisons(projectId,parts[1],parts[4])});return true;}
+      if(parts.length===6&&parts[3]==="reports"&&parts[5]==="compare"&&method==="POST"){
+        const input=z.object({profile_id:z.string(),python:z.string().min(1).max(4096).default("python3"),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        service.data.profile(projectId,input.profile_id);send(response,200,{comparison:await service.environmentAnalysis.compare(projectId,parts[1],parts[4],input.profile_id,input.python,service.terminals)});return true;
+      }
       if(parts.length===6&&parts[3]==="reports"&&parts[5]==="freshness"&&method==="GET"){send(response,200,await service.environmentAnalysis.freshness(projectId,parts[1],parts[4]));return true;}
       return false;
     }
