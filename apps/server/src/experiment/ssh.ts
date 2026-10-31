@@ -20,7 +20,7 @@ export class SshService {
       const timer=setTimeout(()=>{client.destroy();reject(Object.assign(new Error("SSH_NETWORK_FAILED"),{statusCode:422}));},15000);
       client.on("error",()=>{if(!fingerprint)reject(Object.assign(new Error("SSH_NETWORK_FAILED"),{statusCode:422}));});
       client.on("close",()=>{clearTimeout(timer);this.clients.delete(client);if(fingerprint)resolve(fingerprint);});
-      client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:15000,hostVerifier:key=>{fingerprint=`SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/,"")}`;this.observed.set(profile.profile_id,fingerprint);return false;}});
+      client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:15000,hostVerifier:(key:Buffer)=>{fingerprint=`SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/,"")}`;this.observed.set(profile.profile_id,fingerprint);return false;}});
     });
   }
   confirm(profile:SshProfile,fingerprint:string):void{if(this.observed.get(profile.profile_id)!==fingerprint)experimentError("SSH_FINGERPRINT_NOT_OBSERVED",409);if(this.store.runs().some(r=>r.profile_id===profile.profile_id&&this.store.active(r)))experimentError("EXPERIMENT_ACTIVE",409);this.store.saveProfile({...profile,fingerprint});this.observed.delete(profile.profile_id);}
@@ -38,7 +38,7 @@ export class SshService {
       client.once("ready",()=>resolve(new RemoteConnection(client)));
       client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:15000,keepaliveInterval:10000,keepaliveCountMax:3,
         ...(profile.auth==="password"?{password:credentials.password}:profile.auth==="key"?{privateKey:key,passphrase:credentials.passphrase}:{agent:process.env.SSH_AUTH_SOCK}),
-        hostVerifier:raw=>{const fingerprint=`SHA256:${createHash("sha256").update(raw).digest("base64").replace(/=+$/,"")}`;mismatch=fingerprint!==profile.fingerprint;return !mismatch;}});
+        hostVerifier:(raw:Buffer)=>{const fingerprint=`SHA256:${createHash("sha256").update(raw).digest("base64").replace(/=+$/,"")}`;mismatch=fingerprint!==profile.fingerprint;return !mismatch;}});
     });
   }
 }

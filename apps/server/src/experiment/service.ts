@@ -114,7 +114,7 @@ export class ExperimentService {
       await remote.exec([run.plan.content.python,"-c","import os,sys; os.makedirs(sys.argv[1],mode=0o700,exist_ok=True); os.makedirs(sys.argv[1]+'/runner',exist_ok=True)",run.remote_dir]);
       this.mark(run,"syncing");await remote.upload(bundle.path,posix.join(run.remote_dir,"code.bundle.part"));
       await remote.exec([run.plan.content.python,"-c","import os,sys,hashlib; p=sys.argv[1]; h=hashlib.sha256(); f=open(p,'rb'); [h.update(b) for b in iter(lambda:f.read(1048576),b'')]; assert h.hexdigest()==sys.argv[2],'BUNDLE_HASH_MISMATCH'; os.replace(p,sys.argv[3])",posix.join(run.remote_dir,"code.bundle.part"),bundle.sha256,posix.join(run.remote_dir,"code.bundle")]);
-      const manifest={run_id:run.run_id,token:run.token,runner_version:RUNNER_VERSION,commit_sha:run.plan.content.commit_sha,bundle_sha256:bundle.sha256,...run.plan.content,preparation:run.preparation,datasets:run.plan.datasets};
+      const manifest={run_id:run.run_id,token:run.token,runner_version:RUNNER_VERSION,bundle_sha256:bundle.sha256,...run.plan.content,preparation:run.preparation,datasets:run.plan.datasets};
       await remote.write(posix.join(run.remote_dir,"manifest.json"),JSON.stringify(manifest));await remote.write(posix.join(run.remote_dir,"environment.json"),JSON.stringify(environment));await remote.write(posix.join(run.remote_dir,"runner","runner.py"),REMOTE_RUNNER);
       const local=join(this.store.root,"projects",run.project_id,"experiment-runs",run.run_id);await mkdir(local,{recursive:true});await writeFile(join(local,"manifest.json"),JSON.stringify(manifest,null,2),{mode:0o600});
       if(this.data.run(run.project_id,run.run_id).status==="cancel_requested"){run.status="cancelled";this.data.saveRun(run);return;}
