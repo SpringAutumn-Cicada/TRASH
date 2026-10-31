@@ -8,6 +8,7 @@ import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
+import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
@@ -29,6 +30,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
   if(parts[0]==="reproductions"){
     if(parts[1]&&parts[2]==="environment"){
       service.reproductions.get(projectId,parts[1]);
+      if(parts.length===4&&parts[3]==="interpreters"&&method==="GET"){
+        const profileId=z.string().min(1).parse(url.searchParams.get("profile_id"));
+        service.data.profile(projectId,profileId);response.setHeader("cache-control","no-store");
+        send(response,200,await discoverPythonInterpreters(service.terminals.connection(projectId,profileId)));return true;
+      }
       if(parts.length===3&&method==="GET"){send(response,200,{tasks:service.environmentAnalysis.tasks(projectId,parts[1]),reports:service.environmentAnalysis.reports(projectId,parts[1])});return true;}
       if(parts.length===3&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{task:service.environmentAnalysis.start(projectId,parts[1])});return true;}
       if(parts.length===5&&parts[3]==="tasks"&&method==="GET"){const task=service.environmentAnalysis.tasks(projectId,parts[1]).find(task=>task.id===parts[4])??experimentError("ENVIRONMENT_TASK_NOT_FOUND",404);send(response,200,{task});return true;}
