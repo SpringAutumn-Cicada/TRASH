@@ -3,7 +3,7 @@ import type { ProjectPage } from "@trash/protocol";
 
 export const projectPages: { id: ProjectPage; label: string }[] = [
   { id: "overview", label: "概览" }, { id: "literature", label: "文献" }, { id: "cards", label: "卡片" },
-  { id: "wiki", label: "Wiki" }, { id: "results", label: "实验结果" }, { id: "tasks", label: "任务" }
+  { id: "wiki", label: "Wiki" }, { id: "experiments", label: "实验" }, { id: "results", label: "实验结果" }, { id: "tasks", label: "任务" }
 ];
 export const DirtyContext = createContext<(id: string, dirty: boolean) => void>(() => {});
 export function useUnsavedChanges(dirty: boolean): () => void {
