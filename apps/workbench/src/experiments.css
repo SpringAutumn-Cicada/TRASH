@@ -73,3 +73,15 @@
 .environment-image-grid details { margin-top:10px; font-size:12px; }
 @media(max-width:900px) { .environment-image-grid {grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media(max-width:480px) { .environment-image-heading {align-items:flex-start;flex-direction:column;} .environment-image-grid {grid-template-columns:1fr;} }
+
+/* Current reproduction identity, above the action toolbar. */
+.reproduction-workspace-heading{display:flex;align-items:flex-start;gap:17px;padding:23px 25px;margin-bottom:18px;border:1px solid color-mix(in srgb,var(--green) 18%,var(--line));border-radius:15px;background:linear-gradient(120deg,color-mix(in srgb,var(--green-soft) 70%,var(--surface)),var(--surface) 80%);position:relative;overflow:hidden}
+.reproduction-workspace-heading::before{content:"";position:absolute;left:0;top:22px;bottom:22px;width:3px;border-radius:0 3px 3px 0;background:var(--green)}
+.reproduction-title-icon{display:grid;place-items:center;flex:none;width:50px;height:50px;border:1px solid color-mix(in srgb,var(--green) 17%,var(--line));border-radius:13px;background:var(--surface);color:var(--green)}
+.reproduction-title-content{min-width:0;flex:1}
+.reproduction-title-eyebrow{display:block;margin-bottom:6px;font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--green)}
+.reproduction-workspace-heading h3{margin:0;font-size:clamp(22px,2.1vw,29px);font-weight:700;line-height:1.35;letter-spacing:-.025em;color:var(--ink);overflow-wrap:anywhere}
+.reproduction-paper-title{display:flex;align-items:flex-start;gap:8px;margin-top:12px;color:var(--muted)}
+.reproduction-paper-title>svg{flex:none;margin-top:3px;color:var(--green)}
+.reproduction-workspace-heading .reproduction-paper-title p{margin:0;font-size:14px;line-height:1.7;color:var(--ink);opacity:.8;overflow-wrap:anywhere}
+@media(max-width:600px){.reproduction-workspace-heading{gap:12px;padding:18px 16px}.reproduction-title-icon{width:39px;height:39px;border-radius:10px}.reproduction-title-icon svg{width:21px;height:21px}.reproduction-workspace-heading h3{font-size:22px}.reproduction-workspace-heading .reproduction-paper-title p{font-size:12px}}
