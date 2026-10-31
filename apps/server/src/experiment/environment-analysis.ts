@@ -30,7 +30,14 @@ export class EnvironmentAnalysisService {
  private taskRoot(task:EnvironmentAnalysisTask){return join(this.root(task.project_id,task.reproduction_id),task.id);}
  private atomic(path:string,value:unknown){mkdirSync(dirname(path),{recursive:true});const temporary=`${path}.${randomUUID()}.tmp`;writeFileSync(temporary,JSON.stringify(value,null,2),{mode:0o600});renameSync(temporary,path);}
  private save(task:EnvironmentAnalysisTask){this.atomic(join(this.taskRoot(task),"task.json"),task);}
- tasks(project:string,code:string):EnvironmentAnalysisTask[]{const root=this.root(project,code);return existsSync(root)?readdirSync(root).filter(id=>/^env_[a-f0-9-]+$/.test(id)&&existsSync(join(root,id,"task.json")))).map(id=>JSON.parse(readFileSync(join(root,id,"task.json"),"utf8")) as EnvironmentAnalysisTask).sort((a,b)=>b.created_at.localeCompare(a.created_at)):[];}
+ tasks(project:string,code:string):EnvironmentAnalysisTask[]{
+  const root=this.root(project,code);
+  if(!existsSync(root))return [];
+  return readdirSync(root)
+   .filter(id=>/^env_[a-f0-9-]+$/.test(id)&&existsSync(join(root,id,"task.json")))
+   .map(id=>JSON.parse(readFileSync(join(root,id,"task.json"),"utf8")) as EnvironmentAnalysisTask)
+   .sort((a,b)=>b.created_at.localeCompare(a.created_at));
+ }
  reports(project:string,code:string):CodeEnvironmentReport[]{return this.tasks(project,code).filter(task=>task.status==="completed").map(task=>JSON.parse(readFileSync(join(this.taskRoot(task),"report.json"),"utf8")) as CodeEnvironmentReport);}
  report(project:string,code:string,id:string){return this.reports(project,code).find(report=>report.id===id)??experimentError("ENVIRONMENT_REPORT_NOT_FOUND",404);}
  busy(project:string){return this.running.has(project);}
