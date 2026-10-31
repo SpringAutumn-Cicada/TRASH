@@ -49,9 +49,9 @@ test("invalid metric values and duplicate external runs do not create partial ve
 });
 test("v1 migration backs up existing database and preserves sources",()=>{
   const f=fixture();try{
-    const tables=["managed_files","source_details","source_attachments","knowledge_versions","knowledge_keys","knowledge_metrics","knowledge_reviews","knowledge_task_events","knowledge_tasks"];
+    const tables=["experiment_events","experiment_runs","experiment_plans","experiment_datasets","experiment_profiles","experiment_environments","experiment_repositories","managed_files","source_details","source_attachments","knowledge_versions","knowledge_keys","knowledge_metrics","knowledge_reviews","knowledge_task_events","knowledge_tasks"];
     f.store.db.pragma("foreign_keys = OFF");for(const table of tables)f.store.db.exec(`DROP TABLE ${table}`);f.store.db.pragma("user_version = 1");f.store.close();
-    const reopened=new TrashStore(f.root);assert.equal(reopened.getSource(f.source.source_id)?.title,"Paper");assert.equal(reopened.db.pragma("user_version",{simple:true}),2);assert.ok(readdirSync(f.root).some(n=>n.startsWith("workspace-before-v2-")));reopened.close();
+    const reopened=new TrashStore(f.root);assert.equal(reopened.getSource(f.source.source_id)?.title,"Paper");assert.equal(reopened.db.pragma("user_version",{simple:true}),3);assert.ok(readdirSync(f.root).some(n=>n.startsWith("workspace-before-v2-")));reopened.close();
   }finally{rmSync(f.root,{recursive:true,force:true});}
 });
 

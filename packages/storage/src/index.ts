@@ -22,6 +22,7 @@ export function getWorkspaceRoot(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "trash");
 }
 
+export { ExperimentStore, experimentError } from "./experiment.js";
 export { KnowledgeStore } from "./knowledge.js";
 export type { KnowledgeTask } from "./knowledge.js";
 
@@ -45,8 +46,9 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 2) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 2) return;
+    if (version > 3) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 3) return;
+    if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     }
@@ -95,7 +97,7 @@ export class TrashStore {
       COMMIT;
     `);
     }
-    this.db.exec(`
+    if (version < 2) this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE managed_files (artifact_id TEXT PRIMARY KEY REFERENCES artifacts(artifact_id), relative_path TEXT NOT NULL);
       CREATE TABLE source_details (source_id TEXT PRIMARY KEY REFERENCES sources(source_id), data TEXT NOT NULL);
@@ -109,6 +111,19 @@ export class TrashStore {
       CREATE TABLE knowledge_tasks (task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(project_id), status TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE knowledge_task_events (seq INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES knowledge_tasks(task_id), at TEXT NOT NULL, message TEXT NOT NULL);
       PRAGMA user_version = 2;
+      COMMIT;
+    `);
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE experiment_repositories(project_id TEXT PRIMARY KEY REFERENCES projects(project_id),data TEXT NOT NULL);
+      CREATE TABLE experiment_profiles(profile_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(project_id),data TEXT NOT NULL);
+      CREATE TABLE experiment_environments(snapshot_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(project_id),profile_id TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE TABLE experiment_datasets(dataset_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(project_id),data TEXT NOT NULL);
+      CREATE TABLE experiment_plans(plan_id TEXT NOT NULL,version INTEGER NOT NULL,project_id TEXT NOT NULL REFERENCES projects(project_id),data TEXT NOT NULL,PRIMARY KEY(plan_id,version));
+      CREATE TABLE experiment_runs(run_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(project_id),profile_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX experiment_run_queue ON experiment_runs(profile_id,status,created_at);
+      CREATE TABLE experiment_events(event_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES experiment_runs(run_id),type TEXT NOT NULL,at TEXT NOT NULL,message TEXT NOT NULL);
+      PRAGMA user_version = 3;
       COMMIT;
     `);
   }
@@ -143,6 +158,8 @@ export class TrashStore {
     const active = this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(projectId);
     if (active) throw Object.assign(new Error("PROJECT_HAS_ACTIVE_TASKS"), { statusCode: 409 });
 
+    const remoteActive = this.db.prepare("SELECT 1 FROM experiment_runs WHERE project_id=? AND status NOT IN ('completed','failed','cancelled') LIMIT 1").get(projectId);
+    if (remoteActive) throw Object.assign(new Error("EXPERIMENT_ACTIVE"), { statusCode: 409 });
     const directory = join(this.root, "projects", project.project_id);
     const quarantine = join(this.root, "deleted-projects", `${project.project_id}-${makeId("artifact")}`);
     const hasFiles = existsSync(directory);
@@ -152,6 +169,8 @@ export class TrashStore {
     }
     try {
       this.db.transaction(() => {
+        this.db.prepare("DELETE FROM experiment_events WHERE run_id IN (SELECT run_id FROM experiment_runs WHERE project_id=?)").run(projectId);
+        for (const table of ["experiment_runs","experiment_plans","experiment_environments","experiment_datasets","experiment_profiles","experiment_repositories"]) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(projectId);
         this.db.prepare("DELETE FROM knowledge_task_events WHERE task_id IN (SELECT task_id FROM knowledge_tasks WHERE project_id=?)").run(projectId);
         this.db.prepare("DELETE FROM knowledge_tasks WHERE project_id=?").run(projectId);
         this.db.prepare("DELETE FROM knowledge_reviews WHERE object_id IN (SELECT object_id FROM knowledge_versions WHERE project_id=?)").run(projectId);
