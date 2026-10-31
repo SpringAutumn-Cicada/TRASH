@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ClientChannel } from "ssh2";
 import type { SshProfile } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
-import { remoteDirectories } from "./remote-directories.js";
+import { createRemoteDirectory, remoteDirectories } from "./remote-directories.js";
 import { SshService, type RemoteConnection } from "./ssh.js";
 
 interface Output { seq: number; data: string; size: number }
@@ -28,6 +28,10 @@ export class TerminalService {
   }
   hasProject(project: string) { return this.opening.has(project) || [...this.sessions.values()].some(session => session.project === project); }
   hasProfile(profile: string) { return this.openingProfiles.has(profile) || [...this.sessions.values()].some(session => session.profile.profile_id === profile); }
+  async createDirectory(project: string, profile: string, parent: string, name: string) {
+    const session=[...this.sessions.values()].find(item=>item.project===project&&item.profile.profile_id===profile);
+    return session?createRemoteDirectory(session.remote,parent,name):undefined;
+  }
   async directories(project: string, profile: string, path: string) {
     const session = [...this.sessions.values()].find(item => item.project === project && item.profile.profile_id === profile);
     return session ? remoteDirectories(session.remote, path) : undefined;

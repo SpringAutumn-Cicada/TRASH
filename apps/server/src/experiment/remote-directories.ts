@@ -19,3 +19,22 @@ export async function remoteDirectories(remote: RemoteConnection, path: string) 
   }
   finally { sftp.end(); }
 }
+
+export async function createRemoteDirectory(remote: RemoteConnection, parent: string, name: string) {
+  if (!parent.startsWith("/") || parent.split("/").includes("..") || /[\x00-\x1f]/.test(parent) || !name.trim() || name === "." || name === ".." || /[/\\\x00-\x1f]/.test(name) || Buffer.byteLength(name,"utf8") > 255) experimentError("REMOTE_DIRECTORY_INVALID",400);
+  const sftp=await remote.sftp();
+  try {
+    const canonical=await new Promise<string>((resolve,reject)=>sftp.realpath(parent,(error,path)=>error?reject(error):resolve(path)));
+    const target=posix.join(canonical,name);
+    const existing=await new Promise<boolean>((resolve,reject)=>sftp.lstat(target,(error)=>{if(!error)resolve(true);else if(Number((error as Error & {code?:number}).code)===2)resolve(false);else reject(error);}));
+    if(existing)experimentError("REMOTE_DIRECTORY_EXISTS",409);
+    await new Promise<void>((resolve,reject)=>sftp.mkdir(target,{mode:0o755},error=>error?reject(error):resolve()));
+    return {path:target};
+  } catch(error) {
+    if(error instanceof Error&&error.message==="REMOTE_DIRECTORY_EXISTS")throw error;
+    const code=error&&typeof error==="object"&&"code" in error?Number(error.code):0;
+    if(code===3)experimentError("REMOTE_DIRECTORY_ACCESS_DENIED",422);
+    if(code===2)experimentError("REMOTE_DIRECTORY_NOT_FOUND",422);
+    experimentError("REMOTE_DIRECTORY_CREATE_FAILED",422);
+  } finally {sftp.end();}
+}
