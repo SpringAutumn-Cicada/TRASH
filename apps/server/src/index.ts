@@ -140,6 +140,13 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (!subpath && method === "DELETE") {
+      const input = z.object({ confirm_title: z.string() }).strict().parse(await readJson(request));
+      if (input.confirm_title !== project.title) { sendJson(response, 400, { error: "PROJECT_TITLE_MISMATCH" }); return; }
+      if (agent.isProjectBusy(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
+      sendJson(response, 200, store.deleteProject(projectId));
+      return;
+    }
     if (await knowledgeRoute(request, response, url, projectId, subpath, store, knowledge, readJson, sendJson, agent)) return;
     const attachmentRoute = subpath.match(/^sources\/([^/]+)\/attachments$/);
     if (attachmentRoute && method === "POST") {

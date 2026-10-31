@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TrashStore, KnowledgeStore } from "../src/index.js";
@@ -53,4 +53,51 @@ test("v1 migration backs up existing database and preserves sources",()=>{
     f.store.db.pragma("foreign_keys = OFF");for(const table of tables)f.store.db.exec(`DROP TABLE ${table}`);f.store.db.pragma("user_version = 1");f.store.close();
     const reopened=new TrashStore(f.root);assert.equal(reopened.getSource(f.source.source_id)?.title,"Paper");assert.equal(reopened.db.pragma("user_version",{simple:true}),2);assert.ok(readdirSync(f.root).some(n=>n.startsWith("workspace-before-v2-")));reopened.close();
   }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+
+test("project deletion removes dependent data and files without affecting other projects",()=>{
+  const f=fixture();try{
+    const other=f.store.createProject({title:"Keep",research_question:"Other",module:{id:"apt-provenance",version:"0.1.0"}});
+    const artifact=f.store.saveArtifact(f.project.project_id,"notes.md","text/markdown",Buffer.from("Research"));
+    const path=f.store.artifactFile(f.project.project_id,artifact.artifact_id)!.path;
+    f.store.db.prepare("INSERT INTO source_attachments VALUES (?,?,?)").run(f.source.source_id,artifact.artifact_id,new Date().toISOString());
+    f.store.db.prepare("INSERT INTO source_details VALUES (?,?)").run(f.source.source_id,"{}");
+    const card=f.knowledge.write(f.project.project_id,"literature-card",{base_version:0,content:{source_id:f.source.source_id,title:"Card"}});
+    f.knowledge.review(f.project.project_id,"literature-card",card.object_id,1,"accepted","");
+    f.knowledge.write(f.project.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:"Run",method:"A",dataset:"D",external_run_id:"run",metrics:[{name:"f1",value:0.9,unit:"ratio",condition:"test"}]}});
+    const input={kind:"literature-card" as const,source_ids:[f.source.source_id],dependencies:[],title:"Card",instructions:"",timeout_seconds:900,regenerate:false};
+    f.knowledge.saveTask({task_id:"task_delete",project_id:f.project.project_id,input,snapshot:{},fingerprint:"fixture",status:"completed",created_at:new Date().toISOString()});
+    f.knowledge.event("task_delete","done");
+    assert.deepEqual(f.store.deleteProject(f.project.project_id),{deleted:true,cleanup_pending:false});
+    assert.equal(f.store.getProject(f.project.project_id),undefined);
+    assert.equal(f.store.getProject(other.project_id)?.title,"Keep");
+    assert.equal(f.store.getSource(f.source.source_id),undefined);
+    assert.equal(f.knowledge.tasks(f.project.project_id).length,0);
+    assert.equal(f.knowledge.list(f.project.project_id,"literature-card").length,0);
+    assert.equal(f.store.search(f.project.project_id,"reproducible").length,0);
+    assert.equal(existsSync(path),false);
+    for(const table of ["knowledge_task_events","knowledge_reviews","knowledge_metrics","knowledge_keys","source_details","source_attachments","managed_files"]){
+      const row=f.store.db.prepare(`SELECT count(*) AS count FROM ${table}`).get() as {count:number};assert.equal(row.count,0);
+    }
+    assert.deepEqual(f.store.deleteProject(f.project.project_id),{deleted:false,cleanup_pending:false});
+  }finally{f.close();}
+});
+
+test("project deletion blocks active tasks and restores files after database rollback",()=>{
+  const f=fixture();try{
+    const artifact=f.store.saveArtifact(f.project.project_id,"notes.md","text/markdown",Buffer.from("Keep me"));
+    const path=f.store.artifactFile(f.project.project_id,artifact.artifact_id)!.path;
+    const input={kind:"literature-card" as const,source_ids:[f.source.source_id],dependencies:[],title:"Card",instructions:"",timeout_seconds:900,regenerate:false};
+    const task={task_id:"task_block",project_id:f.project.project_id,input,snapshot:{},fingerprint:"fixture",status:"queued",created_at:new Date().toISOString()};
+    f.knowledge.saveTask(task);
+    assert.throws(()=>f.store.deleteProject(f.project.project_id),/PROJECT_HAS_ACTIVE_TASKS/);
+    assert.equal(existsSync(path),true);
+    f.knowledge.saveTask({...task,status:"cancelled"});
+    f.store.db.exec("CREATE TRIGGER prevent_project_delete BEFORE DELETE ON projects BEGIN SELECT RAISE(ABORT, 'fixture rollback'); END");
+    assert.throws(()=>f.store.deleteProject(f.project.project_id),/fixture rollback/);
+    assert.equal(existsSync(path),true);
+    assert.ok(f.store.getProject(f.project.project_id));
+    assert.ok(f.store.getSource(f.source.source_id));
+    assert.equal(f.knowledge.tasks(f.project.project_id).length,1);
+  }finally{f.close();}
 });

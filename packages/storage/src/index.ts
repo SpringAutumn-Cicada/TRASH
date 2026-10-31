@@ -137,6 +137,46 @@ export class TrashStore {
     return rows.map((row) => researchProjectSchema.parse(JSON.parse(row.data)));
   }
 
+  deleteProject(projectId: string): { deleted: boolean; cleanup_pending: boolean } {
+    const project = this.getProject(projectId);
+    if (!project) return { deleted: false, cleanup_pending: false };
+    const active = this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(projectId);
+    if (active) throw Object.assign(new Error("PROJECT_HAS_ACTIVE_TASKS"), { statusCode: 409 });
+
+    const directory = join(this.root, "projects", project.project_id);
+    const quarantine = join(this.root, "deleted-projects", `${project.project_id}-${makeId("artifact")}`);
+    const hasFiles = existsSync(directory);
+    if (hasFiles) {
+      mkdirSync(join(this.root, "deleted-projects"), { recursive: true });
+      renameSync(directory, quarantine);
+    }
+    try {
+      this.db.transaction(() => {
+        this.db.prepare("DELETE FROM knowledge_task_events WHERE task_id IN (SELECT task_id FROM knowledge_tasks WHERE project_id=?)").run(projectId);
+        this.db.prepare("DELETE FROM knowledge_tasks WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM knowledge_reviews WHERE object_id IN (SELECT object_id FROM knowledge_versions WHERE project_id=?)").run(projectId);
+        this.db.prepare("DELETE FROM knowledge_metrics WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM knowledge_keys WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM knowledge_versions WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM source_details WHERE source_id IN (SELECT source_id FROM sources WHERE project_id=?)").run(projectId);
+        this.db.prepare("DELETE FROM source_attachments WHERE source_id IN (SELECT source_id FROM sources WHERE project_id=?)").run(projectId);
+        this.db.prepare("DELETE FROM source_segments_fts WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM sources WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM managed_files WHERE artifact_id IN (SELECT artifact_id FROM artifacts WHERE project_id=?)").run(projectId);
+        this.db.prepare("DELETE FROM artifacts WHERE project_id=?").run(projectId);
+        this.db.prepare("DELETE FROM projects WHERE project_id=?").run(projectId);
+      })();
+    } catch (error) {
+      if (hasFiles) renameSync(quarantine, directory);
+      throw error;
+    }
+    if (hasFiles) {
+      try { rmSync(quarantine, { recursive: true, force: true }); }
+      catch { return { deleted: true, cleanup_pending: true }; }
+    }
+    return { deleted: true, cleanup_pending: false };
+  }
+
   saveArtifact(projectId: string, name: string, mediaType: string, bytes: Uint8Array): Artifact {
     if (!this.getProject(projectId)) throw new Error("PROJECT_NOT_FOUND");
     const artifactId = makeId("artifact");

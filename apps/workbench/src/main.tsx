@@ -29,6 +29,8 @@ const errorMessages: Record<string, string> = {
   INVALID_REQUEST: "请求无效，请检查输入后重试。",
   PROJECT_FIELDS_REQUIRED: "请填写项目名称和研究问题。",
   PROJECT_NOT_FOUND: "未找到该项目。",
+  PROJECT_TITLE_MISMATCH: "项目名称不匹配，请输入完整名称。",
+  PROJECT_HAS_ACTIVE_TASKS: "项目还有排队或运行中的任务，请先取消任务并等待进程结束。",
   SOURCE_NOT_FOUND: "未找到该文献来源。",
   NOT_FOUND: "未找到请求的内容。",
   REQUEST_TOO_LARGE: "文件或请求内容过大。",
@@ -122,6 +124,26 @@ function ProjectList({ onOpen, theme, onThemeChange }: { onOpen: (id: string) =>
   const [title, setTitle] = useState("");
   const [question, setQuestion] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ResearchProject>();
+  const [confirmTitle, setConfirmTitle] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const deleteProject = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!deleteTarget || confirmTitle !== deleteTarget.title || deleting) return;
+    setDeleting(true); setDeleteError("");
+    try {
+      const result = await api<{ deleted: boolean; cleanup_pending: boolean }>(`/projects/${encodeURIComponent(deleteTarget.project_id)}`, {
+        method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm_title: confirmTitle })
+      });
+      setDeleteTarget(undefined); setConfirmTitle("");
+      setNotice(result.cleanup_pending ? "项目记录已删除，但本地文件清理未完成，残留文件位于工作区 deleted-projects 目录。" : "项目及本地资料已删除。");
+      await refresh();
+    } catch (cause) { setDeleteError(uiError(cause, "删除项目失败，请重试。")); }
+    finally { setDeleting(false); }
+  };
 
   const refresh = async () => {
     setLoading(true);
@@ -162,18 +184,28 @@ function ProjectList({ onOpen, theme, onThemeChange }: { onOpen: (id: string) =>
           <div className="knowledge-toolbar"><RestoreKnowledge onRestored={() => void refresh()} /><button className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16} />新建项目</button></div>
         </div>
         {error && <div role="alert" className="notice error-notice">{error}</div>}
+        {notice && <div role="status" className="notice">{notice}</div>}
         <section className="project-list" aria-label="研究项目">
           <div className="list-header"><span>项目</span><span>研究模块</span><span>更新时间</span><span>状态</span><span /></div>
           {loading && <div className="empty-row"><LoaderCircle className="spin" size={18} />正在加载项目</div>}
           {!loading && projects.length === 0 && <div className="empty-state"><BookOpen size={24} /><strong>还没有项目</strong><span>新建项目以开始整理文献和研究笔记。</span><button className="secondary-button" onClick={() => setCreateOpen(true)}><Plus size={15} />新建项目</button></div>}
-          {!loading && projects.map((project) => <button className="project-row" key={project.project_id} onClick={() => onOpen(project.project_id)}>
-            <span className="project-name"><span className="project-symbol">{project.title.slice(0, 1).toUpperCase()}</span><span><strong>{project.title}</strong><small>{project.research_question}</small></span></span>
+          {!loading && projects.map((project) => <div className="project-row" key={project.project_id}>
+            <button className="project-name project-open" onClick={() => onOpen(project.project_id)}><span className="project-symbol">{project.title.slice(0, 1).toUpperCase()}</span><span><strong>{project.title}</strong><small>{project.research_question}</small></span></button>
             <span className="module-name">APT 检测与溯源</span><span className="date-cell">{formatDate(project.updated_at)}</span>
-            <span><i className="status-dot" />进行中</span><span className="row-arrow">›</span>
-          </button>)}
+            <span><i className="status-dot" />进行中</span><span className="project-row-actions"><button className="text-button" aria-label={`删除项目 ${project.title}`} onClick={() => { setDeleteTarget(project); setConfirmTitle(""); setDeleteError(""); }}>删除</button></span>
+          </div>)}
         </section>
       </main>
     </div>
+    {deleteTarget && <div className="modal-backdrop">
+      <form className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" onSubmit={(event) => void deleteProject(event)}>
+        <h2 id="delete-project-title">删除项目</h2>
+        <p>将永久删除“{deleteTarget.title}”及其文献、卡片、Wiki、实验结果、任务记录和工作区内文件。此操作无法撤销，建议先导出项目知识包。外部引用的文件不受影响。</p>
+        <label>输入完整项目名称确认<input autoFocus value={confirmTitle} disabled={deleting} onChange={(event) => setConfirmTitle(event.target.value)} /></label>
+        {deleteError && <div className="notice error-notice" role="alert">{deleteError}</div>}
+        <div className="modal-actions"><button type="button" className="secondary-button" disabled={deleting} onClick={() => setDeleteTarget(undefined)}>取消</button><button className="primary-button" disabled={deleting || confirmTitle !== deleteTarget.title}>{deleting ? "正在删除…" : "确认永久删除"}</button></div>
+      </form>
+    </div>}
     {createOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCreateOpen(false); }}>
       <form className="modal" onSubmit={(event) => void createProject(event)}>
         <div className="modal-heading"><div><h2>新建研究项目</h2><p>从研究问题和研究模块开始。</p></div><button className="icon-button" type="button" aria-label="关闭对话框" onClick={() => setCreateOpen(false)}><X size={17} /></button></div>

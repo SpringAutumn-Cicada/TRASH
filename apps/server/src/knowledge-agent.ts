@@ -39,6 +39,9 @@ export class KnowledgeAgent implements TaskRunner {
     void this.pump(projectId);
     return tasks;
   }
+  isProjectBusy(projectId: string): boolean {
+    return this.running.has(projectId) || this.reserved.has(projectId);
+  }
   cancel(projectId: string, taskId: string): void {
     const task=this.knowledge.tasks(projectId).find(t=>t.task_id===taskId) ?? requestError("NOT_FOUND",404);
     if (!["queued","running"].includes(task.status)) requestError("TASK_FINISHED",409);
