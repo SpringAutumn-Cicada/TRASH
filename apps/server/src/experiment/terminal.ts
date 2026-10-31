@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { ServerResponse } from "node:http";
+import { posix } from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ClientChannel } from "ssh2";
 import type { SshProfile } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
@@ -61,6 +64,33 @@ export class TerminalService {
       return { id: session.id, token: session.token, profile_id: profile.profile_id, name: profile.name, host: profile.host, port: profile.port, username: profile.username };
     } catch (error) { if (!source) remote?.close(); if (error instanceof Error && error.message === "SSH_TERMINAL_FAILED") experimentError("SSH_TERMINAL_FAILED", 422); throw error; }
     finally { this.opening.delete(project); this.openingProfiles.delete(profile.profile_id); }
+  }
+  async upload(project: string, id: string, token: string, request: IncomingMessage, directory: string, name: string) {
+    const session = this.get(project, id, token);
+    const limit = 200 * 1024 * 1024;
+    if (!directory.startsWith("/") || directory.includes("\0") || directory.split("/").includes("..") || !name || name === "." || name === ".." || /[/\\\0]/.test(name)) experimentError("UPLOAD_PATH_INVALID", 400);
+    if (Number(request.headers["content-length"] ?? 0) > limit) experimentError("REQUEST_TOO_LARGE", 413);
+    const sftp = await session.remote.sftp();
+    let created = false;
+    let destination = "";
+    try {
+      const root = await new Promise<string>((resolve, reject) => sftp.realpath(directory, (error, path) => error ? reject(error) : resolve(path)));
+      destination = posix.join(root, name);
+      const target = sftp.createWriteStream(destination, { flags: "wx", mode: 0o600 });
+      target.once("open", () => { created = true; });
+      let bytes = 0;
+      const counter = new Transform({ transform(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length;
+        if (bytes > limit) callback(Object.assign(new Error("REQUEST_TOO_LARGE"), { statusCode: 413 }));
+        else callback(null, chunk);
+      } });
+      await pipeline(request, counter, target);
+      return { path: destination, size_bytes: bytes };
+    } catch (error) {
+      if (created) await new Promise<void>(resolve => sftp.unlink(destination, () => resolve()));
+      if (error instanceof Error && error.message === "REQUEST_TOO_LARGE") throw error;
+      experimentError("SSH_UPLOAD_FAILED", 422);
+    } finally { sftp.end(); }
   }
   private get(project: string, id: string, token: string) {
     const session = this.sessions.get(id);
