@@ -61,6 +61,12 @@ export class KnowledgeStore {
       if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id=?").get(projectId)) fail("PROJECT_NOT_FOUND", 404);
       const content = parseKnowledge(kind, input.content);
       this.validateRefs(projectId, kind, content);
+      if (kind === "literature-card" && "source_id" in content) {
+        const sourceRow = this.db.prepare("SELECT data FROM sources WHERE source_id=? AND project_id=?").get(content.source_id,projectId) as {data:string};
+        const hash = (JSON.parse(sourceRow.data) as {imported_file_sha256?:string}).imported_file_sha256;
+        if (author === "agent" && content.source_file_sha256 && content.source_file_sha256 !== hash) fail("SOURCE_VERSION_CONFLICT",409);
+        if (hash) content.source_file_sha256 = hash;
+      }
       let id = input.object_id;
       const c = content as unknown as Record<string, unknown>;
       if (!id && kind === "literature-card") {
@@ -99,9 +105,18 @@ export class KnowledgeStore {
       return record;
     })();
   }
-  stale(record: KnowledgeVersion): boolean {
+  stale(record: KnowledgeVersion, seen = new Set<string>()): boolean {
+    if (seen.has(record.object_id)) return false;
+    seen.add(record.object_id);
+    if ("source_id" in record.content) {
+      const row = this.db.prepare("SELECT data FROM sources WHERE source_id=? AND project_id=?").get(record.content.source_id,record.project_id) as {data:string}|undefined;
+      return !row || record.content.source_file_sha256 !== (JSON.parse(row.data) as {imported_file_sha256?:string}).imported_file_sha256;
+    }
     if (!("dependencies" in record.content)) return false;
-    return record.content.dependencies.some(d => this.get(record.project_id, d.kind, d.object_id)?.version !== d.version);
+    return record.content.dependencies.some(d => {
+      const current=this.get(record.project_id,d.kind,d.object_id);
+      return !current || current.version!==d.version || this.stale(current,seen);
+    });
   }
   tasks(projectId: string): KnowledgeTask[] {
     return (this.db.prepare("SELECT data FROM knowledge_tasks WHERE project_id=? ORDER BY created_at DESC").all(projectId) as { data: string }[]).map(r => JSON.parse(r.data) as KnowledgeTask);

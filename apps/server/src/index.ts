@@ -6,7 +6,11 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { literatureSearchResultSchema, makeId, PROTOCOL_VERSION, sourceSchema, type LiteratureSearchResult, type Source } from "@trash/protocol";
 import { OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, type LiteratureSearchProvider, type ParsedSource } from "@trash/literature";
-import { TrashStore } from "@trash/storage";
+import { TrashStore, KnowledgeStore } from "@trash/storage";
+import { knowledgeRoute } from "./knowledge.js";
+import { KnowledgeAgent } from "./knowledge-agent.js";
+import { restoreKnowledge } from "./knowledge-restore.js";
+import { z, ZodError } from "zod";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -94,6 +98,8 @@ async function serveStatic(staticRoot: string, requestPath: string, response: Se
 
 function jsonError(error: unknown): { status: number; code: string } {
   const statusCode = error && typeof error === "object" && "statusCode" in error ? Number((error as { statusCode: unknown }).statusCode) : 0;
+  if (error instanceof ZodError) return { status: 400, code: "INVALID_REQUEST" };
+  if ([400, 404, 409, 422].includes(statusCode)) return { status: statusCode, code: error instanceof Error ? error.message : "INVALID_REQUEST" };
   if (statusCode === 413) return { status: 413, code: "REQUEST_TOO_LARGE" };
   if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") return { status: 404, code: error.message };
   if (error instanceof Error && ["UNSUPPORTED_FILE_TYPE", "URL_SCHEME_OR_CREDENTIALS_NOT_ALLOWED", "URL_HOST_NOT_PUBLIC", "WEBPAGE_NOT_HTML", "WEBPAGE_TOO_LARGE", "WEBPAGE_REDIRECT_LIMIT"].includes(error.message)) return { status: 422, code: error.message };
@@ -102,7 +108,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if (url.pathname === "/api/v1/health" && method === "GET") {
@@ -113,9 +119,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     sendJson(response, 200, { projects: store.listProjects() });
     return;
   }
+  if (url.pathname === "/api/v1/knowledge-restore" && method === "POST") {
+    const bytes = await readBody(request, 200 * 1024 * 1024);
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { throw Object.assign(new Error("INVALID_JSON"), { statusCode: 400 }); }
+    sendJson(response, 201, { project: restoreKnowledge(store, value) }); return;
+  }
   if (url.pathname === "/api/v1/projects" && method === "POST") {
     const input = await readJson<{ title: string; research_question: string; module?: { id: string; version: string } }>(request);
-    if (typeof input.title !== "string" || typeof input.research_question !== "string") throw Object.assign(new Error("PROJECT_FIELDS_REQUIRED"), { statusCode: 400 });
+    if (!input || typeof input.title !== "string" || typeof input.research_question !== "string") throw Object.assign(new Error("PROJECT_FIELDS_REQUIRED"), { statusCode: 400 });
+    z.object({ title:z.string().trim().min(1).max(120),research_question:z.string().trim().min(1).max(10000),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional() }).strict().parse(input);
     const project = store.createProject({ title: input.title, research_question: input.research_question, module: input.module ?? { id: "apt-provenance", version: "0.1.0" } });
     sendJson(response, 201, { project });
     return;
@@ -126,6 +139,36 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (await knowledgeRoute(request, response, url, projectId, subpath, store, knowledge, readJson, sendJson, agent)) return;
+    const attachmentRoute = subpath.match(/^sources\/([^/]+)\/attachments$/);
+    if (attachmentRoute && method === "POST") {
+      const sourceId = decodeURIComponent(attachmentRoute[1]);
+      const source = store.getSource(sourceId);
+      if (!source || source.project_id !== projectId) { sendJson(response,404,{error:"SOURCE_NOT_FOUND"}); return; }
+      const filename = url.searchParams.get("filename") ?? "";
+      if (!filename.toLowerCase().endsWith(".pdf")) throw Object.assign(new Error("UNSUPPORTED_FILE_TYPE"),{statusCode:422});
+      const bytes = await readBody(request, MAX_UPLOAD_BYTES);
+      const parsed = (await parseImportedFile(filename,bytes))[0];
+      const artifact = store.saveArtifact(projectId,filename,"application/pdf",bytes);
+      try {
+        store.db.transaction(()=>{
+          if (source.artifact_id) store.db.prepare("INSERT OR IGNORE INTO source_attachments VALUES (?,?,?)").run(sourceId,source.artifact_id,source.imported_at);
+          store.db.prepare("INSERT INTO source_attachments VALUES (?,?,?)").run(sourceId,artifact.artifact_id,new Date().toISOString());
+          const updated = { ...source, artifact_id:artifact.artifact_id, imported_file_sha256:artifact.sha256, parse_status:parsed.parse_status, ...(parsed.import_error ? {import_error:parsed.import_error} : {}) };
+          if (!parsed.import_error) delete updated.import_error;
+          store.db.prepare("UPDATE sources SET artifact_id=?,imported_file_sha256=?,data=? WHERE source_id=?").run(artifact.artifact_id,artifact.sha256,JSON.stringify(updated),sourceId);
+          store.db.prepare("DELETE FROM source_segments_fts WHERE source_id=?").run(sourceId);
+          store.db.prepare("DELETE FROM source_segments WHERE source_id=?").run(sourceId);
+          parsed.segments.forEach((segment,ordinal)=>{
+            const locator=JSON.stringify(segment.locator);
+            const row=store.db.prepare("INSERT INTO source_segments(source_id,ordinal,locator_json,content) VALUES (?,?,?,?)").run(sourceId,ordinal,locator,segment.text);
+            store.db.prepare("INSERT INTO source_segments_fts(rowid,source_id,project_id,locator_json,content) VALUES (?,?,?,?,?)").run(row.lastInsertRowid,sourceId,projectId,locator,segment.text);
+          });
+          knowledge.touch(projectId);
+        })();
+      } catch(error) { store.discardArtifact(projectId,artifact.artifact_id); throw error; }
+      sendJson(response,201,{artifact});return;
+    }
     if (!subpath && method === "GET") {
       sendJson(response, 200, { project, sources: store.listSources(projectId) });
       return;
@@ -145,27 +188,31 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const parsedSources = await parseImportedFile(fileName, bytes);
       const artifact = store.saveArtifact(projectId, fileName, mediaType, bytes);
       const sources = parsedSources.map((item) => makeSource(projectId, item, { artifactId: artifact.artifact_id, fileHash }));
-      store.createSources(sources, new Map(parsedSources.map((item, index) => [sources[index].source_id, item.segments])));
+      try { store.createSources(sources, new Map(parsedSources.map((item, index) => [sources[index].source_id, item.segments]))); }
+      catch(error) { store.discardArtifact(projectId,artifact.artifact_id); throw error; }
+      knowledge.touch(projectId);
       sendJson(response, 201, { sources, artifact, duplicate: false });
       return;
     }
     if (subpath === "sources/url" && method === "POST") {
       const input = await readJson<{ url: string }>(request);
-      if (typeof input.url !== "string") throw Object.assign(new Error("URL_REQUIRED"), { statusCode: 400 });
+      if (!input || typeof input.url !== "string") throw Object.assign(new Error("URL_REQUIRED"), { statusCode: 400 });
       const page = await fetchPublicWebpage(input.url);
       const parsed = parseWebpage(page.html, page.final_url);
       const artifact = store.saveArtifact(projectId, `${parsed.title}.html`, "text/html", page.html);
       const source = makeSource(projectId, parsed, { artifactId: artifact.artifact_id, fileHash: artifact.sha256 });
-      store.createSources([source], new Map([[source.source_id, parsed.segments]]));
+      try { store.createSources([source], new Map([[source.source_id, parsed.segments]])); }
+      catch(error) { store.discardArtifact(projectId,artifact.artifact_id); throw error; }
+      knowledge.touch(projectId);
       sendJson(response, 201, { source, artifact });
       return;
     }
     if (subpath === "sources/import-search-results" && method === "POST") {
       const body = await readJson<{ results: unknown }>(request);
-      if (!Array.isArray(body.results)) throw Object.assign(new Error("RESULTS_REQUIRED"), { statusCode: 400 });
+      if (!body || !Array.isArray(body.results)) throw Object.assign(new Error("RESULTS_REQUIRED"), { statusCode: 400 });
       const results = body.results.map((item) => literatureSearchResultSchema.parse(item));
       const existing = new Set(store.listSources(projectId).filter((source) => source.provider_ref).map((source) => `${source.provider_id}:${source.provider_ref}`));
-      const sources = results.filter((item) => !existing.has(`${item.provider_id}:${item.provider_ref}`)).map((item) => makeSource(projectId, {
+      const sources = results.filter((item) => { const key = `${item.provider_id}:${item.provider_ref}`; if(existing.has(key))return false; existing.add(key);return true; }).map((item) => makeSource(projectId, {
         source_type: "openalex",
         title: item.title,
         authors: item.authors,
@@ -191,7 +238,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === "search" && method === "POST") {
       const input = await readJson<{ query: string; limit?: number }>(request);
-      if (typeof input.query !== "string" || input.query.trim().length < 2) throw Object.assign(new Error("QUERY_TOO_SHORT"), { statusCode: 400 });
+      if (!input || typeof input.query !== "string" || input.query.trim().length < 2) throw Object.assign(new Error("QUERY_TOO_SHORT"), { statusCode: 400 });
+      z.object({query:z.string().min(2),limit:z.number().int().min(1).max(100).optional()}).parse(input);
       const passages = store.search(projectId, input.query, input.limit);
       const sources = new Map(store.listSources(projectId).map((source) => [source.source_id, source]));
       sendJson(response, 200, { passages: passages.flatMap((passage) => {
@@ -216,14 +264,22 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const store = options.store ?? new TrashStore();
   const provider = options.provider ?? new OpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY });
   const staticRoot = options.staticRoot ?? resolve(fileURLToPath(new URL("../../workbench/dist/", import.meta.url)));
+  const knowledge = new KnowledgeStore(store.db);
+  const agent = new KnowledgeAgent(store, knowledge);
   const server = createServer((request, response) => {
-    void route(request, response, store, provider, staticRoot).catch((error: unknown) => {
+    const host = request.headers.host ?? "";
+    const origin = request.headers.origin;
+    if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host) || (origin && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(origin))) {
+      sendJson(response,403,{error:"ORIGIN_NOT_ALLOWED"}); return;
+    }
+    void route(request, response, store, provider, staticRoot, knowledge, agent).catch((error: unknown) => {
       if (!response.headersSent) {
         const mapped = jsonError(error);
         sendJson(response, mapped.status, { error: mapped.code });
       } else response.destroy();
     });
   });
+  server.on("close", () => agent.close());
   return { server, store };
 }
 

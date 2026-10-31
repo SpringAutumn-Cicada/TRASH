@@ -8,7 +8,7 @@ const names = z.array(z.string().trim().min(1).max(200)).max(200);
 export const dependencySchema = z.object({ kind: knowledgeKindSchema, object_id: z.string().min(1), version: z.number().int().positive() }).strict();
 export const evidenceSchema = z.object({ source_id: z.string().min(1), file_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), page: z.number().int().positive().optional(), paragraph: z.number().int().positive().optional(), quote: text.optional(), attribution: z.enum(["author", "user", "agent"]) }).strict();
 export const literatureCardSchema = z.object({
-  source_id: z.string().min(1), title: z.string().trim().min(1).max(500), tags: names.default([]),
+  source_id: z.string().min(1), source_file_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), title: z.string().trim().min(1).max(500), tags: names.default([]),
   question: text.default(""), method: text.default(""), contributions: text.default(""), limitations: text.default(""),
   datasets: names.default([]), baselines: names.default([]), metrics: names.default([]), reported_results: text.default(""),
   experimental_conditions: text.default(""), ideas: text.default(""), relevance: text.default(""), open_questions: text.default(""),
