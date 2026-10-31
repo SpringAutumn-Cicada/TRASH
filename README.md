@@ -93,7 +93,7 @@ pnpm build
 pnpm dev
 ```
 
-`pnpm dev` 构建并启动简体中文 localhost Web 工作台及本地 API（默认 `http://127.0.0.1:22222`）。开发模式由前端占用 `22222`，内部 API 默认使用 `22223`；`pnpm start` 由服务端统一在 `22222` 提供界面和 API。可通过 `TRASH_PORT` 覆盖 API 端口，开发模式下须与前端 `22222` 区分；前端端口被占用时会直接报错。工作台提供当前默认配色和蓝色科技风两种主题，选择保存在当前浏览器中。当前可创建持久化项目、导入 PDF/BibTeX/RIS/Markdown/公开网页、通过 OpenAlex 搜索文献，并按全文检索结果回到页码或段落定位；Google Scholar 仅打开用户触发的浏览器搜索。文献元数据和用户内容保留原文。项目数据默认写入操作系统用户数据目录下的 `trash` workspace，可通过 `TRASH_HOME` 覆盖。网页正文只在用户明确提交 URL 后抓取，拒绝私网目标并限制响应大小和跳转。全文检索使用 SQLite FTS5，向量检索尚未纳入本阶段。
+`pnpm dev` 构建并启动简体中文 localhost Web 工作台，当前开发分支默认访问 `http://127.0.0.1:22223`。界面、热更新和 `/api/v1` 请求共用一个端口，不再启动独立的内部 API 监听或前端代理。`pnpm start` 同样在 `22223` 提供已构建界面和业务接口。可通过 `TRASH_PORT` 覆盖统一端口；端口被占用时直接报错，不会自动换号。工作台提供当前默认配色和蓝色科技风两种主题，选择保存在当前浏览器中。当前可创建持久化项目、导入 PDF/BibTeX/RIS/Markdown/公开网页、通过 OpenAlex 搜索文献，并按全文检索结果回到页码或段落定位；Google Scholar 仅打开用户触发的浏览器搜索。文献元数据和用户内容保留原文。项目数据默认写入操作系统用户数据目录下的 `trash` workspace，可通过 `TRASH_HOME` 覆盖。网页正文只在用户明确提交 URL 后抓取，拒绝私网目标并限制响应大小和跳转。全文检索使用 SQLite FTS5，向量检索尚未纳入本阶段。
 
 项目对象协议位于 `packages/protocol`，当前协议版本为 `v1`。选型和 Phase 0 脚手架见 [ADR 0001](docs/adr/0001-phase-0-tooling-and-protocol.md)；Phase 1 持久化、导入和检索边界见 [ADR 0002](docs/adr/0002-phase-1-local-literature.md)。
 

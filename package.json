@@ -9,7 +9,7 @@
     "typecheck": "pnpm --recursive --if-present typecheck",
     "lint": "eslint .",
     "test": "node --import tsx --test packages/*/tests/*.test.ts apps/*/tests/*.test.ts",
-    "dev": "pnpm build && pnpm --parallel --filter @trash/server --filter @trash/workbench dev",
+    "dev": "pnpm build && pnpm --filter @trash/server dev",
     "start": "pnpm build && pnpm --filter @trash/server start",
     "e2e": "playwright test"
   },

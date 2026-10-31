@@ -20,6 +20,7 @@ interface WorkbenchServerOptions {
   store?: TrashStore;
   provider?: LiteratureSearchProvider;
   staticRoot?: string;
+  frontend?: (request: IncomingMessage, response: ServerResponse, next: (error?: unknown) => void) => void;
 }
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
@@ -272,12 +273,23 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host) || (origin && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(origin))) {
       sendJson(response,403,{error:"ORIGIN_NOT_ALLOWED"}); return;
     }
-    void route(request, response, store, provider, staticRoot, knowledge, agent).catch((error: unknown) => {
+    const onError = (error: unknown): void => {
       if (!response.headersSent) {
         const mapped = jsonError(error);
         sendJson(response, mapped.status, { error: mapped.code });
       } else response.destroy();
-    });
+    };
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    if (options.frontend && pathname !== "/api" && !pathname.startsWith("/api/")) {
+      try {
+        options.frontend(request, response, (error) => {
+          if (error) onError(error);
+          else if (!response.writableEnded) sendJson(response, 404, { error: "NOT_FOUND" });
+        });
+      } catch (error) { onError(error); }
+      return;
+    }
+    void route(request, response, store, provider, staticRoot, knowledge, agent).catch(onError);
   });
   server.on("close", () => agent.close());
   return { server, store };

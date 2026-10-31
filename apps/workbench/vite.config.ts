@@ -1,12 +1,5 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: "127.0.0.1",
-    port: 22222,
-    strictPort: true,
-    proxy: { "/api": `http://127.0.0.1:${process.env.TRASH_PORT ?? "22223"}` }
-  }
-});
+// Development HTTP and HMR share the workbench server's single port.
+export default defineConfig({ plugins: [react()] });
