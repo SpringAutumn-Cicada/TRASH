@@ -81,7 +81,8 @@ async function settle(service:EnvironmentAnalysisService,project:string,_code:st
 test("environment task records valid reports, stale code, invalid output, cancellation and restart interruption",async()=>{
  const f=fixture(),previous=process.env.TRASH_CODEX_COMMAND;
  const cli=join(f.root,"fixture-cli"),mode=join(f.root,"mode");
- const content={schema_version:1,summary:"fixture",requirements:[],commands:[],resources:[],issues:[],limitations:["fixture only"]};
+ const unknown={value:"未知",attribution:"unknown",evidence:[]};
+ const content={schema_version:2,summary:"fixture",requirements:[],commands:[],resources:[],issues:[],limitations:["fixture only"],image_selection:{framework:unknown,framework_version:unknown,python:unknown,cuda:unknown},agent_deployment:{status:"blocked",venv_path:".venv",prerequisites:[],blockers:["fixture only"],steps:[{purpose:"确认解释器",command:'test -n "$TRASH_PYTHON"',attribution:"unknown",evidence:[]}]}};
  writeFileSync(mode,"valid");
  writeFileSync(cli,`#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('fixture 1');process.exit(0);}const mode=fs.readFileSync(${JSON.stringify(mode)},'utf8');if(mode==='wait'){setInterval(()=>{},1000);}else{fs.writeFileSync(args[args.indexOf('-o')+1],mode==='invalid'?'broken-json':JSON.stringify(${JSON.stringify(content)}));}\n`,{mode:0o700});
  process.env.TRASH_CODEX_COMMAND=cli;
