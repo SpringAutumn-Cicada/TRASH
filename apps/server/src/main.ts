@@ -1,6 +1,7 @@
 import { createWorkbenchServer } from "./index.js";
 
-const requestedPort = Number(process.env.TRASH_PORT ?? "4173");
+const defaultPort = process.argv.includes("--dev") ? "6667" : "6666";
+const requestedPort = Number(process.env.TRASH_PORT ?? defaultPort);
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65535) throw new Error("TRASH_PORT must be an integer from 0 to 65535");
 
 const app = createWorkbenchServer();

@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: "127.0.0.1",
-    proxy: { "/api": "http://127.0.0.1:4173" }
+    port: 6666,
+    strictPort: true,
+    proxy: { "/api": `http://127.0.0.1:${process.env.TRASH_PORT ?? "6667"}` }
   }
 });
