@@ -111,3 +111,6 @@
 .reproduction-upload-footer>span{font-size:11px;color:var(--muted);line-height:1.7}
 .reproduction-upload-footer>button{flex:none}
 @media(max-width:600px){.reproduction-upload-dialog{padding:18px}.reproduction-upload-dialog .repository-path-control{flex-wrap:wrap}.reproduction-upload-footer{align-items:flex-start}}
+
+.reproduction-workspace-heading>.project-delete-button{flex:none;align-self:flex-start;margin-left:auto;width:30px;height:30px;display:grid;place-items:center;border-radius:8px}
+.reproduction-module-actions .secondary-button.is-active{background:var(--green-soft);border-color:var(--green);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--green) 15%,transparent)}
