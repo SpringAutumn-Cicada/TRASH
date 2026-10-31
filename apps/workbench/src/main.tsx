@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, BookOpen, ExternalLink, FileUp, FolderOpen, Link, LoaderCircle, Palette, Plus, Search, X } from "lucide-react";
+import { ArrowLeft, BookOpen, ExternalLink, FileUp, FolderOpen, Link, LoaderCircle, Palette, Plus, Search, Trash2, X } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import "./styles.css";
 import "./themes.css";
@@ -125,20 +125,19 @@ function ProjectList({ onOpen, theme, onThemeChange }: { onOpen: (id: string) =>
   const [question, setQuestion] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ResearchProject>();
-  const [confirmTitle, setConfirmTitle] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [notice, setNotice] = useState("");
 
   const deleteProject = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!deleteTarget || confirmTitle !== deleteTarget.title || deleting) return;
+    if (!deleteTarget || deleting) return;
     setDeleting(true); setDeleteError("");
     try {
       const result = await api<{ deleted: boolean; cleanup_pending: boolean }>(`/projects/${encodeURIComponent(deleteTarget.project_id)}`, {
-        method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm_title: confirmTitle })
+        method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm_title: deleteTarget.title })
       });
-      setDeleteTarget(undefined); setConfirmTitle("");
+      setDeleteTarget(undefined);
       setNotice(result.cleanup_pending ? "项目记录已删除，但本地文件清理未完成，残留文件位于工作区 deleted-projects 目录。" : "项目及本地资料已删除。");
       await refresh();
     } catch (cause) { setDeleteError(uiError(cause, "删除项目失败，请重试。")); }
@@ -192,18 +191,17 @@ function ProjectList({ onOpen, theme, onThemeChange }: { onOpen: (id: string) =>
           {!loading && projects.map((project) => <div className="project-row" key={project.project_id}>
             <button className="project-name project-open" onClick={() => onOpen(project.project_id)}><span className="project-symbol">{project.title.slice(0, 1).toUpperCase()}</span><span><strong>{project.title}</strong><small>{project.research_question}</small></span></button>
             <span className="module-name">APT 检测与溯源</span><span className="date-cell">{formatDate(project.updated_at)}</span>
-            <span><i className="status-dot" />进行中</span><span className="project-row-actions"><button className="text-button" aria-label={`删除项目 ${project.title}`} onClick={() => { setDeleteTarget(project); setConfirmTitle(""); setDeleteError(""); }}>删除</button></span>
+            <span><i className="status-dot" />进行中</span><span className="project-row-actions"><button type="button" className="project-delete-button" title="删除项目" aria-label={`删除项目 ${project.title}`} onClick={() => { setDeleteTarget(project); setDeleteError(""); }}><Trash2 size={14} aria-hidden="true" /></button></span>
           </div>)}
         </section>
       </main>
     </div>
     {deleteTarget && <div className="modal-backdrop">
-      <form className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" onSubmit={(event) => void deleteProject(event)}>
+      <form className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" onKeyDown={(event) => { if (event.key === "Escape" && !deleting) setDeleteTarget(undefined); }} onSubmit={(event) => void deleteProject(event)}>
         <h2 id="delete-project-title">删除项目</h2>
         <p>将永久删除“{deleteTarget.title}”及其文献、卡片、Wiki、实验结果、任务记录和工作区内文件。此操作无法撤销，建议先导出项目知识包。外部引用的文件不受影响。</p>
-        <label>输入完整项目名称确认<input autoFocus value={confirmTitle} disabled={deleting} onChange={(event) => setConfirmTitle(event.target.value)} /></label>
         {deleteError && <div className="notice error-notice" role="alert">{deleteError}</div>}
-        <div className="modal-actions"><button type="button" className="secondary-button" disabled={deleting} onClick={() => setDeleteTarget(undefined)}>取消</button><button className="primary-button" disabled={deleting || confirmTitle !== deleteTarget.title}>{deleting ? "正在删除…" : "确认永久删除"}</button></div>
+        <div className="modal-actions"><button type="button" className="secondary-button" autoFocus disabled={deleting} onClick={() => setDeleteTarget(undefined)}>取消</button><button className="primary-button project-delete-confirm" disabled={deleting}>{deleting ? "正在删除…" : "确认永久删除"}</button></div>
       </form>
     </div>}
     {createOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCreateOpen(false); }}>
