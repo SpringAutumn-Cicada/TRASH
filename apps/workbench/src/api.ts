@@ -6,7 +6,7 @@ const errorMessages: Record<string, string> = {
   PROJECT_NOT_FOUND: "未找到该项目。",
   PROJECT_TITLE_MISMATCH: "项目名称已变化，请刷新项目后再删除。",
   EXPERIMENT_ACTIVE: "项目有未结束的实验，请先取消并确认远端停止。",
-  PROJECT_HAS_ACTIVE_TASKS: "项目还有排队或运行中的任务，请先取消任务并等待进程结束。",
+  PROJECT_HAS_ACTIVE_TASKS: "项目还有活动任务或 SSH 终端，请先停止任务并断开终端。",
   SOURCE_NOT_FOUND: "未找到该文献来源。",
   SOURCE_IN_USE: "该文献仍被卡片、Wiki、实验结果历史或合并记录引用，暂不能删除。",
   ANALYSIS_NO_READABLE_SOURCES: "文献暂没有可分析的正文或摘要，请先导入包含正文的文件。",

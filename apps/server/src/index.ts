@@ -314,7 +314,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
   sendJson(response, 404, { error: "NOT_FOUND" });
 }
 
-export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { server: Server; store: TrashStore } {
+export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { server: Server; store: TrashStore; closeConnections: () => void } {
   const store = options.store ?? new TrashStore();
   const provider = options.provider ?? new OpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY });
   const staticRoot = options.staticRoot ?? resolve(fileURLToPath(new URL("../../workbench/dist/", import.meta.url)));
@@ -348,6 +348,6 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis).catch(onError);
   });
   server.on("close", () => { codeAgent.close(); experiments.close(); agent.close(); });
-  return { server, store };
+  return { server, store, closeConnections: () => experiments.terminals.close() };
 }
 

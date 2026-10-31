@@ -17,6 +17,7 @@ let stopping = false;
 async function stop(): Promise<void> {
   if (stopping) return;
   stopping = true;
+  app.closeConnections();
   await vite?.close();
   app.server.close(() => { app.store.close(); });
 }

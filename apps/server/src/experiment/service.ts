@@ -7,19 +7,20 @@ import { experimentPlanInputSchema, metricSchema, type DatasetRef, type Experime
 import { RepositoryService } from "./repository.js";
 import { SshService, RemoteConnection, redact } from "./ssh.js";
 import { DIAGNOSTICS, REMOTE_RUNNER, RUNNER_VERSION } from "./runner.js";
+import { TerminalService } from "./terminal.js";
 const terminal=["completed","failed","cancelled"];
 const artifactListSchema=z.array(z.object({path:z.string(),size_bytes:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)})).max(200);
 const remoteStatusSchema=z.object({run_id:z.string(),token:z.string(),state:z.string(),at:z.number(),exit_code:z.number().int().nullable().optional(),reason:z.string().nullable().optional(),started_at:z.number().optional(),finished_at:z.number().optional()}).passthrough();
 export class ExperimentService {
-  readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;
+  readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;readonly terminals:TerminalService;
   private inFlight=new Set<string>();private closed=false;private timer:ReturnType<typeof setInterval>;
   constructor(readonly store:TrashStore){
-    this.data=new ExperimentStore(store.db);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data);
+    this.data=new ExperimentStore(store.db);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data);this.terminals=new TerminalService(this.ssh);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
     this.timer=setInterval(()=>{void this.tick();},5000);this.timer.unref();
   }
-  close():void{this.closed=true;clearInterval(this.timer);this.ssh.close();}
-  busyProject(projectId:string):boolean{return this.data.runs(projectId).some(run=>this.data.active(run));}
+  close():void{this.closed=true;clearInterval(this.timer);this.terminals.close();this.ssh.close();}
+  busyProject(projectId:string):boolean{return this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
   private hostKey(profile:SshProfile):string{return `${profile.host.toLowerCase()}:${profile.port}:${profile.username}`;}
   private mark(run:ExperimentRun,state:ExperimentRunState,error?:string):void{
     if(this.closed)return;

@@ -30,7 +30,7 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     try {
       const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/ssh-profiles/${mode === "add" ? "from-command" : encodeURIComponent(selectedId)}`, { method: mode === "add" ? "POST" : "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, command, password: credential }) });
       const data = await response.json();
-      if (!response.ok) throw new Error(({ SSH_LOGIN_COMMAND_INVALID: "请填写 ssh -p 端口 用户名@主机，不要附带其他命令。", SSH_NEW_CONNECTION_PASSWORD_REQUIRED: "连接信息改变后，请填写新实例的密码。", SSH_PROFILE_DUPLICATE: "已存在相同连接的主机，请选择原主机进行编辑。", EXPERIMENT_ACTIVE: "此主机有未结束实验，暂不能修改配置。", INVALID_REQUEST: "请检查主机名、SSH 指令与密码。" } as Record<string, string>)[data.error] ?? "保存实例失败，请检查输入后重试。");
+      if (!response.ok) throw new Error(({ TERMINAL_PROFILE_BUSY: "该主机有终端连接，请先在 AutoDL 工作区断开后再编辑。", SSH_LOGIN_COMMAND_INVALID: "请填写 ssh -p 端口 用户名@主机，不要附带其他命令。", SSH_NEW_CONNECTION_PASSWORD_REQUIRED: "连接信息改变后，请填写新实例的密码。", SSH_PROFILE_DUPLICATE: "已存在相同连接的主机，请选择原主机进行编辑。", EXPERIMENT_ACTIVE: "此主机有未结束实验，暂不能修改配置。", INVALID_REQUEST: "请检查主机名、SSH 指令与密码。" } as Record<string, string>)[data.error] ?? "保存实例失败，请检查输入后重试。");
       onSaved(data.profile);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败。"); }
     finally { setBusy(false); }
