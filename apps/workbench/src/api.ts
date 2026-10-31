@@ -9,6 +9,8 @@ const errorMessages: Record<string, string> = {
   PROJECT_HAS_ACTIVE_TASKS: "项目还有排队或运行中的任务，请先取消任务并等待进程结束。",
   SOURCE_NOT_FOUND: "未找到该文献来源。",
   SOURCE_IN_USE: "该文献仍被卡片、Wiki、实验结果历史或合并记录引用，暂不能删除。",
+  ANALYSIS_NO_READABLE_SOURCES: "文献暂没有可分析的正文或摘要，请先导入包含正文的文件。",
+  CODE_AGENT_BUSY: "当前项目或仓库有 Agent 正在执行，请等待或停止后再操作。",
   NOT_FOUND: "未找到请求的内容。",
   REQUEST_TOO_LARGE: "文件或请求内容过大。",
   UNSUPPORTED_FILE_TYPE: "暂不支持此文件格式。",

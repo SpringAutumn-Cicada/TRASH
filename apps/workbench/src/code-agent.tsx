@@ -7,7 +7,7 @@ type Task = {
   created_at: string; version?: string; error?: string; response: string; logs: string; before?: string; after?: string; truncated?: boolean;
 };
 const statusNames: Record<string, string> = { running: "运行中", cancelling: "正在取消", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断，需核对旧进程" };
-const errors: Record<string, string> = { CODE_AGENT_BUSY: "该仓库有 Agent 正在执行，请等待或先取消。", CODE_AGENT_RECOVERY_REQUIRED: "旧任务已中断，请核对旧进程并确认停止后再启动。", EXPERIMENT_ACTIVE: "该仓库有未结束实验，请先处理实验状态。", SERVER_STOPPING: "服务正在停止。", INVALID_REQUEST: "请检查任务、时限及授权选项。", NOT_FOUND: "任务不存在或已结束。" };
+const errors: Record<string, string> = { PROJECT_HAS_ACTIVE_TASKS: "当前项目正在分析文献或处理知识任务，请等待完成或先停止分析。", CODE_AGENT_BUSY: "该仓库有 Agent 正在执行，请等待或先取消。", CODE_AGENT_RECOVERY_REQUIRED: "旧任务已中断，请核对旧进程并确认停止后再启动。", EXPERIMENT_ACTIVE: "该仓库有未结束实验，请先处理实验状态。", SERVER_STOPPING: "服务正在停止。", INVALID_REQUEST: "请检查任务、时限及授权选项。", NOT_FOUND: "任务不存在或已结束。" };
 export function CodeAgentPanel({ projectId, repositoryPath }: { projectId: string; repositoryPath: string }) {
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/code-agent`;
   const [instructions, setInstructions] = useState(""), [model, setModel] = useState(""), [sandbox, setSandbox] = useState("workspace-write"), [timeout, setTimeoutValue] = useState(30), [confirmed, setConfirmed] = useState(false);

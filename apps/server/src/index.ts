@@ -9,6 +9,7 @@ import { OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, 
 import { TrashStore, KnowledgeStore } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
+import { LiteratureAnalysis } from "./literature-analysis.js";
 import { CodeAgent } from "./code-agent.js";
 import { projectChatTool } from "./project-chat-tools.js";
 import { ExperimentService } from "./experiment/service.js";
@@ -114,7 +115,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if (url.pathname === "/api/v1/health" && method === "GET") {
@@ -145,6 +146,13 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (subpath === "literature-analysis" && method === "GET") { sendJson(response, 200, { analysis: analysis.status(projectId) }); return; }
+    if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel") && method === "POST") {
+      z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
+      if (subpath.endsWith("/cancel")) { sendJson(response, 200, { analysis: analysis.cancel(projectId) }); return; }
+      if (codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
+      sendJson(response, 202, { analysis: analysis.start(projectId) }); return;
+    }
     const deleteSourceRoute = subpath.match(/^sources\/([^/]+)$/);
     if (deleteSourceRoute && method === "DELETE") {
       z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
@@ -314,6 +322,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
   const codeAgent = new CodeAgent(store, experiments);
+  const analysis = new LiteratureAnalysis(store, knowledge, agent);
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
     const origin = request.headers.origin;
@@ -336,7 +345,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
       } catch (error) { onError(error); }
       return;
     }
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent).catch(onError);
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis).catch(onError);
   });
   server.on("close", () => { codeAgent.close(); experiments.close(); agent.close(); });
   return { server, store };

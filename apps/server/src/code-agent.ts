@@ -71,6 +71,7 @@ export class CodeAgent {
   async start(project: string, value: unknown, chatUrl?: string): Promise<CodeTask> {
     const input = inputSchema.parse(value);
     if (this.closed) experimentError("SERVER_STOPPING", 409);
+    if (this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(project)) experimentError("PROJECT_HAS_ACTIVE_TASKS", 409);
     if (this.busy(project)) experimentError("CODE_AGENT_BUSY", 409);
     const repo = chatUrl ? this.experiments.data.repository(project) : this.experiments.repository.bound(project);
     const path = await realpath(chatUrl ? prepareChatWorkspace(this.store, project) : repo!.path);

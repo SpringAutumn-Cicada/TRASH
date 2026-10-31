@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { LiteratureAnalysisButton } from "./literature-analysis.js";
 import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Trash2, X } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
@@ -155,6 +156,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   if (!detail) return <div role="alert">{error || "未找到该项目。"}</div>;
   return <section className="literature-page">
+    <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing || Boolean(deleting)} onChanged={onChanged}/>
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {error && <div role="alert" className="notice error-notice">{error}</div>}
         <div className="literature-grid">

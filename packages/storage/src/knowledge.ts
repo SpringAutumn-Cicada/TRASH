@@ -3,7 +3,7 @@ import { parseKnowledge, type KnowledgeKind, type KnowledgeVersion, type Knowled
 import type Database from "better-sqlite3";
 
 const fail = (code: string, statusCode: number): never => { throw Object.assign(new Error(code), { statusCode }); };
-export interface KnowledgeTask { task_id: string; project_id: string; input: KnowledgeTaskInput; snapshot: unknown; fingerprint: string; status: string; created_at: string; output_id?: string; error?: string; attempt_of?: string }
+export interface KnowledgeTask { task_id: string; project_id: string; input: KnowledgeTaskInput; snapshot: unknown; fingerprint: string; status: string; created_at: string; output_id?: string; output_version?: number; error?: string; attempt_of?: string }
 export class KnowledgeStore {
   constructor(readonly db: Database.Database) {}
   touch(projectId: string): void {

@@ -8,10 +8,11 @@ import { requestError, type TaskRunner } from "./knowledge.js";
 
 const redact = (s: string) => s.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+\b/g,"[REDACTED]").replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");
 export class KnowledgeAgent implements TaskRunner {
+  onTaskSettled?: (projectId: string) => void;
   private running = new Map<string, { child: ChildProcess; task: KnowledgeTask }>();
   private closed = false;
   private reserved = new Set<string>();
-  constructor(readonly store: TrashStore, readonly knowledge: KnowledgeStore, readonly cli: { command: string; prefix: string[] } = { command: "codex", prefix: [] }) {
+  constructor(readonly store: TrashStore, readonly knowledge: KnowledgeStore, readonly cli: { command: string; prefix: string[] } = { command: process.env.TRASH_CODEX_COMMAND || "codex", prefix: [] }) {
     const rows = store.db.prepare("SELECT data FROM knowledge_tasks WHERE status IN ('queued','running')").all() as {data:string}[];
     for (const row of rows) { const task = JSON.parse(row.data) as KnowledgeTask; task.status="interrupted"; task.error="服务重启，任务已中断；请手动重试。"; knowledge.saveTask(task); }
   }
@@ -28,7 +29,7 @@ export class KnowledgeAgent implements TaskRunner {
       const previous = part.target_id ? this.knowledge.get(projectId,part.kind,part.target_id) : part.kind === "literature-card" ? this.knowledge.list(projectId,"literature-card").find(v=>"source_id" in v.content && v.content.source_id===part.source_ids[0]) : undefined;
       if (part.target_id && !previous) requestError("NOT_FOUND",404);
       if (part.kind === "literature-card" && sources[0]) part = {...part,title:sources[0].source.title};
-      const snapshot={sources,dependencies,previous,base_version:previous?.version??0,prompt_version:1};
+      const snapshot={project:this.store.getProject(projectId),sources,dependencies,previous,base_version:previous?.version??0,prompt_version:1};
       const fingerprint=createHash("sha256").update(JSON.stringify({snapshot,input:{...part,regenerate:false}})).digest("hex");
       const existing=this.knowledge.tasks(projectId).find(t=>t.fingerprint===fingerprint && ["queued","running","completed"].includes(t.status));
       if (existing && !part.regenerate) return existing;
@@ -45,8 +46,10 @@ export class KnowledgeAgent implements TaskRunner {
   cancel(projectId: string, taskId: string): void {
     const task=this.knowledge.tasks(projectId).find(t=>t.task_id===taskId) ?? requestError("NOT_FOUND",404);
     if (!["queued","running"].includes(task.status)) requestError("TASK_FINISHED",409);
+    const wasQueued=task.status==="queued";
     task.status="cancelled"; this.knowledge.saveTask(task); this.knowledge.event(taskId,"用户取消任务");
     const active=this.running.get(projectId); if(active?.task.task_id===taskId) { active.task.status="cancelled"; this.terminate(active.child); }
+    if(wasQueued){try{this.onTaskSettled?.(projectId);}catch{/* Workflow records its own errors. */}}
   }
   private terminate(child: ChildProcess): void {
     try { if(process.platform!=="win32" && child.pid) process.kill(-child.pid,"SIGTERM"); else child.kill("SIGTERM"); } catch { /* Process already exited. */ }
@@ -95,8 +98,8 @@ export class KnowledgeAgent implements TaskRunner {
         if (original) content.source_file_sha256=original;
       }
       const record=this.knowledge.write(projectId,task.input.kind,{object_id:snapshot.previous?.object_id,base_version:snapshot.base_version,content},"agent");
-      task.status="completed";task.output_id=record.object_id;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,"输出校验通过，已保存待审候选。");
+      task.status="completed";task.output_id=record.object_id;task.output_version=record.version;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,"输出校验通过，已保存待审候选。");
     }catch(error){if(task.status==="running" && !this.closed){task.status="failed";task.error=redact(error instanceof Error?error.message:"任务失败");this.knowledge.saveTask(task);this.knowledge.event(task.task_id,task.error);}}
-    finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed)void this.pump(projectId);}
+    finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}
   }
 }

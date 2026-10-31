@@ -5,7 +5,7 @@ import "./project-chat.css";
 
 type Turn = { task_id: string; conversation_id: string; session_id?: string; instructions: string; response: string; status: string; sandbox: string; model: string; error?: string; created_at: string; logs: string };
 const states: Record<string, string> = { running: "正在处理…", cancelling: "正在停止…", completed: "本轮完成", failed: "本轮失败", cancelled: "已停止", interrupted: "服务中断，请核对旧进程" };
-const errors: Record<string, string> = { CODE_AGENT_BUSY: "当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。", CODE_AGENT_RECOVERY_REQUIRED: "请先核对中断任务并确认旧进程停止。", CHAT_SESSION_NOT_FOUND: "未找到可恢复的 Codex 会话，请新建对话。", EXPERIMENT_ACTIVE: "项目有未结束实验，请先处理实验状态。", INVALID_REQUEST: "请检查消息和执行设置。" };
+const errors: Record<string, string> = { PROJECT_HAS_ACTIVE_TASKS: "当前项目正在分析文献或处理知识任务，请等待完成或先停止分析。", CODE_AGENT_BUSY: "当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。", CODE_AGENT_RECOVERY_REQUIRED: "请先核对中断任务并确认旧进程停止。", CHAT_SESSION_NOT_FOUND: "未找到可恢复的 Codex 会话，请新建对话。", EXPERIMENT_ACTIVE: "项目有未结束实验，请先处理实验状态。", INVALID_REQUEST: "请检查消息和执行设置。" };
 export function ProjectChat({ projectId }: { projectId: string }) {
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}`;
   const [turns, setTurns] = useState<Turn[]>([]), [conversation, setConversation] = useState(""), [draft, setDraft] = useState("");
