@@ -1,22 +1,49 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { RefreshCw, TerminalSquare, Unplug } from "lucide-react";
+import { RefreshCw, TerminalSquare, Columns2, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalSession { id: string; token: string; profile_id: string; name: string; host: string; port: number; username: string; ended?: boolean }
-export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded }: { projectId: string; session: TerminalSession; onDisconnect: () => void; onEnded: () => void }) {
+export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSplit, splitDisabled, number }: { projectId: string; session: TerminalSession; onDisconnect: () => void; onEnded: () => void; onSplit: () => void; splitDisabled: boolean; number: number }) {
   const container = useRef<HTMLDivElement>(null);
   const [state, setState] = useState("正在打开终端…"), [error, setError] = useState(""), [attempt, setAttempt] = useState(0), [closed, setClosed] = useState(false);
-  const callbacks = useRef({ onDisconnect, onEnded }); callbacks.current = { onDisconnect, onEnded };
+  const [copyNotice, setCopyNotice] = useState("");
+  const callbacks = useRef({ onDisconnect, onEnded, onSplit, splitDisabled }); callbacks.current = { onDisconnect, onEnded, onSplit, splitDisabled };
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/terminals/${session.id}`;
   const headers = { "x-terminal-token": session.token, "content-type": "application/json" };
   useEffect(() => () => { void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token }, keepalive: true }).catch(() => {}); }, [projectId, session.id]);
   useEffect(() => {
     const controller = new AbortController(); let alive = true, connected = false;
-    const term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace', scrollback: 5000, convertEol: false, theme: { background: "#101a21", foreground: "#d4e2e8", cursor: "#83d9b0", selectionBackground: "#35564a" } });
+    const term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace', scrollback: 5000, convertEol: false, theme: { background: "#ffffff", foreground: "#26352e", cursor: "#27764d", selectionBackground: "#a8cdb780", black: "#26352e", red: "#b34747", green: "#27764d", yellow: "#926c15", blue: "#366db0", magenta: "#89549d", cyan: "#277f8b", white: "#657570", brightBlack: "#77877e", brightRed: "#c34b4b", brightGreen: "#328254", brightYellow: "#9d761a", brightBlue: "#467dc0", brightMagenta: "#9964ad", brightCyan: "#378f9b", brightWhite: "#36453e" } });
     const fit = new FitAddon(); term.loadAddon(fit);
     term.open(container.current!);
+    const element = container.current!;
+    const updateTheme = () => {
+      const style = getComputedStyle(element);
+      term.options.theme = { ...term.options.theme, background: style.backgroundColor, foreground: style.color, cursor: getComputedStyle(document.documentElement).getPropertyValue("--green").trim() || "#27764d" };
+    };
+    updateTheme();
+    const themeObserver = new MutationObserver(updateTheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+    term.attachCustomKeyEventHandler(event => {
+      if (event.code === "KeyD" && event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault(); event.stopPropagation();
+        if (event.type === "keydown" && !event.repeat && !callbacks.current.splitDisabled) callbacks.current.onSplit();
+        return false;
+      }
+      return true;
+    });
+    const copySelection = (event: MouseEvent) => {
+      const selection = term.getSelection();
+      if (!selection) return;
+      event.preventDefault(); event.stopPropagation();
+      void (async () => {
+        try { await navigator.clipboard.writeText(selection); if (alive) setCopyNotice("已复制选中文字"); }
+        catch { if (alive) setCopyNotice("复制失败，请按 Ctrl+Shift+C 复制选区，或检查浏览器剪贴板权限。"); }
+      })();
+    };
+    element.addEventListener("contextmenu", copySelection, true);
     let queue = Promise.resolve(); let queued = 0;
     const post = async (path: string, value: unknown) => {
       const response = await fetch(base + path, { method: "POST", headers, body: JSON.stringify(value), signal: controller.signal });
@@ -62,7 +89,7 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded }: { 
       } catch (cause) { if (alive) { connected = false; term.options.disableStdin = true; setError(cause instanceof Error ? cause.message : "终端连接中断。"); setState("终端显示已中断"); } }
     };
     void stream();
-    return () => { alive = false; controller.abort(); clearTimeout(resizeTimer); observer.disconnect(); input.dispose(); term.dispose(); };
+    return () => { alive = false; controller.abort(); clearTimeout(resizeTimer); observer.disconnect(); themeObserver.disconnect(); element.removeEventListener("contextmenu", copySelection, true); input.dispose(); term.dispose(); };
   }, [projectId, session.id, attempt]);
-  return <section className="autodl-terminal-panel"><header><div><TerminalSquare size={18}/><strong>{session.name}</strong><span>{session.username}@{session.host}:{session.port}</span></div><div><button type="button" className="secondary-button" disabled={closed || session.ended} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={13}/>恢复终端显示</button><button type="button" className="secondary-button" onClick={() => void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token } }).then(response => { if (!response.ok && response.status !== 404) throw new Error(); callbacks.current.onDisconnect(); }).catch(() => setError("断开失败，请检查服务状态。"))}><Unplug size={13}/>断开连接</button></div></header><p role="status" className="autodl-terminal-status">{state}</p>{error && <p role="alert" className="notice error-notice">{error}</p>}<div ref={container} className="autodl-terminal-screen"/><footer>直接操作所选远端主机。Ctrl+C 中断前台命令；退出页面或断开连接可能影响前台任务，长任务请使用 tmux 或实验 Runner。</footer></section>;
+  return <section className="autodl-terminal-panel" aria-label={`终端窗口 ${number}`}><header><div className="autodl-terminal-identity"><TerminalSquare size={17}/><strong>{session.name}</strong><span className="autodl-terminal-number">{String(number).padStart(2,"0")}</span></div><div className="autodl-terminal-actions"><button type="button" className="icon-button" title="新建分屏（Shift+Alt+D）" aria-label="新建终端分屏" disabled={splitDisabled} onClick={onSplit}><Columns2 size={15}/></button><button type="button" className="icon-button" title="恢复终端显示" aria-label="恢复终端显示" disabled={closed || session.ended} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={15}/></button><button type="button" className="icon-button" title="关闭终端窗口" aria-label="关闭终端窗口" onClick={() => void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token } }).then(response => { if (!response.ok && response.status !== 404) throw new Error(); callbacks.current.onDisconnect(); }).catch(() => setError("断开失败，请检查服务状态。"))}><X size={15}/></button></div></header><div className="autodl-terminal-connection"><span title={`${session.username}@${session.host}:${session.port}`}>{session.username}@{session.host}:{session.port}</span><span role="status" className="autodl-terminal-status">{state}</span></div>{error && <p role="alert" className="notice error-notice">{error}</p>}<div ref={container} className="autodl-terminal-screen"/><footer><span>独立 Shell · Ctrl+C 中断前台命令</span><span role="status">{copyNotice || "长任务请使用 tmux 或实验 Runner"}</span></footer></section>;
 }
