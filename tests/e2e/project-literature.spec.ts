@@ -15,7 +15,7 @@ test("项目功能导航不误报未保存，实验五页签可用，删除无�
     await expect(page).toHaveURL(new RegExp(`/projects/[^/]+/${({ 卡片: "cards", Wiki: "wiki", 实验结果: "results", 任务: "tasks", 实验: "experiments" })[name]}$`));
   }
   const experimentNavigation = page.getByRole("navigation", { name: "实验功能" });
-  for (const name of ["主机与环境", "实验计划", "运行", "产物", "代码"]) {
+  for (const name of ["实验概览", "代码", "AutoDL 信息", "实验计划", "运行", "产物"]) {
     await experimentNavigation.getByRole("button", { name, exact: true }).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
   }
