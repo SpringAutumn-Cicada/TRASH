@@ -1,0 +1,68 @@
+import { createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
+import { experimentError } from "@trash/storage";
+import { ExperimentService } from "./service.js";
+export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
+export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
+  const method=request.method??"GET",parts=subpath.split("/");
+  if(parts[0]==="repository"){
+    if(parts.length===1&&method==="GET"){send(response,200,{repository:service.data.repository(projectId)??null});return true;}
+    if(parts.length===1&&method==="PUT"){send(response,200,{repository:await service.repository.bind(projectId,await readJson(request))});return true;}
+    if(parts[1]==="status"&&method==="GET"){send(response,200,await service.repository.status(projectId));return true;}
+    if(parts[1]==="tree"&&method==="GET"){send(response,200,{entries:await service.repository.tree(projectId,url.searchParams.get("path")??"")});return true;}
+    if(parts[1]==="file"&&method==="GET"){send(response,200,await service.repository.file(projectId,url.searchParams.get("path")??""));return true;}
+    if(parts[1]==="history"&&method==="GET"){send(response,200,{commits:await service.repository.history(projectId,z.coerce.number().int().min(1).parse(url.searchParams.get("page")??1))});return true;}
+    if(parts[1]==="commit"&&method==="POST"){const input=z.object({message:z.string().trim().min(1).max(2000)}).strict().parse(await readJson(request));send(response,200,await service.repository.commit(projectId,input.message));return true;}
+    if(parts[1]==="editor"&&method==="POST"){await service.repository.editor(projectId);send(response,200,{started:true});return true;}
+  }
+  if(parts[0]==="ssh-profiles"){
+    if(parts.length===1&&method==="GET"){send(response,200,{profiles:service.data.profiles(projectId).map(p=>({...p,credential_available:service.ssh.hasCredential(p)}))});return true;}
+    if(parts.length===1&&method==="POST"){const value=sshProfileInputSchema.parse(await readJson(request));const profile={...value,profile_id:`ssh_${randomUUID()}`,project_id:projectId,created_at:new Date().toISOString()};service.data.saveProfile(profile);send(response,201,{profile});return true;}
+    if(parts[1]){
+      const profile=service.data.profile(projectId,parts[1]);
+      if(parts.length===2&&method==="DELETE"){service.data.deleteProfile(projectId,profile.profile_id);service.ssh.forget(profile.profile_id);send(response,200,{deleted:true});return true;}
+      if(parts[2]==="credentials"&&method==="PUT"){service.ssh.setCredential(profile.profile_id,sessionCredentialSchema.parse(await readJson(request)));send(response,200,{credential_available:service.ssh.hasCredential(profile)});return true;}
+      if(parts[2]==="credentials"&&method==="DELETE"){service.ssh.forget(profile.profile_id);send(response,200,{forgotten:true});return true;}
+      if(parts[2]==="fingerprint"&&method==="POST"){send(response,200,{fingerprint:await service.ssh.probe(profile),trusted:profile.fingerprint??null});return true;}
+      if(parts[2]==="trust"&&method==="POST"){const input=z.object({fingerprint:z.string().min(1),confirm:z.literal(true)}).strict().parse(await readJson(request));service.ssh.confirm(profile,input.fingerprint);send(response,200,{trusted:true});return true;}
+      if(parts[2]==="diagnostics"&&method==="POST"){send(response,200,{environment:await service.diagnostics(projectId,profile.profile_id)});return true;}
+    }
+  }
+  if(parts[0]==="datasets"){
+    if(parts.length===1&&method==="GET"){send(response,200,{datasets:service.data.datasets(projectId)});return true;}
+    if(parts.length===1&&method==="POST"){const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const dataset={...value,dataset_id:`dataset_${randomUUID()}`,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(dataset);send(response,201,{dataset});return true;}
+    if(parts[2]==="check"&&method==="POST"){send(response,200,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
+  }
+  if(parts[0]==="experiment-plans"){
+    if(parts.length===1&&method==="GET"){send(response,200,{plans:service.data.plans(projectId)});return true;}
+    if(parts.length===1&&method==="POST"){const input=z.object({plan_id:z.string().optional(),base_version:z.number().int().nonnegative().default(0),content:z.record(z.unknown())}).strict().parse(await readJson(request));send(response,201,{plan:service.createPlan(projectId,input.content,input.plan_id,input.base_version)});return true;}
+    if(parts[1]&&method==="POST"){
+      const input=z.object({version:z.number().int().positive(),confirm:z.literal(true).optional()}).strict().parse(await readJson(request));const plan=service.data.plan(projectId,parts[1],input.version);
+      if(parts[2]==="preflight"){send(response,200,{environment:await service.preflight(plan)});return true;}
+      if(parts[2]==="confirm"){if(!input.confirm)experimentError("CONFIRM_REQUIRED");send(response,200,{plan:await service.confirmPlan(projectId,parts[1],input.version)});return true;}
+      if(parts[2]==="preparation"){if(!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");send(response,200,{script:await service.repository.preparation(projectId,plan.content.commit_sha,plan.content.preparation_script),commit:plan.content.commit_sha});return true;}
+    }
+  }
+  if(parts[0]==="experiment-runs"){
+    if(parts.length===1&&method==="GET"){send(response,200,{runs:service.data.runs(projectId).map(publicRun)});return true;}
+    if(parts.length===1&&method==="POST"){send(response,201,{run:publicRun(service.submit(projectId,runSubmitSchema.parse(await readJson(request))))});return true;}
+    if(parts[1]){
+      const run=service.data.run(projectId,parts[1]);
+      if(parts.length===2&&method==="GET"){send(response,200,{run:publicRun(run),events:service.data.events(projectId,run.run_id)});return true;}
+      if(parts[2]==="logs"&&method==="GET"){send(response,200,await service.logs(projectId,run.run_id,url.searchParams.get("stream")??"stdout",z.coerce.number().int().min(0).parse(url.searchParams.get("offset")??0)));return true;}
+      if(parts[2]==="cancel"&&method==="POST"){send(response,200,{run:publicRun(await service.cancel(projectId,run.run_id))});return true;}
+      if(parts[2]==="reconnect"&&method==="POST"){send(response,200,{run:publicRun(await service.reconnect(projectId,run.run_id))});return true;}
+      if(parts[2]==="retry"&&method==="POST"){const input=z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));if(input.confirm)send(response,201,{run:publicRun(service.retry(projectId,run.run_id))});return true;}
+      if(parts[2]==="collect"&&method==="POST"){send(response,200,{run:publicRun(await service.collectAgain(projectId,run.run_id))});return true;}
+    }
+  }
+  if(parts[0]==="experiment-artifacts"&&parts[1]&&parts[2]&&method==="GET"){
+    const run=service.data.run(projectId,parts[1]);if(!run.artifacts.some(a=>a.artifact_id===parts[2]&&a.downloaded))experimentError("NOT_FOUND",404);
+    const file=service.store.artifactFile(projectId,parts[2]);if(!file)experimentError("NOT_FOUND",404);
+    response.writeHead(200,{"content-type":"application/octet-stream","content-disposition":`attachment; filename*=UTF-8''${encodeURIComponent(file.artifact.name)}`,"x-content-type-options":"nosniff","cache-control":"no-store"});const stream=createReadStream(file.path);stream.on("error",()=>response.destroy());stream.pipe(response);return true;
+  }
+  return false;
+}

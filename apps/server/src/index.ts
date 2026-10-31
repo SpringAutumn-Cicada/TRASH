@@ -9,6 +9,8 @@ import { OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, 
 import { TrashStore, KnowledgeStore } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
+import { ExperimentService } from "./experiment/service.js";
+import { experimentRoute } from "./experiment/routes.js";
 import { projectOverview } from "./overview.js";
 import { restoreKnowledge } from "./knowledge-restore.js";
 import { z, ZodError } from "zod";
@@ -110,7 +112,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if (url.pathname === "/api/v1/health" && method === "GET") {
@@ -141,6 +143,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson)) return;
     if (subpath === "overview" && method === "GET") {
       sendJson(response, 200, projectOverview(store, projectId));
       return;
@@ -148,7 +151,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (!subpath && method === "DELETE") {
       const input = z.object({ confirm_title: z.string() }).strict().parse(await readJson(request));
       if (input.confirm_title !== project.title) { sendJson(response, 400, { error: "PROJECT_TITLE_MISMATCH" }); return; }
-      if (agent.isProjectBusy(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
+      if (agent.isProjectBusy(projectId) || experiments.busyProject(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
       sendJson(response, 200, store.deleteProject(projectId));
       return;
     }
@@ -279,6 +282,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const staticRoot = options.staticRoot ?? resolve(fileURLToPath(new URL("../../workbench/dist/", import.meta.url)));
   const knowledge = new KnowledgeStore(store.db);
   const agent = new KnowledgeAgent(store, knowledge);
+  const experiments = new ExperimentService(store);
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
     const origin = request.headers.origin;
@@ -301,9 +305,9 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
       } catch (error) { onError(error); }
       return;
     }
-    void route(request, response, store, provider, staticRoot, knowledge, agent).catch(onError);
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments).catch(onError);
   });
-  server.on("close", () => agent.close());
+  server.on("close", () => { experiments.close(); agent.close(); });
   return { server, store };
 }
 

@@ -1,5 +1,5 @@
 import type { KnowledgeVersion, ProjectOverview, ProjectPage } from "@trash/protocol";
-import { KnowledgeStore, type TrashStore } from "@trash/storage";
+import { ExperimentStore, KnowledgeStore, type TrashStore } from "@trash/storage";
 
 export function projectOverview(store: TrashStore, projectId: string): ProjectOverview {
   const knowledge = new KnowledgeStore(store.db);
@@ -11,6 +11,8 @@ export function projectOverview(store: TrashStore, projectId: string): ProjectOv
   const acceptedRows = store.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=? AND kind='literature-card' AND json_extract(data,'$.status')='accepted'").all(projectId) as { data: string }[];
   const accepted = new Set(acceptedRows.flatMap(row => { const card = JSON.parse(row.data) as KnowledgeVersion; return "source_id" in card.content ? [card.content.source_id] : []; }));
   const tasks = knowledge.tasks(projectId);
+  const experimentStore = new ExperimentStore(store.db);
+  const experiments = experimentStore.runs(projectId);
   const pageFor = (kind: KnowledgeVersion["kind"]): ProjectPage => kind === "literature-card" ? "cards" : kind === "wiki-page" ? "wiki" : "results";
   const labels = { "literature-card": "文献卡片", "wiki-page": "Wiki", "experiment-result": "实验结果" };
   const activities: ProjectOverview["activities"] = sources.slice(0, 10).map(source => ({ id: `source-${source.source_id}`, title: source.title, description: "导入文献", at: source.imported_at, page: "literature", object_id: source.source_id }));
@@ -28,9 +30,10 @@ export function projectOverview(store: TrashStore, projectId: string): ProjectOv
   const taskAt = new Map(taskTimes.map(row => [row.task_id, row.at]));
   const states: Record<string, string> = { queued: "排队", running: "运行", completed: "完成", failed: "失败", cancelled: "取消", interrupted: "中断" };
   for (const task of tasks) activities.push({ id: task.task_id, title: task.input.title, description: `Agent 任务${states[task.status] ?? task.status}`, at: taskAt.get(task.task_id) ?? task.created_at, page: "tasks", object_id: task.task_id });
+  for (const run of experiments) activities.push({ id:run.run_id,title:run.plan.content.title,description:`实验：${run.status}`,at:run.updated_at,page:"experiments",object_id:run.run_id });
   return {
     counts: { sources: sources.length, accepted_cards: accepted.size, wiki_pages: pages.length, experiment_results: results.length },
-    pending: { unorganized_sources: sources.filter(source => !cardSources.has(source.source_id)).length, cards: cards.filter(card => card.status === "pending").length, wiki_pages: pages.filter(page => page.status === "pending").length, stale_wiki_pages: pages.filter(page => knowledge.stale(page)).length, unsuccessful_tasks: tasks.filter(task => ["failed", "interrupted"].includes(task.status)).length },
+    pending: { unorganized_sources: sources.filter(source => !cardSources.has(source.source_id)).length, cards: cards.filter(card => card.status === "pending").length, wiki_pages: pages.filter(page => page.status === "pending").length, stale_wiki_pages: pages.filter(page => knowledge.stale(page)).length, unsuccessful_tasks: tasks.filter(task => ["failed", "interrupted"].includes(task.status)).length, active_experiments: experiments.filter(run => experimentStore.active(run)).length, failed_experiments: experiments.filter(run => run.status === "failed").length, pending_collection: experiments.filter(run => run.status === "collecting" || run.status === "completed" && !run.preparation && !run.result_id).length },
     activities: activities.sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || a.id.localeCompare(b.id)).slice(0, 10)
   };
 }

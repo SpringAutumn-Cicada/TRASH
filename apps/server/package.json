@@ -3,12 +3,22 @@
   "private": true,
   "type": "module",
   "main": "dist/main.js",
-  "scripts": { "dev": "tsx src/main.ts --dev", "build": "tsc -b", "typecheck": "tsc -b --pretty false", "start": "node dist/main.js", "test": "node --import tsx --test tests/*.test.ts" },
-  "devDependencies": { "vite": "^7.3.0" },
+  "scripts": {
+    "dev": "tsx src/main.ts --dev",
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "start": "node dist/main.js",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/ssh2": "^1.15.6",
+    "vite": "^7.3.0"
+  },
   "dependencies": {
     "@trash/literature": "workspace:*",
     "@trash/protocol": "workspace:*",
     "@trash/storage": "workspace:*",
+    "ssh2": "^1.17.0",
     "zod": "^3.25.0"
   }
 }
