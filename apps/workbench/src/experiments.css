@@ -112,4 +112,4 @@
 @media(max-width:600px){.reproduction-upload-dialog{padding:18px}.reproduction-upload-dialog .repository-path-control{flex-wrap:wrap}.reproduction-upload-footer{align-items:flex-start}}
 
 .reproduction-workspace-heading>.project-delete-button{flex:none;align-self:flex-start;margin-left:auto;width:30px;height:30px;display:grid;place-items:center;border-radius:8px}
-.reproduction-module-actions .secondary-button:active:not(:disabled){color:#2563eb;border-color:#93b4f5;background:color-mix(in srgb,#2563eb 10%,var(--surface));box-shadow:inset 0 0 0 1px rgb(37 99 235 / 8%)}
+.reproduction-module-actions .secondary-button[aria-expanded="true"],.reproduction-module-actions .secondary-button:active:not(:disabled){color:#2563eb;border-color:#93b4f5;background:color-mix(in srgb,#2563eb 10%,var(--surface));box-shadow:inset 0 0 0 1px rgb(37 99 235 / 8%)}
