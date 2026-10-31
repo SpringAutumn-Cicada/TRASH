@@ -60,7 +60,7 @@ export class EnvironmentAnalysisService {
    // Drain diagnostics without storing untrusted code or potential secrets in logs.
    child.stderr?.on("data",()=>{});child.stdin?.on("error",()=>{});
    child.once("error",error=>reject(new Error((error as NodeJS.ErrnoException).code==="ENOENT"?(command==="python3"?"ENVIRONMENT_LOCAL_PYTHON_MISSING":"ENVIRONMENT_CODEX_UNAVAILABLE"):"ENVIRONMENT_PROCESS_FAILED")));
-   child.once("close",code=>{active.child=undefined;code===0&&!overflow?resolve(stdout):reject(new Error(overflow?"ENVIRONMENT_CLI_OUTPUT_TOO_LARGE":active.timedOut?"ENVIRONMENT_ANALYSIS_TIMEOUT":"ENVIRONMENT_PROCESS_FAILED"));});child.stdin?.end(input);
+   child.once("close",code=>{active.child=undefined;if(code===0&&!overflow)resolve(stdout);else reject(new Error(overflow?"ENVIRONMENT_CLI_OUTPUT_TOO_LARGE":active.timedOut?"ENVIRONMENT_ANALYSIS_TIMEOUT":"ENVIRONMENT_PROCESS_FAILED"));});child.stdin?.end(input);
   });
  }
  private async run(active:Active){

@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";

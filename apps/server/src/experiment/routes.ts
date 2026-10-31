@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";

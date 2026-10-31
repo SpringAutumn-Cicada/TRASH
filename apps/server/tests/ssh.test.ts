@@ -12,7 +12,7 @@ import { SshService } from "../src/experiment/ssh.js";
 
 test("controlled SSH requires observed fingerprint, verifies authentication and preserves argument boundaries", async () => {
   const root = mkdtempSync(join(tmpdir(), "trash-ssh-test-"));
-  const store = new TrashStore(root); const data = new ExperimentStore(store.db); const ssh = new SshService(data);
+  const store = new TrashStore(root); const data = new ExperimentStore(store.db); const ssh = new SshService(data, root);
   const key = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { format: "pem", type: "pkcs1" }, publicKeyEncoding: { format: "pem", type: "pkcs1" } }).privateKey;
   const server = new ssh2.Server({ hostKeys: [key] }, client => {
     client.on("error", () => {});

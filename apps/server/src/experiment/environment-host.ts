@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { CodeEnvironmentReport, HostEnvironmentComparison } from "@trash/protocol";

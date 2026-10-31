@@ -20,8 +20,25 @@ test("项目功能导航不误报未保存，实验五页签可用，删除无�
     await expect(page).toHaveURL(new RegExp(`/projects/[^/]+/${({ 卡片: "cards", Wiki: "wiki", 实验结果: "results", 任务: "tasks", 实验: "experiments" })[name]}$`));
   }
   const experimentNavigation = page.getByRole("navigation", { name: "实验功能" });
-  for (const name of ["实验概览", "代码", "AutoDL 信息", "AutoDL 工作区", "实验计划", "运行", "产物"]) {
+  for (const name of ["实验概览", "实验代码", "实验计划", "运行", "产物"]) {
     await experimentNavigation.getByRole("button", { name, exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  }
+  await experimentNavigation.getByRole("button", { name: "实验概览", exact: true }).click();
+  await page.getByRole("button", { name: "浏览目录", exact: true }).click();
+  const directory = page.getByRole("dialog", { name: "选择仓库目录" });
+  await expect(directory).toBeVisible();
+  await expect(page.locator("#root")).toHaveAttribute("inert", "");
+  await directory.getByRole("button", { name: "关闭目录选择" }).click();
+  await navigation.getByRole("button", { name: "文献复现", exact: true }).click();
+  await page.getByRole("button", { name: "添加复现代码", exact: true }).first().click();
+  const reproduction = page.getByRole("dialog", { name: "添加复现代码" });
+  await expect(reproduction).toBeVisible();
+  await expect(page.locator("#root")).toHaveAttribute("inert", "");
+  await reproduction.getByRole("button", { name: "关闭复现代码弹窗" }).click();
+  await navigation.getByRole("button", { name: "AutoDL 工作区", exact: true }).click();
+  for (const name of ["AutoDL 信息", "AutoDL 工作区"]) {
+    await page.getByRole("navigation", { name: "AutoDL 功能" }).getByRole("button", {name, exact:true}).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
   }
   expect(dialogs).toEqual([]);

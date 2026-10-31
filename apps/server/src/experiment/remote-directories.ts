@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { posix } from "node:path";
 import { experimentError } from "@trash/storage";
 import type { RemoteConnection } from "./ssh.js";
