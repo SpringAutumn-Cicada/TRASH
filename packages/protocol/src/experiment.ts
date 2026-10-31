@@ -1,8 +1,8 @@
 import { z } from "zod";
 const text = z.string().trim().min(1).max(500);
 export const commitShaSchema = z.string().regex(/^[a-f0-9]{40}([a-f0-9]{24})?$/);
-export const remotePathSchema = z.string().min(2).max(2048).refine(p => p.startsWith("/") && !p.split("/").includes("..") && !/[\x00-\x1f]/.test(p), "必须为无上级跳转的绝对路径");
-export const outputPathSchema = z.string().min(1).max(1024).refine(p => !p.startsWith("/") && !p.split(/[\\/]/).some(s => s === ".." || s === ".git") && !/[\x00-\x1f\\]/.test(p), "必须为运行目录内的相对路径");
+export const remotePathSchema = z.string().min(2).max(2048).refine(p => p.startsWith("/") && !p.split("/").includes("..") && !Array.from(p).some(c => c.charCodeAt(0) < 32), "必须为无上级跳转的绝对路径");
+export const outputPathSchema = z.string().min(1).max(1024).refine(p => !p.startsWith("/") && !p.split(/[\\/]/).some(s => s === ".." || s === ".git") && !p.includes("\\") && !Array.from(p).some(c => c.charCodeAt(0) < 32), "必须为运行目录内的相对路径");
 export const repositoryInputSchema = z.object({ path: z.string().min(1).max(4096), editor: z.object({ executable: text, args: z.array(z.string().max(2000)).max(30) }).optional() }).strict();
 export type ProjectRepository = z.infer<typeof repositoryInputSchema> & { repository_id: string; project_id: string; bound_at: string };
 export const sshProfileInputSchema = z.object({ name: text, host: z.string().regex(/^[A-Za-z0-9.:-]+$/).max(253), port: z.number().int().min(1).max(65535), username: z.string().regex(/^[A-Za-z0-9_.-]+$/), remote_root: remotePathSchema.refine(p => p !== "/" && p.split("/").filter(Boolean).length >= 2, "请选择平台专属子目录"), auth: z.enum(["password", "key", "agent"]), key_path: z.string().min(1).max(4096).optional() }).strict();

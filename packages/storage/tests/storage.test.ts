@@ -25,7 +25,8 @@ test("persists projects and source locators through store reopen; migrations are
     first.createSources([source], new Map([[source.source_id, [{ locator: { kind: "paragraph", paragraph_index: 1, heading: "APT Provenance" }, text: "A provenance graph can reveal lateral movement." }]]]));
     assert.equal(first.search(project.project_id, "lateral movement")[0].source_id, "source_test");
     assert.match(artifact.name, /^paper\.md$/);
-    const file = join(root, "projects", project.project_id, "files", `${artifact.artifact_id}-paper.md`);
+    const file = first.artifactFile(project.project_id, artifact.artifact_id)?.path;
+    assert.ok(file);
     assert.equal((await readFile(file)).byteLength, bytes.byteLength);
     first.close();
 

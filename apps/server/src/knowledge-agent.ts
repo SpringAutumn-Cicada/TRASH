@@ -6,7 +6,7 @@ import { KnowledgeStore, type TrashStore, type KnowledgeTask } from "@trash/stor
 import { type KnowledgeTaskInput, type KnowledgeVersion, parseKnowledge } from "@trash/protocol";
 import { requestError, type TaskRunner } from "./knowledge.js";
 
-const redact = (s: string) => s.replace(/(Bearer\s+)[\w.\-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+\b/g,"[REDACTED]").replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");
+const redact = (s: string) => s.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+\b/g,"[REDACTED]").replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");
 export class KnowledgeAgent implements TaskRunner {
   private running = new Map<string, { child: ChildProcess; task: KnowledgeTask }>();
   private closed = false;

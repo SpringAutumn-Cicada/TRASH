@@ -36,7 +36,7 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
   const [references,setReferences]=useState<KnowledgeVersion[]>([]);const [generation,setGeneration]=useState(false);const [generationTitle,setGenerationTitle]=useState("研究主题");const [instructions,setInstructions]=useState("");const [timeout,setTimeoutValue]=useState(900);
   const alive=useRef(true);const actionHandled=useRef("");const focusRequest=useRef(0);const [editorBaseline,setEditorBaseline]=useState("");
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
-  const clearUnsaved=useUnsavedChanges(Boolean(editing && (jsonMode?json:JSON.stringify(editing.content,null,2))!==editorBaseline) || generation);
+  const clearUnsaved=useUnsavedChanges(Boolean(editing && ((jsonMode?json:JSON.stringify(editing.content,null,2))!==editorBaseline)) || generation);
   const run=async(fn:()=>Promise<void>)=>{setBusy(true);setError("");try{await fn();}catch(e){setError(e instanceof Error?e.message:"操作失败");}finally{setBusy(false);}};
   const refresh=async()=>{
     if(!alive.current)return;

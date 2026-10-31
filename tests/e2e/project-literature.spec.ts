@@ -1,5 +1,39 @@
 import { expect, test } from "@playwright/test";
 
+test("项目功能导航不误报未保存，实验五页签可用，删除无需填写项目全名", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "新建项目", exact: true }).first().click();
+  await page.getByLabel("项目名称").fill("实验导航与删除测试");
+  await page.getByLabel("研究问题").fill("验证实验与项目导航的完整流程");
+  await page.getByRole("button", { name: "创建项目", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "实验导航与删除测试" })).toBeVisible();
+  const dialogs: string[] = [];
+  page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+  const navigation = page.getByRole("navigation", { name: "项目功能" });
+  for (const name of ["卡片", "Wiki", "实验结果", "任务", "实验"]) {
+    await navigation.getByRole("button", { name, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/projects/[^/]+/${({ 卡片: "cards", Wiki: "wiki", 实验结果: "results", 任务: "tasks", 实验: "experiments" })[name]}$`));
+  }
+  const experimentNavigation = page.getByRole("navigation", { name: "实验功能" });
+  for (const name of ["主机与环境", "实验计划", "运行", "产物", "代码"]) {
+    await experimentNavigation.getByRole("button", { name, exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  }
+  expect(dialogs).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "项目操作" }).click();
+  await page.getByRole("button", { name: "删除项目", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除项目" });
+  await expect(confirmation.getByRole("textbox")).toHaveCount(0);
+  await confirmation.getByRole("button", { name: "确认永久删除" }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "实验导航与删除测试" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "实验导航与删除测试" })).toHaveCount(0);
+});
+
 test("中文工作台可创建项目、检索原文并在刷新后恢复", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
@@ -25,13 +59,13 @@ test("中文工作台可创建项目、检索原文并在刷新后恢复", async
   await expect(page.getByText("Process lineage · 第 1 段")).toBeVisible();
   const desktop = await page.screenshot({ path: "test-results/workbench-desktop.png" });
   expect(desktop.byteLength).toBeGreaterThan(10_000);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth ? [] : Array.from(document.querySelectorAll("body *")).filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => `${e.tagName}.${e.className}:${Math.round(e.getBoundingClientRect().right)}`))).toEqual([]);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "APT 溯源研究测试" })).toBeVisible();
   await expect(page.getByText("Process lineage", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth ? [] : Array.from(document.querySelectorAll("body *")).filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => `${e.tagName}.${e.className}:${Math.round(e.getBoundingClientRect().right)}`))).toEqual([]);
   const mobile = await page.screenshot({ path: "test-results/workbench-mobile.png" });
   expect(mobile.byteLength).toBeGreaterThan(5_000);
 });
@@ -60,7 +94,7 @@ test("主题切换即时生效并在刷新后保留，且蓝色主题适配窄�
   await page.reload();
   await expect(page.getByLabel("界面主题")).toHaveValue("blue");
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth ? [] : Array.from(document.querySelectorAll("body *")).filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => `${e.tagName}.${e.className}:${Math.round(e.getBoundingClientRect().right)}`))).toEqual([]);
   const screenshot = await page.screenshot({ path: "test-results/workbench-blue-mobile.png" });
   expect(screenshot.byteLength).toBeGreaterThan(5_000);
 });
