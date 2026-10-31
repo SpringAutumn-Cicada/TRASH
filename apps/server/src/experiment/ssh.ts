@@ -70,12 +70,25 @@ export class RemoteConnection {
   sftp():Promise<SFTPWrapper>{return new Promise((resolve,reject)=>this.client.sftp((error,sftp)=>error?reject(new Error("SFTP_FAILED")):resolve(sftp)));}
   async upload(local:string,remote:string):Promise<void>{const sftp=await this.sftp();try{await new Promise<void>((resolve,reject)=>sftp.fastPut(local,remote,error=>error?reject(new Error("SFTP_UPLOAD_FAILED")):resolve()));}finally{sftp.end();}}
   async write(remote:string,value:string):Promise<void>{const sftp=await this.sftp();try{await new Promise<void>((resolve,reject)=>sftp.writeFile(remote,value,{mode:0o600},error=>error?reject(new Error("SFTP_WRITE_FAILED")):resolve()));}finally{sftp.end();}}
+  async consume(remote:string,maxBytes:number,onChunk:(chunk:Buffer)=>void,offset=0):Promise<number>{
+    const sftp=await this.sftp();let handle:Buffer|undefined;let size=0;
+    try{
+      handle=await new Promise<Buffer>((resolve,reject)=>sftp.open(remote,"r",(error,value)=>error?reject(new Error("SFTP_READ_FAILED")):resolve(value)));
+      while(size<maxBytes){
+        const buffer=Buffer.alloc(Math.min(64*1024,maxBytes-size));
+        const bytes=await new Promise<number>((resolve,reject)=>sftp.read(handle!,buffer,0,buffer.length,offset+size,(error,count)=>error?reject(new Error("SFTP_READ_FAILED")):resolve(count)));
+        if(!bytes)break;size+=bytes;onChunk(buffer.subarray(0,bytes));
+      }
+      return size;
+    }finally{
+      if(handle)await new Promise<void>(resolve=>sftp.close(handle!,()=>resolve()));
+      sftp.end();
+    }
+  }
   async read(remote:string,maxBytes:number,offset=0):Promise<Buffer>{
     if(maxBytes===0)return Buffer.alloc(0);
-    const sftp=await this.sftp();try{return await new Promise<Buffer>((resolve,reject)=>{
-      const stream=sftp.createReadStream(remote,{start:offset,end:offset+maxBytes-1});const chunks:Buffer[]=[];let size=0;
-      stream.on("data",(data:Buffer)=>{size+=data.length;if(size>maxBytes){stream.destroy(new Error("REMOTE_FILE_TOO_LARGE"));return;}chunks.push(data);});
-      stream.on("error",()=>reject(new Error("SFTP_READ_FAILED")));stream.on("end",()=>resolve(Buffer.concat(chunks)));
-    });}finally{sftp.end();}
+    const chunks:Buffer[]=[];
+    await this.consume(remote,maxBytes,chunk=>chunks.push(chunk),offset);
+    return Buffer.concat(chunks);
   }
 }

@@ -82,15 +82,9 @@ export class ReproductionService {
    stage="REPRODUCTION_TRANSFER_FAILED";
    await remote.upload(bundle.path,posix.join(directory,"code.zip"));
    stage="REPRODUCTION_REMOTE_HASH_FAILED";
-   const verify=await remote.sftp();
-   try{
-    const hash=createHash("sha256");let size=0;
-    for await(const chunk of verify.createReadStream(posix.join(directory,"code.zip"))){
-     const bytes=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);size+=bytes.length;
-     if(size>bundle.size)throw new Error("REMOTE_HASH_MISMATCH");hash.update(bytes);
-    }
-    if(size!==bundle.size||hash.digest("hex")!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
-   }finally{verify.end();}
+   const hash=createHash("sha256");
+   const size=await remote.consume(posix.join(directory,"code.zip"),bundle.size+1,chunk=>hash.update(chunk));
+   if(size!==bundle.size||hash.digest("hex")!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
    stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
    await remote.exec(["unzip","-q","-n",posix.join(directory,"code.zip"),"-d",posix.join(directory,"code")],undefined,120000);
    stage="REPRODUCTION_REMOTE_MANIFEST_FAILED";
