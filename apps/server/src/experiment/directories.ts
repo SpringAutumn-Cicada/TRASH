@@ -1,10 +1,37 @@
-import { mkdir, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { experimentError } from "@trash/storage";
 
 const directoryPath = z.string().min(1).max(4096).refine(p => isAbsolute(p) && !p.includes("\0"));
+const execute = promisify(execFile);
+export async function selectDirectory(input: unknown) {
+  const value = z.object({ path: directoryPath, initialize_git: z.boolean() }).strict().parse(input);
+  const path = await resolveDirectory(value.path);
+  if (!value.initialize_git) return { path, initialized: false };
+  const git = async (...args: string[]) => (await execute("git", ["-C", path, ...args], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 })).stdout.trim();
+  try {
+    // Reuse existing repositories/worktrees without reinitializing their metadata.
+    let hasGit = false;
+    try { await lstat(join(path, ".git")); hasGit = true; }
+    catch (error) { if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error; }
+    if (hasGit) {
+      if (await realpath(await git("rev-parse", "--show-toplevel")) !== path) return experimentError("LOCAL_GIT_INIT_FAILED", 422);
+      return { path, initialized: false };
+    }
+    let bare = false;
+    try { bare = await git("rev-parse", "--is-bare-repository") === "true"; } catch { /* An ordinary directory is expected. */ }
+    if (bare) return experimentError("LOCAL_GIT_BARE_UNSUPPORTED", 422);
+    await git("init", "--initial-branch=main");
+    return { path, initialized: true };
+  } catch (error) {
+    if (error instanceof Error && error.message === "LOCAL_GIT_BARE_UNSUPPORTED") throw error;
+    return experimentError("LOCAL_GIT_INIT_FAILED", 422);
+  }
+}
 async function resolveDirectory(path: string): Promise<string> {
   try {
     const resolved = await realpath(directoryPath.parse(path));

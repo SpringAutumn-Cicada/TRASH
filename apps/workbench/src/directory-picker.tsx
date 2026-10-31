@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowUp, Folder, FolderPlus, X } from "lucide-react";
 
 type Directory = { path: string; parent: string | null; directories: { name: string; path: string }[] };
 const messages: Record<string, string> = {
+  LOCAL_GIT_INIT_FAILED: "Git 初始化失败，请检查 Git 是否安装、目录权限及仓库状态。", LOCAL_GIT_BARE_UNSUPPORTED: "请选择普通工作目录，不支持裸仓库。",
   LOCAL_DIRECTORY_NOT_FOUND: "目录不存在，请检查路径。", LOCAL_DIRECTORY_ACCESS_DENIED: "没有权限读取此目录。",
   LOCAL_DIRECTORY_EXISTS: "已存在同名文件或文件夹。", LOCAL_DIRECTORY_CREATE_FAILED: "创建失败，请检查目录权限。", INVALID_REQUEST: "请输入有效的路径或文件夹名称。"
 };
@@ -10,6 +12,7 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose }: { base
   const [directory, setDirectory] = useState<Directory>();
   const [path, setPath] = useState(initialPath), [name, setName] = useState(""), [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [initializeGit, setInitializeGit] = useState(true);
   const modal = useRef<HTMLDivElement>(null), alive = useRef(true);
   const call = async <T,>(suffix: string, body?: unknown): Promise<T> => {
     const response = await fetch(`${base}/repository/directories${suffix}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -40,7 +43,16 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose }: { base
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : "创建目录失败。"); }
     finally { if (alive.current) setBusy(false); }
   };
-  return <div className="modal-backdrop"><div ref={modal} tabIndex={-1} className="modal directory-picker" role="dialog" aria-modal="true" aria-labelledby="directory-picker-title" onKeyDown={event => {
+  const select = async () => {
+    if (busy || !directory) return;
+    setBusy(true); setError("");
+    try {
+      const selected = await call<{ path: string }>("/select", { path: directory.path, initialize_git: initializeGit });
+      if (alive.current) onSelect(selected.path);
+    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : "选择目录失败。"); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  return createPortal(<div className="modal-backdrop directory-picker-backdrop"><div ref={modal} tabIndex={-1} className="modal directory-picker" role="dialog" aria-modal="true" aria-labelledby="directory-picker-title" onKeyDown={event => {
     if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); }
     if (event.key === "Tab") {
       const items = Array.from(modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),[tabindex="0"]') ?? []);
@@ -56,6 +68,7 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose }: { base
     {error && <p role="alert" className="notice error-notice">{error}</p>}
     <div className="directory-list" aria-label="子目录" aria-busy={busy}>{busy ? <p role="status">正在读取目录…</p> : directory?.directories.map(entry => <button type="button" key={entry.path} className="directory-entry" onClick={() => void open(entry.path)}><Folder size={16}/><span>{entry.name}</span><span aria-hidden="true">›</span></button>)}{!busy && directory && !directory.directories.length && <p>此目录下没有子文件夹。</p>}</div>
     <p className="directory-selection">已浏览到：{directory?.path ?? "尚未选择"}</p>
-    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button" disabled={busy || !directory} onClick={() => directory && onSelect(directory.path)}>选择此目录</button></div>
-  </div></div>;
+    <label className="directory-git-option"><input type="checkbox" checked={initializeGit} disabled={busy} onChange={event => setInitializeGit(event.target.checked)}/><span>选择时初始化 Git 仓库<small>已有仓库直接使用；新仓库默认分支为 main，不自动提交文件。</small></span></label>
+    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button" disabled={busy || !directory} onClick={() => void select()}>选择此目录</button></div>
+  </div></div>, document.body);
 }
