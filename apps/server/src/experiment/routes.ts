@@ -28,8 +28,10 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       const input=sshLoginInputSchema.parse(await readJson(request));
       const fields=parseSshLogin(input.command);
       const existing=service.data.profiles(projectId).find(profile=>profile.host===fields.host&&profile.port===fields.port&&profile.username===fields.username&&profile.auth==="password");
-      const profile=existing??{...fields,profile_id:`ssh_${randomUUID()}`,project_id:projectId,created_at:new Date().toISOString()};
-      if(!existing)service.data.saveProfile(profile);
+      const renamed=Boolean(existing&&input.name&&input.name!==existing.name);
+      if(renamed&&service.data.runs().some(run=>run.profile_id===existing!.profile_id&&service.data.active(run)))experimentError("EXPERIMENT_ACTIVE",409);
+      const profile=existing?{...existing,...(input.name?{name:input.name}:{})}:{...fields,...(input.name?{name:input.name}:{}),profile_id:`ssh_${randomUUID()}`,project_id:projectId,created_at:new Date().toISOString()};
+      if(!existing||renamed)service.data.saveProfile(profile);
       service.ssh.setCredential(profile.profile_id,{password:input.password});
       send(response,existing?200:201,{profile,credential_available:true});return true;
     }

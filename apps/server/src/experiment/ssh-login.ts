@@ -2,7 +2,7 @@ import { z } from "zod";
 import { experimentError } from "@trash/storage";
 import { sshProfileInputSchema } from "@trash/protocol";
 
-export const sshLoginInputSchema = z.object({ command: z.string().trim().min(1).max(2048), password: z.string().min(1).max(10000) }).strict();
+export const sshLoginInputSchema = z.object({ name: z.string().trim().max(500).default(""), command: z.string().trim().min(1).max(2048), password: z.string().min(1).max(10000) }).strict();
 
 // Parse only connection parameters. Never execute or forward the supplied command.
 export function parseSshLogin(command: string) {
