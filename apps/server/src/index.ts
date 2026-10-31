@@ -9,6 +9,7 @@ import { OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, 
 import { TrashStore, KnowledgeStore } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
+import { projectOverview } from "./overview.js";
 import { restoreKnowledge } from "./knowledge-restore.js";
 import { z, ZodError } from "zod";
 
@@ -140,6 +141,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if (subpath === "overview" && method === "GET") {
+      sendJson(response, 200, projectOverview(store, projectId));
+      return;
+    }
     if (!subpath && method === "DELETE") {
       const input = z.object({ confirm_title: z.string() }).strict().parse(await readJson(request));
       if (input.confirm_title !== project.title) { sendJson(response, 400, { error: "PROJECT_TITLE_MISMATCH" }); return; }

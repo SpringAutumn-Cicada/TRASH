@@ -187,3 +187,4 @@ export function parseProtocolRecord<T>(schema: z.ZodType<T>, input: unknown): T 
 }
 
 export * from "./knowledge.js";
+export * from "./overview.js";
