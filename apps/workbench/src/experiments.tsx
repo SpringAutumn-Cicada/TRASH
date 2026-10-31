@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Download, FolderOpen, LoaderCircle, Play, RefreshCw } from "lucide-react";
+import { Download, FolderOpen, LoaderCircle, Pencil, Play, Plus, RefreshCw } from "lucide-react";
 import type { DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { useUnsavedChanges } from "./navigation.js";
 import "./experiments.css";
+import { AutoDlInstanceDialog } from "./autodl-instance-dialog.js";
 import { DirectoryPicker } from "./directory-picker.js";
 import { CodeAgentPanel } from "./code-agent.js";
 import { RepositoryBrowser } from "./repository-browser.js";
@@ -19,15 +20,16 @@ type Tab=typeof tabs[number]["id"];
 export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;focusId?:string;onResult:(id:string)=>void}) {
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
   const [directoryPicker,setDirectoryPicker]=useState(false);
+  const [instanceDialog,setInstanceDialog]=useState<"add"|"edit">();
   const [connectionState,setConnectionState]=useState<"running"|"success"|"error">(),[connectionMessage,setConnectionMessage]=useState("");
   const [tab,setTab]=useState<Tab>(focusId?"runs":"overview"),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
   const alive=useRef(true);const [repo,setRepo]=useState<ProjectRepository|null>(null),[repoPath,setRepoPath]=useState(""),[editor,setEditor]=useState(""),[repoInfo,setRepoInfo]=useState<{head:string;clean:boolean;status:string;diff:string;staged_diff:string}>();
   const [history,setHistory]=useState<{sha:string;at:string;title:string}[]>([]),[historyPage,setHistoryPage]=useState(1),[commitMessage,setCommitMessage]=useState("");
-  const [profiles,setProfiles]=useState<(SshProfile&{credential_available?:boolean})[]>([]),[hostName,setHostName]=useState(""),[sshCommand,setSshCommand]=useState(""),[instancePassword,setInstancePassword]=useState(""),[profileId,setProfileId]=useState(""),[password,setPassword]=useState(""),[passphrase,setPassphrase]=useState(""),[fingerprint,setFingerprint]=useState(""),[diagnostic,setDiagnostic]=useState("");
+  const [profiles,setProfiles]=useState<(SshProfile&{credential_available?:boolean})[]>([]),[profileId,setProfileId]=useState(""),[password,setPassword]=useState(""),[passphrase,setPassphrase]=useState(""),[fingerprint,setFingerprint]=useState(""),[diagnostic,setDiagnostic]=useState("");
   const [datasets,setDatasets]=useState<DatasetRef[]>([]),[datasetJson,setDatasetJson]=useState(""),[plans,setPlans]=useState<ExperimentPlanVersion[]>([]),[planJson,setPlanJson]=useState(""),[editingPlan,setEditingPlan]=useState<ExperimentPlanVersion>(),[planId,setPlanId]=useState(""),[planVersion,setPlanVersion]=useState(0),[script,setScript]=useState("");
   const [runs,setRuns]=useState<ExperimentRun[]>([]),[runId,setRunId]=useState(focusId??""),[details,setDetails]=useState(""),[logs,setLogs]=useState(""),[stream,setStream]=useState("stdout"),[logOffset,setLogOffset]=useState(0);
   const [submission,setSubmission]=useState<{plan:ExperimentPlanVersion;preparation:boolean;key:string}>();const [ack,setAck]=useState(false);
-  const dirty=Boolean(planJson||datasetJson||commitMessage||password||passphrase||hostName.trim()||sshCommand.trim()||instancePassword);useUnsavedChanges(dirty);
+  const dirty=Boolean(planJson||datasetJson||commitMessage||password||passphrase);useUnsavedChanges(dirty);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   const run=async(action:()=>Promise<void>)=>{if(busy)return;setBusy(true);setError("");setNotice("");try{await action();}catch(cause){if(alive.current)setError(cause instanceof Error?cause.message:"操作失败");}finally{if(alive.current)setBusy(false);}};
   const load=async()=>{
@@ -51,6 +53,7 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
   };
   const switchTab=(next:Tab)=>{if(dirty&&!window.confirm("有未保存内容，仍要切换实验页签吗？"))return;setTab(next);};
   return <section className="experiments-page">
+    {instanceDialog&&<AutoDlInstanceDialog projectId={projectId} mode={instanceDialog} profiles={profiles} initialId={profileId} onClose={()=>setInstanceDialog(undefined)} onSaved={profile=>{setInstanceDialog(undefined);setProfileId(profile.profile_id);setPassword("");setPassphrase("");setFingerprint("");setConnectionState(undefined);setConnectionMessage("");setDiagnostic("");void run(async()=>{await load();setNotice("实例已保存。连接信息变化后，请重新核对主机指纹。");});}}/>}
     {directoryPicker&&<DirectoryPicker base={base} initialPath={repoPath} onClose={()=>setDirectoryPicker(false)} onSelect={path=>{setRepoPath(path);setDirectoryPicker(false);}}/>}
     <div className="section-heading"><div><h2>实验</h2><p>固定代码版本，在自己的 SSH 实例运行实验。</p></div><button className="icon-button" disabled={busy} title="刷新实验配置" aria-label="刷新实验配置" onClick={()=>void run(load)}><RefreshCw size={16}/></button></div>
     <nav className="experiment-tabs" aria-label="实验功能">{tabs.map(item=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>switchTab(item.id)}>{item.label}</button>)}</nav>
@@ -67,8 +70,8 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
     </div>
     {tab==="code"&&(repo?<RepositoryBrowser key={projectId+repo.path} projectId={projectId} repositoryPath={repo.path}/>:<div className="repository-unbound"><FolderOpen size={32}/><h3>尚未绑定代码仓库</h3><p>先在实验概览中选择本地 Git 仓库，再浏览目录和代码。</p><button type="button" className="primary-button" onClick={()=>switchTab("overview")}>前往实验概览</button></div>)}
     {tab==="hosts"&&<>
-      <form className="experiment-form autodl-login-form" onSubmit={event=>{event.preventDefault();void run(async()=>{const credential=instancePassword;setInstancePassword("");const value=await request<{profile:SshProfile}>(base,"/ssh-profiles/from-command",{name:hostName,command:sshCommand,password:credential});setProfileId(value.profile.profile_id);setFingerprint("");setConnectionState(undefined);setConnectionMessage("");setDiagnostic("");setSshCommand("");setHostName("");await load();setNotice("AutoDL 实例已保存，密码仅供本次服务会话使用；请核对主机指纹后连接。");});}}><h3>添加已有实例</h3><p>粘贴 AutoDL 提供的 SSH 登录指令，并填写实例密码。</p><label>主机名（可选）<input value={hostName} maxLength={500} onChange={e=>setHostName(e.target.value)} placeholder="留空不改名，例如：论文训练机"/></label><p>仅作为平台内的实例名称，不修改远端系统主机名。</p><label>SSH 登录指令<input className="autodl-ssh-command" required autoComplete="off" spellCheck={false} value={sshCommand} onChange={e=>setSshCommand(e.target.value)} placeholder="ssh -p 14325 root@connect.bjb3.seetacloud.com"/></label><label>实例密码<input required type="password" autoComplete="new-password" value={instancePassword} onChange={e=>setInstancePassword(e.target.value)} placeholder="填写 SSH 登录密码"/></label><p>自动识别用户名、主机和端口；密码仅存本机服务内存，重启后需重新输入。</p><button className="primary-button" disabled={busy||!sshCommand.trim()||!instancePassword}>保存实例</button></form>
-      <div className="experiment-form"><label>选择主机<select disabled={busy} value={profileId} onChange={e=>{setProfileId(e.target.value);setPassword("");setPassphrase("");setFingerprint("");setDiagnostic("");setConnectionState(undefined);setConnectionMessage("");}}><option value="">请选择</option>{profiles.map(p=><option key={p.profile_id} value={p.profile_id}>{p.name} · {p.host}:{p.port}</option>)}</select></label>{selectedProfile&&<>
+      <div className="autodl-instance-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>setInstanceDialog("add")}><Plus size={15}/>添加已有实例</button><button type="button" className="secondary-button" disabled={busy||!profiles.length} onClick={()=>setInstanceDialog("edit")}><Pencil size={14}/>编辑已有实例</button></div>
+      <div className="experiment-form autodl-host-main"><h3>选择主机</h3>{!profiles.length&&<p>暂无实例，点击上方“添加已有实例”填写连接信息。</p>}<label>当前主机<select disabled={busy} value={profileId} onChange={e=>{setProfileId(e.target.value);setPassword("");setPassphrase("");setFingerprint("");setDiagnostic("");setConnectionState(undefined);setConnectionMessage("");}}><option value="">请选择</option>{profiles.map(p=><option key={p.profile_id} value={p.profile_id}>{p.name} · {p.host}:{p.port}</option>)}</select></label>{selectedProfile&&<>
         <p>连接：{selectedProfile.username}@{selectedProfile.host}:{selectedProfile.port}</p><p>远端工作目录：<code>{selectedProfile.remote_root}</code></p>
         <p>已信任指纹：{selectedProfile.fingerprint??"尚未确认"}</p><div className="knowledge-toolbar"><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{const data=await request<{fingerprint:string}>(base,`/ssh-profiles/${profileId}/fingerprint`,{});setFingerprint(data.fingerprint);})}>探测主机指纹</button>{fingerprint&&<><code>{fingerprint}</code><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,`/ssh-profiles/${profileId}/trust`,{fingerprint,confirm:true});setFingerprint("");await load();setNotice("指纹已确认。");})}>已核对，信任此指纹</button></>}</div>
         {selectedProfile.auth==="password"&&!selectedProfile.credential_available&&<label>补充 SSH 密码<input type="password" autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)}/></label>}{selectedProfile.auth==="key"&&<label>私钥口令（可选）<input type="password" autoComplete="new-password" value={passphrase} onChange={e=>setPassphrase(e.target.value)}/></label>}

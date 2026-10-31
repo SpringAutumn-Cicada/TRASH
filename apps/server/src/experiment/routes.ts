@@ -39,6 +39,23 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="POST"){const value=sshProfileInputSchema.parse(await readJson(request));const profile={...value,profile_id:`ssh_${randomUUID()}`,project_id:projectId,created_at:new Date().toISOString()};service.data.saveProfile(profile);send(response,201,{profile});return true;}
     if(parts[1]){
       const profile=service.data.profile(projectId,parts[1]);
+      if(parts.length===2&&method==="PUT"){
+        const input=sshLoginInputSchema.extend({password:z.string().max(10000).default("")}).parse(await readJson(request));
+        const fields=parseSshLogin(input.command);
+        const connectionChanged=profile.host!==fields.host||profile.port!==fields.port||profile.username!==fields.username;
+        const auth=input.password?"password" as const:profile.auth;
+        const changed=connectionChanged||auth!==profile.auth||Boolean(input.name&&input.name!==profile.name);
+        if(changed&&service.data.runs().some(run=>run.profile_id===profile.profile_id&&service.data.active(run)))experimentError("EXPERIMENT_ACTIVE",409);
+        if(connectionChanged&&auth==="password"&&!input.password)experimentError("SSH_NEW_CONNECTION_PASSWORD_REQUIRED");
+        if(service.data.profiles(projectId).some(other=>other.profile_id!==profile.profile_id&&other.host===fields.host&&other.port===fields.port&&other.username===fields.username&&other.auth===auth))experimentError("SSH_PROFILE_DUPLICATE",409);
+        const updated={...profile,name:input.name||profile.name,host:fields.host,port:fields.port,username:fields.username,auth};
+        if(profile.host!==fields.host||profile.port!==fields.port)delete updated.fingerprint;
+        if(auth==="password")delete updated.key_path;
+        if(changed)service.data.saveProfile(updated);
+        if(connectionChanged||auth!==profile.auth)service.ssh.forget(profile.profile_id);
+        if(input.password)service.ssh.setCredential(profile.profile_id,{password:input.password});
+        send(response,200,{profile:updated,credential_available:service.ssh.hasCredential(updated)});return true;
+      }
       if(parts.length===2&&method==="DELETE"){service.data.deleteProfile(projectId,profile.profile_id);service.ssh.forget(profile.profile_id);send(response,200,{deleted:true});return true;}
       if(parts[2]==="credentials"&&method==="PUT"){service.ssh.setCredential(profile.profile_id,sessionCredentialSchema.parse(await readJson(request)));send(response,200,{credential_available:service.ssh.hasCredential(profile)});return true;}
       if(parts[2]==="credentials"&&method==="DELETE"){service.ssh.forget(profile.profile_id);send(response,200,{forgotten:true});return true;}
