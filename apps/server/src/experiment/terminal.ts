@@ -18,9 +18,12 @@ export class TerminalService {
   private opening = new Set<string>();
   private openingProfiles = new Set<string>();
   private closed = false;
-  private timer: ReturnType<typeof setInterval>;
-  constructor(private ssh: SshService) {
-    this.timer = setInterval(() => { for (const session of this.sessions.values()) if (!session.viewers.size && Date.now() - session.lastSeen > (session.attached ? 60000 : 30000)) this.disconnect(session); }, 10000); this.timer.unref();
+  constructor(private ssh: SshService) {}
+  list(project: string) {
+    return [...this.sessions.values()].filter(session => session.project === project).map(session => ({
+      id: session.id, token: session.token, profile_id: session.profile.profile_id, name: session.profile.name,
+      host: session.profile.host, port: session.profile.port, username: session.profile.username,
+    }));
   }
   hasProject(project: string) { return this.opening.has(project) || [...this.sessions.values()].some(session => session.project === project); }
   hasProfile(profile: string) { return this.openingProfiles.has(profile) || [...this.sessions.values()].some(session => session.profile.profile_id === profile); }
@@ -126,5 +129,5 @@ export class TerminalService {
       try { session.remote.close(); } catch { /* Already closed. */ }
     }
   }
-  close() { this.closed = true; clearInterval(this.timer); for (const session of this.sessions.values()) this.disconnect(session); }
+  close() { this.closed = true; for (const session of this.sessions.values()) this.disconnect(session); }
 }

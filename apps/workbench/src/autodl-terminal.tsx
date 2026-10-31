@@ -12,7 +12,7 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
   const callbacks = useRef({ onDisconnect, onEnded, onSplit, splitDisabled }); callbacks.current = { onDisconnect, onEnded, onSplit, splitDisabled };
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/terminals/${session.id}`;
   const headers = { "x-terminal-token": session.token, "content-type": "application/json" };
-  useEffect(() => () => { void fetch(base, { method: "DELETE", headers: { "x-terminal-token": session.token }, keepalive: true }).catch(() => {}); }, [projectId, session.id]);
+
   useEffect(() => {
     const controller = new AbortController(); let alive = true, connected = false;
     const term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace', scrollback: 5000, convertEol: false, theme: { background: "#10151d", foreground: "#d7e0eb", cursor: "#8bd5b0", selectionBackground: "#365678", black: "#253141", red: "#ed8796", green: "#a6da95", yellow: "#eed49f", blue: "#8aadf4", magenta: "#c6a0f6", cyan: "#8bd5ca", white: "#cad3f5", brightBlack: "#6e7e96", brightRed: "#f5a0ad", brightGreen: "#b8e5a9", brightYellow: "#f4deb3", brightBlue: "#a4bef8", brightMagenta: "#d5b7fa", brightCyan: "#a6e3db", brightWhite: "#f2f5fa" } });
@@ -101,7 +101,7 @@ export function AutoDlTerminal({ projectId, session, onDisconnect, onEnded, onSp
             }
           }
         }
-        if (alive && !remoteClosed) throw new Error("终端输出连接已中断。请在一分钟内恢复显示，或重新连接。");
+        if (alive && !remoteClosed) throw new Error("终端输出连接已中断。请点击恢复终端显示；SSH 会话会在服务端保持。");
       } catch (cause) { if (alive) { connected = false; term.options.disableStdin = true; setError(cause instanceof Error ? cause.message : "终端连接中断。"); setState("终端显示已中断"); } }
     };
     void stream();

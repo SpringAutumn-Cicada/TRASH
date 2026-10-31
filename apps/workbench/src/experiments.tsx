@@ -42,6 +42,13 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
     if(!alive.current)return;setRepo(data[0].repository);setRepoPath(old=>old||data[0].repository?.path||"");setProfiles(data[1].profiles);setProfileId(old=>old||data[1].profiles[0]?.profile_id||"");setDatasets(data[2].datasets);setPlans(data[3].plans);setRuns(data[4].runs);
   };
   useEffect(()=>{void run(load);},[projectId]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    void request<{terminals:TerminalSession[]}>(base,"/terminals",undefined,"GET",controller.signal).then(data=>{
+      if(!controller.signal.aborted){setTerminalSessions(data.terminals);const profile=data.terminals[0]?.profile_id;if(profile)setProfileId(profile);}
+    }).catch(cause=>{if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"无法恢复 SSH 会话。");});
+    return()=>controller.abort();
+  },[projectId]);
   useEffect(()=>{if(!["runs","artifacts"].includes(tab))return;const timer=setInterval(()=>{void request<{runs:ExperimentRun[]}>(base,"/experiment-runs").then(data=>{if(alive.current)setRuns(data.runs);}).catch(()=>{});},5000);return()=>clearInterval(timer);},[tab,base]);
   const selectedProfile=profiles.find(p=>p.profile_id===profileId),selectedPlan=plans.find(p=>p.plan_id===planId&&p.version===planVersion),selectedRun=runs.find(r=>r.run_id===runId);
   const repositoryDetails=async()=>{const data=await request<NonNullable<typeof repoInfo>>(base,"/repository/status");if(alive.current)setRepoInfo(data);};
@@ -62,6 +69,14 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
     try{const result=source?await (async()=>{const response=await fetch(`${base}/terminals/${source.id}/split`,{method:"POST",headers:{"content-type":"application/json","x-terminal-token":source.token},body:JSON.stringify({confirm:true})});const value=await response.json();if(!response.ok)throw new Error(failures[value.error]??"无法在当前 SSH 连接中打开 Shell，请检查连接状态。");return value as {terminal:TerminalSession};})():await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current,result.terminal]);setTab("workspace");setNotice("");}}
     catch(cause){if(alive.current){setNotice("");setError(cause instanceof Error?cause.message:"终端连接失败。");}}
     finally{terminalConnecting.current=false;if(alive.current)setConnecting(false);}
+  };
+  const disconnectTerminals=async()=>{
+    for(const session of terminalSessions){
+      const response=await fetch(`${base}/terminals/${session.id}`,{method:"DELETE",headers:{"x-terminal-token":session.token}});
+      if(!response.ok&&response.status!==404)throw new Error("部分终端未能断开，请检查服务状态后重试。");
+      setTerminalSessions(current=>current.filter(item=>item.id!==session.id));
+    }
+    setNotice("SSH 连接已断开。");
   };
   const newPlan=()=>{
     if(planJson&&!window.confirm("放弃当前未保存计划吗？"))return;
@@ -97,7 +112,7 @@ export function ExperimentsPage({projectId,focusId,onResult}:{projectId:string;f
     </>}
     <div hidden={tab!=="workspace"}><AutoDlUpload projectId={projectId} session={terminalSessions.find(session=>!session.ended)}/></div>
     <div hidden={tab!=="workspace"} className="autodl-workspace">
-      {terminalSessions.length>0?<><div className="autodl-workspace-heading"><div><strong>{terminalSessions[0]?.name} · AutoDL 终端</strong><span>{terminalSessions.length} / 3 个独立窗口</span></div><div><span>Shift + Alt + D 分屏 · 右键复制选区</span><button type="button" className="secondary-button" disabled={connecting||terminalSessions.length>=3||!terminalSessions.some(item=>!item.ended)} onClick={()=>{const source=terminalSessions.find(item=>!item.ended);if(source)void connectTerminal(source.profile_id,source);}}><Columns2 size={14}/>分屏</button></div></div><div className={`autodl-terminal-grid panes-${terminalSessions.length}`}>{terminalSessions.map((session,index)=><AutoDlTerminal key={session.id} projectId={projectId} session={session} number={index+1} splitDisabled={connecting||terminalSessions.length>=3||Boolean(session.ended)} onSplit={()=>void connectTerminal(session.profile_id,session)} onDisconnect={()=>{setTerminalSessions(current=>current.filter(item=>item.id!==session.id));setNotice("终端窗口已关闭。");}} onEnded={()=>setTerminalSessions(current=>current.map(item=>item.id===session.id?{...item,ended:true}:item))}/>)}</div></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>AutoDL 工作区</h3><p>在 AutoDL 信息中选择主机并点击连接，即可打开远端交互终端。</p><button type="button" className="primary-button" disabled={busy||!profileId} onClick={()=>void run(()=>connectTerminal())}>{connecting?"正在连接…":"连接所选主机"}</button><button type="button" className="secondary-button" onClick={()=>switchTab("hosts")}>选择主机</button></div>}
+      {terminalSessions.length>0?<><div className="autodl-workspace-heading"><div><strong>{terminalSessions[0]?.name} · AutoDL 终端</strong><span>{terminalSessions.length} / 3 个独立窗口</span></div><div><span>Shift + Alt + D 分屏 · 右键复制选区</span><button type="button" className="secondary-button" disabled={connecting||terminalSessions.length>=3||!terminalSessions.some(item=>!item.ended)} onClick={()=>{const source=terminalSessions.find(item=>!item.ended);if(source)void connectTerminal(source.profile_id,source);}}><Columns2 size={14}/>分屏</button><button type="button" className="secondary-button" disabled={busy||connecting} onClick={()=>void run(disconnectTerminals)}>断开连接</button></div></div><div className={`autodl-terminal-grid panes-${terminalSessions.length}`}>{terminalSessions.map((session,index)=><AutoDlTerminal key={session.id} projectId={projectId} session={session} number={index+1} splitDisabled={connecting||terminalSessions.length>=3||Boolean(session.ended)} onSplit={()=>void connectTerminal(session.profile_id,session)} onDisconnect={()=>{setTerminalSessions(current=>current.filter(item=>item.id!==session.id));setNotice("终端窗口已关闭。");}} onEnded={()=>setTerminalSessions(current=>current.map(item=>item.id===session.id?{...item,ended:true}:item))}/>)}</div></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>AutoDL 工作区</h3><p>在 AutoDL 信息中选择主机并点击连接，即可打开远端交互终端。</p><button type="button" className="primary-button" disabled={busy||!profileId} onClick={()=>void run(()=>connectTerminal())}>{connecting?"正在连接…":"连接所选主机"}</button><button type="button" className="secondary-button" onClick={()=>switchTab("hosts")}>选择主机</button></div>}
 
     </div>
     {tab==="plans"&&<>
