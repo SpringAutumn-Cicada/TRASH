@@ -26,6 +26,16 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
   }
   if(parts[0]==="reproduction-snapshots"&&parts.length===2&&method==="GET"){send(response,200,{snapshot:service.reproductions.snapshotInfo(projectId,parts[1])});return true;}
   if(parts[0]==="reproductions"){
+    if(parts[1]&&parts[2]==="environment"){
+      service.reproductions.get(projectId,parts[1]);
+      if(parts.length===3&&method==="GET"){send(response,200,{tasks:service.environmentAnalysis.tasks(projectId,parts[1]),reports:service.environmentAnalysis.reports(projectId,parts[1])});return true;}
+      if(parts.length===3&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{task:service.environmentAnalysis.start(projectId,parts[1])});return true;}
+      if(parts.length===5&&parts[3]==="tasks"&&method==="GET"){const task=service.environmentAnalysis.tasks(projectId,parts[1]).find(task=>task.id===parts[4])??experimentError("ENVIRONMENT_TASK_NOT_FOUND",404);send(response,200,{task});return true;}
+      if(parts.length===6&&parts[3]==="tasks"&&parts[5]==="cancel"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{task:service.environmentAnalysis.cancel(projectId,parts[1],parts[4])});return true;}
+      if(parts.length===5&&parts[3]==="reports"&&method==="GET"){send(response,200,{report:service.environmentAnalysis.report(projectId,parts[1],parts[4])});return true;}
+      if(parts.length===6&&parts[3]==="reports"&&parts[5]==="freshness"&&method==="GET"){send(response,200,await service.environmentAnalysis.freshness(projectId,parts[1],parts[4]));return true;}
+      return false;
+    }
     const release=method!=="GET"?service.reproductions.acquire(projectId):()=>{};
     try{
     if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}

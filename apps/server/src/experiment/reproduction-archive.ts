@@ -33,17 +33,19 @@ if mode=='extract':
      dest.write(b)
    os.chmod(out,0o700 if i.external_attr>>16&0o111 else 0o600)
  print(json.dumps({'extracted':True}))
-elif mode=='snapshot':
+elif mode in ('snapshot','analysis-snapshot'):
  records=[];total=0
  with zipfile.ZipFile(target,'x',compression=zipfile.ZIP_DEFLATED) as z:
   for root,dirs,files in os.walk(source,followlinks=False):
-   dirs[:]=sorted(d for d in dirs if d not in ['.git','__pycache__'])
+   dirs[:]=sorted(d for d in dirs if d not in (['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor'] if mode=='analysis-snapshot' else ['.git','__pycache__']))
    for d in dirs:
     if os.path.islink(os.path.join(root,d)): raise ValueError('SYMLINK_UNSUPPORTED')
    for name in sorted(files):
     path=os.path.join(root,name);rel=os.path.relpath(path,source).replace(os.sep,'/');safe(rel)
     if not stat.S_ISREG(os.lstat(path).st_mode): raise ValueError('SYMLINK_OR_SPECIAL_FILE')
-    if (name=='.env' or name.startswith('.env.') and name!='.env.example' or name in ['id_rsa','id_ed25519','auth.json','credentials']): raise ValueError('SENSITIVE_FILE')
+    if (name=='.env' or name.startswith('.env.') and name!='.env.example' or name in ['id_rsa','id_ed25519','auth.json','credentials'] or mode=='analysis-snapshot' and pathlib.Path(name).suffix.lower() in ['.pem','.key','.p12','.pfx']):
+     if mode=='analysis-snapshot': continue
+     raise ValueError('SENSITIVE_FILE')
     h=hashlib.sha256();size=0;info=zipfile.ZipInfo.from_file(path,rel,strict_timestamps=False)
     info.compress_type=zipfile.ZIP_DEFLATED
     with open(path,'rb') as inp,z.open(info,'w') as out:

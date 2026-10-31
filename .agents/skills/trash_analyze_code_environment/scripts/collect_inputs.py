@@ -51,7 +51,7 @@ with zipfile.ZipFile(archive) as source:
             continue
         text = re.sub(r'(?i)((?:password|passwd|api[_-]?key|secret|token)\s*[=:]\s*)[^\n,;]+', r'\1[REDACTED]', text)
         text = re.sub(r'\bsk-[A-Za-z0-9_-]+', '[REDACTED]', text)
-        text = re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----', '[REDACTED PRIVATE KEY]', text)
+        text = re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----', lambda match: '[REDACTED PRIVATE KEY]' + '\n' * match.group(0).count('\n'), text)
         files.append({'path': item.filename, 'text': text, 'line_count': len(text.split('\n')), 'sha256': hashlib.sha256(data).hexdigest()})
         total += len(data)
 json.dump({'files': files, 'coverage': {'selected_files': len(files), 'selected_bytes': total, 'skipped': skipped, 'limits': {'files': MAX_FILES, 'file_bytes': MAX_FILE, 'total_bytes': MAX_TOTAL}}}, open(output, 'w', encoding='utf8'), ensure_ascii=False)
