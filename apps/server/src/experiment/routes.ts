@@ -39,6 +39,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="POST"){const value=sshProfileInputSchema.parse(await readJson(request));const profile={...value,profile_id:`ssh_${randomUUID()}`,project_id:projectId,created_at:new Date().toISOString()};service.data.saveProfile(profile);send(response,201,{profile});return true;}
     if(parts[1]){
       const profile=service.data.profile(projectId,parts[1]);
+      if(parts.length===3&&parts[2]==="credentials"&&method==="GET"){send(response,200,{password:service.ssh.passwordForEditing(profile)});return true;}
       if(parts.length===2&&method==="PUT"){
         const input=sshLoginInputSchema.extend({password:z.string().max(10000).default("")}).parse(await readJson(request));
         const fields=parseSshLogin(input.command);

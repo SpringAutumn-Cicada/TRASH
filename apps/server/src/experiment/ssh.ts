@@ -11,6 +11,7 @@ export class SshService {
   private clients=new Set<Client>();private closed=false;
   constructor(readonly store:ExperimentStore) {}
   setCredential(id:string,value:{password?:string;passphrase?:string}):void{this.credentials.set(id,value);}
+  passwordForEditing(profile:SshProfile):string|null{return profile.auth==="password"?this.credentials.get(profile.profile_id)?.password??null:null;}
   forget(id:string):void{this.credentials.delete(id);this.observed.delete(id);}
   hasCredential(profile:SshProfile):boolean{return profile.auth==="agent"?Boolean(process.env.SSH_AUTH_SOCK):profile.auth==="key"?true:this.credentials.has(profile.profile_id);}
   close():void{this.closed=true;for(const client of this.clients)client.destroy();this.clients.clear();this.credentials.clear();this.observed.clear();}
