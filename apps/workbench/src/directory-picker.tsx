@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { ModalLayer } from "./modal-layer.js";
 import { ArrowUp, Folder, FolderPlus, X } from "lucide-react";
 
 type Directory = { path: string; parent: string | null; directories: { name: string; path: string }[] };
@@ -52,7 +52,7 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose, gitEnabl
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : "选择目录失败。"); }
     finally { if (alive.current) setBusy(false); }
   };
-  return createPortal(<div className="modal-backdrop directory-picker-backdrop"><div ref={modal} tabIndex={-1} className="modal directory-picker" role="dialog" aria-modal="true" aria-labelledby="directory-picker-title" onKeyDown={event => {
+  return <ModalLayer><div className="modal-backdrop directory-picker-backdrop"><div ref={modal} tabIndex={-1} className="modal directory-picker" role="dialog" aria-modal="true" aria-labelledby="directory-picker-title" onKeyDown={event => {
     if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); }
     if (event.key === "Tab") {
       const items = Array.from(modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),[tabindex="0"]') ?? []);
@@ -70,5 +70,5 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose, gitEnabl
     <p className="directory-selection">已浏览到：{directory?.path ?? "尚未选择"}</p>
     {gitEnabled&&<label className="directory-git-option"><input type="checkbox" checked={initializeGit} disabled={busy} onChange={event => setInitializeGit(event.target.checked)}/><span>选择时初始化 Git 仓库<small>已有仓库直接使用；新仓库默认分支为 main，不自动提交文件。</small></span></label>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button" disabled={busy || !directory} onClick={() => void select()}>选择此目录</button></div>
-  </div></div>, document.body);
+  </div></div></ModalLayer>;
 }

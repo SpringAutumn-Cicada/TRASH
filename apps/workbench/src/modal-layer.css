@@ -1,0 +1,7 @@
+/* The whole app, including sticky headers and drawers, stays below the dialog layer. */
+#root{position:relative;z-index:0;isolation:isolate}
+#modal-root{position:relative;z-index:1000;isolation:isolate}
+#modal-root>.modal-backdrop{position:fixed;inset:0;z-index:10;background:rgb(16 25 35 / 58%);display:grid;place-items:center;padding:18px;box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;pointer-events:auto}
+#modal-root>.modal-backdrop.directory-picker-backdrop{z-index:20}
+#modal-root .modal{box-sizing:border-box;max-width:calc(100vw - 36px);max-height:calc(100dvh - 36px);overflow-y:auto;overscroll-behavior:contain}
+#modal-root .experiment-submit pre{padding:14px;overflow:auto;background:var(--green-soft);border-radius:7px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;line-height:1.7}

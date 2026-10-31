@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
 import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Trash2, X } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
@@ -194,7 +194,7 @@ function DeleteSourceDialog({ source, busy, blocked, error, onClose, onConfirm }
     modal.current?.querySelector<HTMLButtonElement>("button")?.focus();
     return () => { if (previous?.isConnected) previous.focus(); };
   }, []);
-  return createPortal(<div className="modal-backdrop source-delete-backdrop"><div ref={modal} className="modal source-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="source-delete-title" aria-describedby="source-delete-description" aria-busy={busy} onKeyDown={event => {
+  return <ModalLayer><div className="modal-backdrop source-delete-backdrop"><div ref={modal} className="modal source-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="source-delete-title" aria-describedby="source-delete-description" aria-busy={busy} onKeyDown={event => {
     if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); }
     if (event.key === "Tab") {
       const buttons = Array.from(modal.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
@@ -209,5 +209,5 @@ function DeleteSourceDialog({ source, busy, blocked, error, onClose, onConfirm }
     {blocked && <p role="status" className="notice">正在导入或检索，请等待操作结束后再确认删除。</p>}
     {error && <p role="alert" className="notice error-notice">{error}</p>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button project-delete-confirm" disabled={busy || blocked} onClick={onConfirm}>{busy ? "正在删除…" : "确认删除"}</button></div>
-  </div></div>, document.body);
+  </div></div></ModalLayer>;
 }

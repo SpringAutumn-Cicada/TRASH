@@ -5,7 +5,7 @@
 
 .source-row-container{position:relative}.literature-page .source-row-container .source-row{padding-right:38px}.literature-page .source-table-header{padding-right:38px;box-sizing:border-box}.source-delete-button{position:absolute;right:3px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted,#89929e);cursor:pointer;transition:background .15s,color .15s,border-color .15s}.source-delete-button:hover:not(:disabled){background:#fef3f2;color:#b42318;border-color:#fee4e2}.source-delete-button:focus-visible{outline:2px solid #b42318;outline-offset:2px}.source-delete-button:disabled{opacity:.45;cursor:not-allowed}
 
-.source-delete-backdrop{z-index:1100}.source-delete-dialog{box-sizing:border-box;max-height:85dvh;overflow:auto}.source-delete-dialog>p{font-size:12px;line-height:1.8;color:var(--muted);overflow-wrap:anywhere}.source-delete-dialog .source-delete-name{font-weight:600;color:var(--ink);margin:16px 0 8px}.source-delete-dialog button:focus-visible{outline:2px solid var(--focus-ring,var(--green));outline-offset:3px}
+.source-delete-dialog{box-sizing:border-box;max-height:85dvh;overflow:auto}.source-delete-dialog>p{font-size:12px;line-height:1.8;color:var(--muted);overflow-wrap:anywhere}.source-delete-dialog .source-delete-name{font-weight:600;color:var(--ink);margin:16px 0 8px}.source-delete-dialog button:focus-visible{outline:2px solid var(--focus-ring,var(--green));outline-offset:3px}
 
 .source-delete-button{z-index:1}
 

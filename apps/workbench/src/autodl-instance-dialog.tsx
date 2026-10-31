@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { ModalLayer } from "./modal-layer.js";
 import { LoaderCircle, Server, X } from "lucide-react";
 import type { SshProfile } from "@trash/protocol";
 import { useUnsavedChanges } from "./navigation.js";
@@ -35,7 +35,7 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败。"); }
     finally { setBusy(false); }
   };
-  return createPortal(<div className="modal-backdrop autodl-instance-backdrop"><form ref={modal} className="modal autodl-instance-dialog" role="dialog" aria-modal="true" aria-labelledby="autodl-instance-title" aria-busy={busy} onSubmit={event => void save(event)} onKeyDown={event => {
+  return <ModalLayer><div className="modal-backdrop autodl-instance-backdrop"><form ref={modal} className="modal autodl-instance-dialog" role="dialog" aria-modal="true" aria-labelledby="autodl-instance-title" aria-busy={busy} onSubmit={event => void save(event)} onKeyDown={event => {
     if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); }
     if (event.key === "Tab") {
       const items = Array.from(modal.current?.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),select:not(:disabled)") ?? []), first = items[0], last = items[items.length - 1];
@@ -55,5 +55,5 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     <p className="autodl-dialog-hint">主机名仅用于平台显示。原密码以遮罩回填，可直接修改；密码在本机加密保存，重启平台后仍可使用。更换连接后需核对指纹并填写对应密码。</p>
     {error && <p role="alert" className="notice error-notice">{error}</p>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || loadingPassword || !command.trim() || (mode === "add" ? !password : !selectedId)}>{busy && <LoaderCircle size={14} className="spin"/>}{busy ? "正在保存…" : "保存实例"}</button></div>
-  </form></div>, document.body);
+  </form></div></ModalLayer>;
 }
