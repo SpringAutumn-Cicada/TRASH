@@ -5,7 +5,7 @@ const attributed={attribution:z.enum(["declared","inferred","unknown"]),evidence
 const imageValue=z.object({value:text,...attributed}).strict();
 const deploymentSchema=z.object({
  status:z.enum(["ready","blocked"]),venv_path:z.literal(".venv"),
- prerequisites:z.array(text).max(100),blockers:z.array(text).max(100),
+ prerequisites:z.array(text).max(100),blockers:z.array(text).max(100),runtime_notes:z.array(text).max(100).optional(),
  steps:z.array(z.object({purpose:text,command:text,...attributed}).strict()).min(1).max(80)
 }).strict();
 const legacyEnvironmentContentSchema=z.object({

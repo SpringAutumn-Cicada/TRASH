@@ -23,8 +23,10 @@ resources 每项：{name,requirement,attribution,evidence}。issues 同 resource
 
 ## agent_deployment（面向 Agent）
 
-{status:"ready"|"blocked",venv_path:".venv",prerequisites:string[],blockers:string[],steps:[{purpose,command,attribution,evidence}]}
+{status:"ready"|"blocked",venv_path:".venv",prerequisites:string[],blockers:string[],runtime_notes:string[],steps:[{purpose,command,attribution,evidence}]}
 
 steps 至少一项，按执行顺序给出完整 shell 命令。prerequisites 明确工作目录、匹配镜像/驱动、TRASH_PYTHON 绝对路径、联网和必要工具。venv 只能创建于代码根目录 .venv；每条安装使用 .venv/bin/python -m pip，不改变系统或 Conda base。不得输出自动执行入口；由调用者审核并执行。blocked 时不给依赖未知版本或地址的伪完整安装命令，列出缺失参数。steps 同样校验证据，部署策略推断用 inferred，证据指向促成该步骤的实际项目文件。
 
 commands 保留训练/评估等参考命令；环境安装以 agent_deployment.steps 为准。两部分均不得声称已执行。
+
+blockers 只记录使环境安装无法执行的事项；runtime_notes 记录实验数据/权重/缓存、未锁版本的兼容性、GPU 运行验证等提醒。包名映射明确但没有声明版本时允许输出无版本包名安装，不捏造版本；已有明确版本和构建必须保留。未运行实际安装或未联网确认可下载不是静态安装阻塞。status:ready 表示安装方案可尝试，不代表已验证；blocked 不代表放弃已经确定的步骤。旧版报告可能将运行提醒写入 blockers，部署 Agent 应基于材料重新分类。

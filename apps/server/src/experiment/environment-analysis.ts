@@ -91,7 +91,7 @@ export class EnvironmentAnalysisService {
     if(item.attribution!=="unknown"&&!item.evidence.length)throw new Error("ENVIRONMENT_INVALID_EVIDENCE");
     for(const evidence of item.evidence){const file=files.get(evidence.path);if(!file||evidence.line_end<evidence.line_start||evidence.line_end>file.line_count)throw new Error("ENVIRONMENT_INVALID_EVIDENCE");}
    }
-   const report:CodeEnvironmentReport={id:task.id,task_id:task.id,project_id:task.project_id,reproduction_id:task.reproduction_id,created_at:new Date().toISOString(),code_fingerprint:fingerprint(snapshot),snapshot_id:snapshot.snapshot_id,skill_name:SKILL,skill_version:"2.0.0",skill_hash:skillHash.digest("hex"),cli_version:cliVersion,coverage:packet.coverage,content,verified:false};
+   const report:CodeEnvironmentReport={id:task.id,task_id:task.id,project_id:task.project_id,reproduction_id:task.reproduction_id,created_at:new Date().toISOString(),code_fingerprint:fingerprint(snapshot),snapshot_id:snapshot.snapshot_id,skill_name:SKILL,skill_version:"2.1.0",skill_hash:skillHash.digest("hex"),cli_version:cliVersion,coverage:packet.coverage,content,verified:false};
    this.atomic(join(directory,"report.json"),report);task.status="completed";task.report_id=report.id;task.finished_at=new Date().toISOString();this.save(task);
   }catch(error){if(pending(task)){task.status="failed";task.error=error instanceof Error&&/^ENVIRONMENT_[A-Z_]+$/.test(error.message)?error.message:"ENVIRONMENT_ANALYSIS_FAILED";task.finished_at=new Date().toISOString();this.save(task);}}
   finally{clearTimeout(timer);}
