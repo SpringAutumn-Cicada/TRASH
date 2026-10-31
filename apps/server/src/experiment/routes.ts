@@ -6,7 +6,6 @@ import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCred
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
-import { createRemoteDirectory, remoteDirectories } from "./remote-directories.js";
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
@@ -41,8 +40,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="upload"&&method==="POST"){
         const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().max(2000).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
         if(!input.directory.startsWith("/")||input.directory.split("/").includes("..")||/[\x00-\x1f]/.test(input.directory))experimentError("UPLOAD_PATH_INVALID");
-        const profile=service.data.profile(projectId,input.profile_id),snapshot=await service.reproductions.snapshot(projectId,parts[1]),remote=await service.ssh.connect(profile);
-        try{const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`);let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}send(response,201,{...deployed,record_saved});}finally{remote.close();}return true;
+        const profile=service.data.profile(projectId,input.profile_id);
+        const remote=service.terminals.connection(projectId,profile.profile_id);
+        const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
+        service.terminals.connection(projectId,profile.profile_id);
+        {const deployed=await service.reproductions.deploy(remote,projectId,snapshot,`${input.directory.replace(/\/$/,"")}/${snapshot.snapshot_id}`);let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}send(response,201,{...deployed,record_saved});}return true;
       }
     }
     }finally{release();}
@@ -79,17 +81,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       const profile=service.data.profile(projectId,parts[1]);
       if(parts.length===3&&parts[2]==="directories"&&method==="POST"){
         const input=z.object({parent:z.string().min(1).max(4096),name:z.string().min(1).max(255)}).strict().parse(await readJson(request));
-        const connected=await service.terminals.createDirectory(projectId,profile.profile_id,input.parent,input.name);
-        if(connected){send(response,201,connected);return true;}
-        const remote=await service.ssh.connect(profile);
-        try{send(response,201,await createRemoteDirectory(remote,input.parent,input.name));}finally{remote.close();}return true;
+        send(response,201,await service.terminals.createDirectory(projectId,profile.profile_id,input.parent,input.name));return true;
       }
       if(parts.length===3&&parts[2]==="directories"&&method==="GET"){
         const path=z.string().min(1).max(4096).parse(url.searchParams.get("path")??"/");
-        const connected=await service.terminals.directories(projectId,profile.profile_id,path);
-        if(connected){send(response,200,connected);return true;}
-        const remote=await service.ssh.connect(profile);
-        try{send(response,200,await remoteDirectories(remote,path));}finally{remote.close();}return true;
+        send(response,200,await service.terminals.directories(projectId,profile.profile_id,path));return true;
       }
       if(parts.length===3&&parts[2]==="connect"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,201,{terminal:await service.terminals.connect(projectId,profile)});return true;}
       if(parts.length===3&&parts[2]==="credentials"&&method==="GET"){send(response,200,{password:service.ssh.passwordForEditing(profile)});return true;}

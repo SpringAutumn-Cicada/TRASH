@@ -14,7 +14,7 @@ export function RemoteDirectoryPicker({projectId,profileId,hostName,initialPath,
     const parent=target.replace(/\/+$/,"").split("/").slice(0,-1).join("/")||"/";
     await open(parent,true);return;
    }
-   if(!response.ok)throw new Error(({NOT_FOUND:"当前后端未提供远端目录浏览接口，请重启运行此分支的 TRASH 后端后再试；这不是 SSH 密码或目录错误。",SSH_PROFILE_NOT_FOUND:"所选主机配置已不存在，请关闭弹窗并刷新实例列表。",PROJECT_NOT_FOUND:"当前论文项目已不存在，请返回项目列表。",SSH_CREDENTIAL_REQUIRED:"请先保存实例密码。",SSH_FINGERPRINT_REQUIRED:"请先在 AutoDL 信息核对主机指纹。",SSH_FINGERPRINT_CHANGED:"主机指纹已变化，请核对主机身份。",REMOTE_DIRECTORY_NOT_FOUND:"远端目录不存在，请输入已有目录或点击根目录浏览。",REMOTE_DIRECTORY_ACCESS_DENIED:"SSH 用户没有读取此目录的权限，请选择有权限的目录。",REMOTE_DIRECTORY_CONNECTION_LOST:"读取目录时 SSH 连接已中断，请重新连接。",REMOTE_DIRECTORY_READ_FAILED:"SFTP 读取目录失败，请尝试根目录；如仍失败，请保留此错误以便定位。",REMOTE_DIRECTORY_INVALID:"请输入远端绝对路径，不使用上级跳转。"} as Record<string,string>)[data.error]??`读取失败（${data.error??response.status}），请检查 SSH 连接。`);if(!controller.signal.aborted){setListing(data);setPath(data.path);if(fallback&&target!==initialPath)setError("原目标目录不存在，已打开可访问的上级目录，请选择上传位置。");}}
+   if(!response.ok)throw new Error(({SSH_NOT_CONNECTED:"所选主机尚未连接或连接已断开，请关闭弹窗并先连接。",NOT_FOUND:"当前后端未提供远端目录浏览接口，请重启运行此分支的 TRASH 后端后再试；这不是 SSH 密码或目录错误。",SSH_PROFILE_NOT_FOUND:"所选主机配置已不存在，请关闭弹窗并刷新实例列表。",PROJECT_NOT_FOUND:"当前论文项目已不存在，请返回项目列表。",SSH_CREDENTIAL_REQUIRED:"请先保存实例密码。",SSH_FINGERPRINT_REQUIRED:"请先在 AutoDL 信息核对主机指纹。",SSH_FINGERPRINT_CHANGED:"主机指纹已变化，请核对主机身份。",REMOTE_DIRECTORY_NOT_FOUND:"远端目录不存在，请输入已有目录或点击根目录浏览。",REMOTE_DIRECTORY_ACCESS_DENIED:"SSH 用户没有读取此目录的权限，请选择有权限的目录。",REMOTE_DIRECTORY_CONNECTION_LOST:"读取目录时 SSH 连接已中断，请重新连接。",REMOTE_DIRECTORY_READ_FAILED:"SFTP 读取目录失败，请尝试根目录；如仍失败，请保留此错误以便定位。",REMOTE_DIRECTORY_INVALID:"请输入远端绝对路径，不使用上级跳转。"} as Record<string,string>)[data.error]??`读取失败（${data.error??response.status}），请检查 SSH 连接。`);if(!controller.signal.aborted){setListing(data);setPath(data.path);if(fallback&&target!==initialPath)setError("原目标目录不存在，已打开可访问的上级目录，请选择上传位置。");}}
   catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"读取目录失败。");}
   finally{if(!controller.signal.aborted)setBusy(false);}
  };
@@ -23,7 +23,7 @@ export function RemoteDirectoryPicker({projectId,profileId,hostName,initialPath,
   creatingRequest.current=true;setMaking(true);setError("");
   try{
    const response=await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/ssh-profiles/${encodeURIComponent(profileId)}/directories`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({parent:listing.path,name:name.trim()})});
-   const data=await response.json();if(!response.ok)throw new Error(({REMOTE_DIRECTORY_EXISTS:"已存在同名文件或目录，请换一个名称。",REMOTE_DIRECTORY_ACCESS_DENIED:"没有权限在当前目录创建文件夹。",REMOTE_DIRECTORY_NOT_FOUND:"父目录已不存在，请重新浏览。",REMOTE_DIRECTORY_INVALID:"目录名称不能包含路径分隔符、控制字符或上级跳转。",NOT_FOUND:"当前后端尚未提供新建目录接口，请重启后端。"} as Record<string,string>)[data.error]??`新建目录失败（${data.error??response.status}），请检查权限及磁盘空间。`);
+   const data=await response.json();if(!response.ok)throw new Error(({SSH_NOT_CONNECTED:"SSH 连接已断开，请关闭弹窗并重新连接。",REMOTE_DIRECTORY_EXISTS:"已存在同名文件或目录，请换一个名称。",REMOTE_DIRECTORY_ACCESS_DENIED:"没有权限在当前目录创建文件夹。",REMOTE_DIRECTORY_NOT_FOUND:"父目录已不存在，请重新浏览。",REMOTE_DIRECTORY_INVALID:"目录名称不能包含路径分隔符、控制字符或上级跳转。",NOT_FOUND:"当前后端尚未提供新建目录接口，请重启后端。"} as Record<string,string>)[data.error]??`新建目录失败（${data.error??response.status}），请检查权限及磁盘空间。`);
    setCreating(false);setName("");await open(data.path);
   }catch(cause){setError(cause instanceof Error?cause.message:"新建目录失败。");}
   finally{creatingRequest.current=false;setMaking(false);}

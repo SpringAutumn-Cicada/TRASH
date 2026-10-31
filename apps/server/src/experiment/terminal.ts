@@ -28,13 +28,16 @@ export class TerminalService {
   }
   hasProject(project: string) { return this.opening.has(project) || [...this.sessions.values()].some(session => session.project === project); }
   hasProfile(profile: string) { return this.openingProfiles.has(profile) || [...this.sessions.values()].some(session => session.profile.profile_id === profile); }
-  async createDirectory(project: string, profile: string, parent: string, name: string) {
+  connection(project: string, profile: string): RemoteConnection {
     const session=[...this.sessions.values()].find(item=>item.project===project&&item.profile.profile_id===profile);
-    return session?createRemoteDirectory(session.remote,parent,name):undefined;
+    if(!session)experimentError("SSH_NOT_CONNECTED",409);
+    return session.remote;
+  }
+  async createDirectory(project: string, profile: string, parent: string, name: string) {
+    return createRemoteDirectory(this.connection(project,profile),parent,name);
   }
   async directories(project: string, profile: string, path: string) {
-    const session = [...this.sessions.values()].find(item => item.project === project && item.profile.profile_id === profile);
-    return session ? remoteDirectories(session.remote, path) : undefined;
+    return remoteDirectories(this.connection(project,profile),path);
   }
   async split(project: string, id: string, token: string) {
     const source = this.get(project, id, token);
