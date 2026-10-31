@@ -35,6 +35,19 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         service.data.profile(projectId,profileId);response.setHeader("cache-control","no-store");
         send(response,200,await discoverPythonInterpreters(service.terminals.connection(projectId,profileId)));return true;
       }
+      if(parts.length===4&&parts[3]==="deployments"&&method==="GET"){send(response,200,{deployments:service.deployments.list(projectId).filter(task=>task.code_id===parts[1])});return true;}
+      if(parts.length===6&&parts[3]==="reports"&&parts[5]==="deploy"&&method==="POST"){
+        const input=z.object({profile_id:z.string(),python:z.string().min(1).max(4096),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        service.data.profile(projectId,input.profile_id);
+        const report=service.environmentAnalysis.report(projectId,parts[1],parts[4]);
+        if((await service.environmentAnalysis.freshness(projectId,parts[1],report.id)).stale)experimentError("DEPLOYMENT_REPORT_STALE",409);
+        const code=service.reproductions.get(projectId,parts[1]),upload=code.uploads?.filter(item=>item.profile_id===input.profile_id).at(-1);
+        if(!upload)experimentError("DEPLOYMENT_UPLOAD_REQUIRED",409);
+        const snapshot=service.reproductions.snapshotInfo(projectId,upload.snapshot_id),analyzed=service.reproductions.snapshotInfo(projectId,report.snapshot_id);
+        const files=(value:typeof snapshot)=>JSON.stringify([...value.files].sort((a,b)=>a.path.localeCompare(b.path)));
+        if(files(snapshot)!==files(analyzed))experimentError("DEPLOYMENT_UPLOAD_STALE",409);
+        send(response,202,{deployment:await service.deployments.start(report,input.profile_id,input.python,upload.path,service.terminals.connection(projectId,input.profile_id))});return true;
+      }
       if(parts.length===3&&method==="GET"){send(response,200,{tasks:service.environmentAnalysis.tasks(projectId,parts[1]),reports:service.environmentAnalysis.reports(projectId,parts[1])});return true;}
       if(parts.length===3&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{task:service.environmentAnalysis.start(projectId,parts[1])});return true;}
       if(parts.length===5&&parts[3]==="tasks"&&method==="GET"){const task=service.environmentAnalysis.tasks(projectId,parts[1]).find(task=>task.id===parts[4])??experimentError("ENVIRONMENT_TASK_NOT_FOUND",404);send(response,200,{task});return true;}
