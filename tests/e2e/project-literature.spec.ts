@@ -5,13 +5,14 @@ test("中文工作台可创建项目、检索原文并在刷新后恢复", async
   await page.goto("/");
   await expect(page).toHaveTitle("trash | 科研工作台");
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
-  await expect(page.getByRole("heading", { name: "项目" })).toBeVisible();
-  await page.getByRole("button", { name: "新建项目" }).click();
+  await expect(page.getByRole("navigation", { name: "研究项目" })).toBeVisible();
+  await page.getByRole("button", { name: "新建项目", exact: true }).first().click();
   await page.getByLabel("项目名称").fill("APT 溯源研究测试");
   await page.getByLabel("研究问题").fill("溯源图能否帮助检测横向移动？");
   await page.locator("form").getByRole("button", { name: "创建项目" }).click();
   await expect(page.getByRole("heading", { name: "APT 溯源研究测试" })).toBeVisible();
 
+  await page.getByRole("navigation", { name: "项目功能" }).getByRole("button", { name: "文献", exact: true }).click();
   await page.getByLabel("导入文献文件").setInputFiles({
     name: "apt-notes.md",
     mimeType: "text/markdown",
@@ -62,4 +63,24 @@ test("主题切换即时生效并在刷新后保留，且蓝色主题适配窄�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const screenshot = await page.screenshot({ path: "test-results/workbench-blue-mobile.png" });
   expect(screenshot.byteLength).toBeGreaterThan(5_000);
+});
+
+
+test("项目导航可完全隐藏并恢复偏好，窄屏作为抽屉展开", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto("/");
+  await expect(page.getByRole("navigation", { name: "研究项目" })).toBeVisible();
+  await page.getByRole("button", { name: "隐藏导航", exact: true }).first().click();
+  await expect(page.getByRole("navigation", { name: "研究项目" })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "展开导航", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "展开导航", exact: true }).click();
+  await expect(page.getByLabel("搜索项目", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "研究项目" })).toHaveCount(0);
+  await page.getByRole("button", { name: "展开导航", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "项目导航" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "项目导航" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "展开导航", exact: true })).toBeFocused();
 });
