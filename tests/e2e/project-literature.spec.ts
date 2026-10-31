@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 
 test("项目功能导航不误报未保存，实验五页签可用，删除无需填写项目全名", async ({ page }) => {
@@ -140,4 +141,36 @@ test("两层导航可收起为图标栏并恢复偏好，窄屏作为抽屉展�
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "项目导航" })).toHaveCount(0);
   await expect(page.locator(".workspace-header").getByRole("button", { name: "展开导航", exact: true })).toBeFocused();
+});
+
+
+test("文献复现可导入多份 ZIP、切换预览并确认移除", async ({page,request})=>{
+  const response=await request.post("/api/v1/projects",{data:{title:"复现列表测试",research_question:"多论文代码"}});
+  expect(response.status()).toBe(201);
+  const {project}=await response.json();
+  await page.goto(`/projects/${project.project_id}/reproductions`);
+  const archive=execFileSync("python3",["-c","import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,'w') as z:z.writestr('README.md','fixture preview')\nsys.stdout.buffer.write(b.getvalue())"]);
+  for(const name of ["论文甲","论文乙"]){
+    await page.getByRole("button",{name:"添加复现代码",exact:true}).first().click();
+    const dialog=page.getByRole("dialog",{name:"添加复现代码"});
+    await dialog.getByLabel("选择复现代码 ZIP 文件").setInputFiles({name:`${name}.zip`,mimeType:"application/zip",buffer:archive});
+    await dialog.getByRole("button",{name:"保存",exact:true}).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("heading",{name,exact:true})).toBeVisible();
+  }
+  const list=page.getByRole("navigation",{name:"已导入的论文代码"});
+  await expect(list.getByRole("button")).toHaveCount(2);
+  await list.getByRole("button",{name:/论文甲/}).click();
+  await expect(page.getByRole("heading",{name:"论文甲",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:/README.md/}).click();
+  await expect(page.getByText("fixture preview",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"移除复现代码记录"}).click();
+  const confirmation=page.getByRole("dialog",{name:"移除复现代码",exact:true});
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button",{name:"确认移除",exact:true}).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(list.getByRole("button")).toHaveCount(1);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.reload();
+  await expect(list.getByRole("button")).toHaveCount(1);
 });

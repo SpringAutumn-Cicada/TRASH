@@ -72,3 +72,30 @@ SSH 用例实际验证首次指纹观察、未观察拒绝信任、缺少密码�
 生产代码最后修改后已运行类型检查、构建、lint 和单元测试；浏览器用例最后修改后已重跑 lint 与 e2e。前端 747.61 kB chunk 提示、PDF 字体数据提示、测试 Git 默认分支提示均未导致失败，未为此改全局配置。生成日志、截图、构建产物和临时数据库不提交。
 
 整体仍非全部验收通过：真实 Codex CLI 的文献/对话/环境分析、非法输出/超时/取消/重启与时效完整链路；真实 AutoDL SFTP 上传进度/解压/目录操作、共享终端分屏/复制/末行/跨页及断线恢复；私钥与 SSH Agent、GPU/CUDA/Conda 实机探针、tmux/并发/产物结果完整闭环均未全面验证。新增环境对照使用模拟返回，不代表远端探针已执行成功；弹窗测试检查可见与背景隔离，不代表所有视觉场景验收。用户验收未执行，机器结果应使用 passed=false 并列出未覆盖项。
+
+## 74 个累计提交分批补充验证
+
+恢复后重新核对 `1dec0c2cd37e7dc0bc4e16f8ef23c37e08ae9bbd..19a1647d7dc927b997a04a624865069e51833e31`，74 个提交，工作树干净，无残留测试服务；完整提交及文件范围已用 Git 查看，包含平台列表截断后的文件。上节 lint、typecheck、build、36 项测试、5 项浏览器结果对应的生产源码未改变，因此复用，不重复全套执行。本批只增加测试及记录，不改生产代码。
+
+本批实际执行：
+
+| 命令 | 最终退出码 | 结果 |
+| --- | --- | --- |
+| `node --import tsx --test apps/server/tests/reproduction-lifecycle.test.ts` | 0 | 先完成 3 项复现代码/本地目录/环境任务测试 |
+| `node --import tsx --test apps/server/tests/terminal-lifecycle.test.ts` | 0 | 受控本机 SSH Shell 生命周期 1/1 |
+| `node --import tsx --test apps/server/tests/reproduction-lifecycle.test.ts apps/server/tests/terminal-lifecycle.test.ts` | 0 | 最终新增 5/5，含上传流程 |
+| `pnpm exec playwright test --grep '文献复现可导入多份'` | 0 | 新增浏览器用例 1/1 |
+| `pnpm exec eslint apps/server/tests/reproduction-lifecycle.test.ts apps/server/tests/terminal-lifecycle.test.ts tests/e2e/project-literature.spec.ts` | 0 | 最后测试代码修改后的定向规则检查 |
+
+浏览器新增用例第一次失败是测试把“移除复现代码”弹窗标题写成按钮的“移除复现代码记录”；修正定位后复测通过，未改生产交互。
+
+具体覆盖：
+
+- ZIP 原文件名、重复名称目录分配、旧 UUID 目录迁移、改名、文本预览、路径穿越拒绝、快照损坏拒绝、分析快照排除 .env、复现操作锁、移除记录不影响其他代码。
+- 本机创建/浏览目录、同名与越界拒绝、可选 Git 初始化、默认 main、已有仓库不重复初始化，SSH 指令只解析连接字段并拒绝命令注入形式。
+- 可控 CLI 替身实际经过快照和采集器：成功报告、并发拒绝、历史保留、内容指纹时效、非法 JSON 输出失败、取消以及服务重启将未完成任务记为中断。没有调用真实 Codex 或模型。
+- 本地文件适配器代替 SFTP 运输，实际调用系统 sha256sum/unzip：上传原 ZIP 名、独立重复目录、阶段及字节回调、哈希失败映射，确认部署命令不使用远端 Python。这不验证 ssh2 SFTP 运输或网络异常本身。
+- 自动创建的 SSH 服务实际认证并打开两个 Shell：单条 SSH transport、输入输出、窗口大小请求、项目/token 边界、查看端断开不结束 Shell、关闭单 Shell 保留另一 Shell，关闭最后 Shell 后连接不可用。未验证浏览器 xterm、右键复制、分屏尺寸或真实网络断线。
+- 浏览器实际导入两份 ZIP、列表切换、README 预览、确认移除及刷新后记录正确。
+
+本批分批进度只登记范围明确且已完成必要验证的提交，其余继续保留待测；不以构建通过推断真实外部功能通过。用户验收及真实 AutoDL、真实模型调用、SSH 私钥/Agent、实机 GPU 探针、远程 tmux/实验/产物端到端链路仍未完成。未合并、未推送、不修改全局配置，不停止用户平台。新增测试在独立临时工作区运行，结束清理自有数据。
