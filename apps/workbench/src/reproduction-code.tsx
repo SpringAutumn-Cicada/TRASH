@@ -14,7 +14,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
  const [deleting,setDeleting]=useState<ReproductionCode>();
  const [sources,setSources]=useState<{source_id:string;title:string}[]>([]);
  const [editing,setEditing]=useState(false),[editingId,setEditingId]=useState(""),[name,setName]=useState(""),[sourceId,setSourceId]=useState(""),[sourceUrl,setSourceUrl]=useState(""),[notes,setNotes]=useState("");
- const [zip,setZip]=useState<File>(),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[host,setHost]=useState(profileId),[remoteDir,setRemoteDir]=useState("/root/autodl-tmp/trash-reproductions"),[python,setPython]=useState("python3"),[uploadOpen,setUploadOpen]=useState(false);
+ const [zip,setZip]=useState<File>(),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[host,setHost]=useState(profileId),[remoteDir,setRemoteDir]=useState("/root/autodl-tmp"),[python,setPython]=useState("python3"),[uploadOpen,setUploadOpen]=useState(false);
  const zipInput=useRef<HTMLInputElement>(null),dialog=useRef<HTMLFormElement>(null);
  const alive=useRef(true);useUnsavedChanges(editing||busy);
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);

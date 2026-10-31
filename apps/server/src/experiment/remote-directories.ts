@@ -10,6 +10,12 @@ export async function remoteDirectories(remote: RemoteConnection, path: string) 
     const entries = await new Promise<import("ssh2").FileEntryWithStats[]>((resolve, reject) => sftp.readdir(canonical, (error, value) => error ? reject(error) : resolve(value)));
     const directories = entries.filter(entry => entry.attrs.isDirectory() && entry.filename !== "." && entry.filename !== ".." && !entry.filename.includes("/") && !/[\x00-\x1f]/.test(entry.filename)).sort((a, b) => a.filename.localeCompare(b.filename));
     return { path: canonical, parent: canonical === "/" ? null : posix.dirname(canonical), directories: directories.slice(0, 2000).map(entry => ({ name: entry.filename, path: posix.join(canonical, entry.filename) })), truncated: directories.length > 2000 };
-  } catch { experimentError("REMOTE_DIRECTORY_READ_FAILED", 422); }
+  } catch (error) {
+    const code=error&&typeof error==="object"&&"code" in error?Number(error.code):0;
+    if(code===2)experimentError("REMOTE_DIRECTORY_NOT_FOUND",422);
+    if(code===3)experimentError("REMOTE_DIRECTORY_ACCESS_DENIED",422);
+    if(code===6||code===7)experimentError("REMOTE_DIRECTORY_CONNECTION_LOST",422);
+    experimentError("REMOTE_DIRECTORY_READ_FAILED", 422);
+  }
   finally { sftp.end(); }
 }
