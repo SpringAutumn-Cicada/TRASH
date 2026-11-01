@@ -70,3 +70,30 @@ export async function browseLocalFiles(path?:string){
  const current=await resolveDirectory(path||homedir());
  try{const entries=await readdir(current,{withFileTypes:true});return {path:current,parent:dirname(current)===current?null:dirname(current),directories:entries.filter(item=>item.isDirectory()&&item.name!=='.git').map(item=>({name:item.name,path:join(current,item.name)})).sort((a,b)=>a.name.localeCompare(b.name)),files:entries.filter(item=>item.isFile()).map(item=>({name:item.name,path:join(current,item.name)})).sort((a,b)=>a.name.localeCompare(b.name))};}catch{return experimentError('LOCAL_DIRECTORY_ACCESS_DENIED',403);}
 }
+
+let nativePickerBusy=false;
+async function normalizeLocalFile(path:string){
+ let selected=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value)).parse(path);
+ if(process.platform==='linux'&&/^(?:[A-Za-z]:[\\/]|\\\\)/.test(selected)){
+  try{selected=(await execute('wslpath',['-u',selected],{encoding:'utf8',timeout:10000})).stdout.trim();}catch{return experimentError('LOCAL_FILE_PATH_CONVERSION_FAILED',422);}
+ }
+ try{const resolved=await realpath(selected);const info=await stat(resolved);if(!info.isFile()||!info.size)experimentError('LOCAL_FILE_INVALID',400);if(info.size>5*1024**3)experimentError('REQUEST_TOO_LARGE',413);return {path:resolved,name:basename(resolved),size_bytes:info.size};}catch(error){if(error&&typeof error==='object'&&'statusCode' in error)throw error;return experimentError('LOCAL_FILE_NOT_FOUND',404);}
+}
+export async function chooseLocalFile(input:unknown){
+ const value=z.object({path:z.string().max(4096).optional(),confirm:z.literal(true)}).strict().parse(input);
+ if(value.path)return normalizeLocalFile(value.path);
+ if(nativePickerBusy)experimentError('LOCAL_FILE_PICKER_BUSY',409);nativePickerBusy=true;
+ try{
+  let windows=process.platform==='win32';
+  if(process.platform==='linux'){const {release}=await import('node:os');windows=/microsoft/i.test(release())||Boolean(process.env.WSL_DISTRO_NAME);}
+  if(windows){
+   // Fixed script, no user input interpolation; Base64 avoids terminal code-page damage to Chinese paths.
+   const script="Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = '选择数据集文件'; $d.Multiselect = $false; $d.CheckFileExists = $true; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($d.FileName))) }; $d.Dispose()";
+   const output=await execute(process.platform==='win32'?'powershell.exe':'powershell.exe',['-NoProfile','-STA','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{encoding:'utf8',timeout:300000,maxBuffer:65536,windowsHide:true});
+   const encoded=output.stdout.trim();if(!encoded)return {cancelled:true};return normalizeLocalFile(Buffer.from(encoded,'base64').toString('utf8'));
+  }
+  try{const output=await execute('zenity',['--file-selection','--title=选择数据集文件'],{encoding:'utf8',timeout:300000,maxBuffer:65536});const selected=output.stdout.trim();return selected?normalizeLocalFile(selected):{cancelled:true};}
+  catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code===1)return {cancelled:true};throw error;}
+ }catch(error){if(error&&typeof error==='object'&&'statusCode' in error)throw error;return experimentError('LOCAL_NATIVE_PICKER_UNAVAILABLE',422);}
+ finally{nativePickerBusy=false;}
+}

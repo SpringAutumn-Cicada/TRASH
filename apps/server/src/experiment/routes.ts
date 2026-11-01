@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
-import { browseDirectories, createDirectory, selectDirectory, browseLocalFiles } from "./directories.js";
+import { browseDirectories, createDirectory, selectDirectory, browseLocalFiles, chooseLocalFile } from "./directories.js";
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
 import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
@@ -239,6 +239,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="diagnostics"&&method==="POST"){send(response,200,{environment:await service.diagnostics(projectId,profile.profile_id)});return true;}
     }
   }
+  if(parts[0]==='local-files'&&parts[1]==='select'&&parts.length===2&&method==='POST'){send(response,200,await chooseLocalFile(await readJson(request)));return true;}
   if(parts[0]==='local-files'&&parts.length===1&&method==='GET'){send(response,200,await browseLocalFiles(url.searchParams.get('path')??undefined));return true;}
   if(parts[0]==="datasets"){
     if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
