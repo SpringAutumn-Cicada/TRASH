@@ -1,3 +1,4 @@
+import type { WorkspaceService } from "./workspace.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -15,7 +16,7 @@ const live=(task:DeploymentTask)=>['planning','installing','cancelling','unknown
 interface Active {task:DeploymentTask;child?:ChildProcess;cancel:boolean}
 export class EnvironmentDeploymentService {
  private active=new Map<string,Active>();private closed=false;
- constructor(private store:TrashStore,private codes:ReproductionService){for(const project of store.listProjects())for(const task of this.list(project.project_id)){if(live(task)&&task.status!=='unknown'){task.status=task.remote_job?'unknown':'failed';task.message=task.remote_job?'服务重启，请连接原主机后刷新部署状态；确认停止后可继续断点。':'服务重启，Agent 规划已中断，未确认启动远端安装。';this.save(task);}}}
+ constructor(private store:TrashStore,private codes:ReproductionService,private workspaces?:WorkspaceService){for(const project of store.listProjects())for(const task of this.list(project.project_id)){if(live(task)&&task.status!=='unknown'){task.status=task.remote_job?'unknown':'failed';task.message=task.remote_job?'服务重启，请连接原主机后刷新部署状态；确认停止后可继续断点。':'服务重启，Agent 规划已中断，未确认启动远端安装。';this.save(task);}}}
  private root(project:string){return join(this.store.root,'projects',project,'environment-deployments');}
  private save(task:DeploymentTask){const root=this.root(task.project_id);mkdirSync(root,{recursive:true});const path=join(root,task.id+'.json');writeFileSync(path+'.tmp',JSON.stringify(task),{mode:0o600});renameSync(path+'.tmp',path);}
  list(project:string){let names:string[];try{names=readdirSync(this.root(project));}catch{return [];}return names.filter(name=>/^deploy_[a-f0-9-]+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(join(this.root(project),name),'utf8')) as DeploymentTask).sort((a,b)=>b.created_at.localeCompare(a.created_at));}
@@ -61,7 +62,11 @@ export class EnvironmentDeploymentService {
   const requested=resumeId?records.find(task=>task.id===resumeId&&task.code_id===report.reproduction_id&&task.report_id===report.id&&task.profile_id===profile&&task.directory===directory&&task.python===python&&['failed','cancelled'].includes(task.status)):undefined;
   if(resumeId&&!requested){release();experimentError('DEPLOYMENT_NOT_FOUND',409);}
   const validPlan=(task:DeploymentTask)=>{try{const parsed=planSchema.safeParse(JSON.parse(readFileSync(join(this.root(task.project_id),task.id,'plan.json'),'utf8')));return parsed.success&&parsed.data.python_version!==null&&parsed.data.blocked.length===0&&parsed.data.installs.length>0;}catch{return false;}};
-  const previous=requested?(validPlan(requested)?requested:undefined):records.find(task=>task.code_id===report.reproduction_id&&task.report_id===report.id&&task.profile_id===profile&&task.directory===directory&&task.python===python&&['failed','cancelled','completed'].includes(task.status)&&validPlan(task));
+  const workspace=this.workspaces?.get(report.project_id,profile);
+  const originalDirectory=workspace?.source_root&&workspace.source_profile_id&&directory.startsWith(workspace.root+'/')?posix.join(workspace.source_root,posix.relative(workspace.root,directory)):undefined;
+  const matches=(task:DeploymentTask)=>task.code_id===report.reproduction_id&&task.report_id===report.id&&task.python===python&&['failed','cancelled','completed'].includes(task.status)&&validPlan(task);
+  const inherited=workspace?.source_profile_id&&originalDirectory?records.find(task=>matches(task)&&task.profile_id===workspace.source_profile_id&&task.directory===originalDirectory):undefined;
+  const previous=requested?(validPlan(requested)?requested:inherited):records.find(task=>matches(task)&&task.profile_id===profile&&task.directory===directory)??inherited;
   const task:DeploymentTask={id:requested?.id??'deploy_'+randomUUID(),project_id:report.project_id,code_id:report.reproduction_id,report_id:report.id,profile_id:profile,directory,python,status:'planning',stage:'planning',created_at:requested?.created_at??new Date().toISOString(),message:previous?'正在载入原安装计划，准备继续断点':'本机 Agent 正在重新整理隔离安装计划',...(previous?{resumed_from:previous.id}:{})};
   const item:Active={task,cancel:false};this.active.set(task.id,item);try{this.save(task);}catch(error){this.active.delete(task.id);release();throw error;}
   void this.run(item,report,remote).finally(()=>{this.active.delete(task.id);release();}).catch(()=>{});return task;

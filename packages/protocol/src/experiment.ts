@@ -38,4 +38,6 @@ export const runSubmitSchema = z.object({ plan_id: text, version: z.number().int
 export interface ReproductionCode {id:string;project_id:string;name:string;archive_name?:string;path:string;source_id?:string;source_url:string;notes:string;created_at:string;imported:boolean;uploads?:{profile_id:string;path:string;snapshot_id:string;sha256:string;at:string}[]}
 export interface ReproductionSnapshot {analysis_excluded?:{path:string;reason:string}[];snapshot_id:string;reproduction_id:string;name:string;archive_name?:string;source_id?:string;sha256:string;created_at:string;size_bytes:number;files:{path:string;size_bytes:number;sha256:string}[]}
 
-export interface RemoteWorkspace {project_id:string;profile_id:string;root:string;updated_at:string;initialized_at?:string;experiment_uploads?:{name:string;path:string;commit:string;snapshot_id:string;at:string}[]}
+export interface RemoteWorkspace {project_id:string;profile_id:string;root:string;updated_at:string;initialized_at?:string;adopted_at?:string;source_profile_id?:string;source_root?:string;experiment_uploads?:{name:string;path:string;commit:string;snapshot_id:string;at:string}[]}
+
+export interface WorkspaceRecognition {root:string;profile_id:string;source_profile_id?:string;source_root?:string;recognized:boolean;directories:{name:string;path:string;exists:boolean}[];resources:{kind:"dataset"|"reproduction"|"experiment";id:string;name:string;path:string;matched:boolean;reason:string}[]}
