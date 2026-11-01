@@ -163,7 +163,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         if(input.password)service.ssh.setCredential(profile.profile_id,{password:input.password});
         send(response,200,{profile:updated,credential_available:service.ssh.hasCredential(updated)});return true;
       }
-      if(parts.length===2&&method==="DELETE"){if(service.terminals.hasProject(projectId))experimentError("TERMINAL_PROFILE_BUSY",409);service.data.deleteProfile(projectId,profile.profile_id);service.ssh.forget(profile.profile_id);send(response,200,{deleted:true});return true;}
+      if(parts.length===2&&method==="DELETE"){if(service.terminals.hasProfile(profile.profile_id))experimentError("TERMINAL_PROFILE_BUSY",409);if(service.reproductions.busy(projectId))experimentError("REPRODUCTION_BUSY",409);service.data.deleteProfile(projectId,profile.profile_id);service.ssh.forget(profile.profile_id);send(response,200,{deleted:true});return true;}
       if(parts[2]==="credentials"&&method==="PUT"){service.ssh.setCredential(profile.profile_id,sessionCredentialSchema.parse(await readJson(request)));send(response,200,{credential_available:service.ssh.hasCredential(profile)});return true;}
       if(parts[2]==="credentials"&&method==="DELETE"){service.ssh.forget(profile.profile_id);send(response,200,{forgotten:true});return true;}
       if(parts[2]==="fingerprint"&&method==="POST"){send(response,200,{fingerprint:await service.ssh.probe(profile),trusted:profile.fingerprint??null});return true;}
