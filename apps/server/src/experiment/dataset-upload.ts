@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, createReadStream, mkdirSync, writeFileSync, readFileSync, existsSync, type Stats } from "node:fs";
-import { mkdtemp, rm, stat, realpath } from "node:fs/promises";
+import { createWriteStream, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix, isAbsolute } from "node:path";
-import { Transform, Writable } from "node:stream";
+import { join, posix } from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -44,33 +44,28 @@ export class DatasetUploadService {
  busy(project:string){return [...this.transfers.values()].some(item=>item.project===project);}
  cancel(project:string,id:string){const transfer=[...this.transfers.values()].find(item=>item.project===project&&item.dataset===id)??experimentError('DATASET_NOT_UPLOADING',409);if(['extracting','saving'].includes(transfer.stage))experimentError('DATASET_FINALIZING',409);transfer.controller.abort();return {requested:true};}
  close(){for(const transfer of this.transfers.values())if(!['extracting','saving'].includes(transfer.stage))transfer.controller.abort();}
- async upload(project:string,profile:string,root:string,remote:RemoteConnection,request:IncomingMessage,name:string,filename:string,extract:boolean,requestId:string,localPath?:string){
+ async upload(project:string,profile:string,root:string,remote:RemoteConnection,request:IncomingMessage,name:string,filename:string,extract:boolean,requestId:string){
   if(this.transfers.has(requestId)||this.busy(project))experimentError('DATASET_BUSY',409);
   if(!filename||filename==='.'||filename==='..'||filename.includes('/')||filename.includes('\\')||Array.from(filename).some(c=>c.charCodeAt(0)<32)||Buffer.byteLength(filename)>255)experimentError('UPLOAD_PATH_INVALID',400);
   if(extract&&!filename.toLowerCase().endsWith('.zip'))experimentError('DATASET_ARCHIVE_INVALID',400);
-  let localFile:string|undefined,localInfo:Stats|undefined;
-  if(localPath){if(!isAbsolute(localPath)||localPath.includes('\0'))experimentError('LOCAL_FILE_INVALID',400);try{localFile=await realpath(localPath);localInfo=await stat(localFile);}catch{experimentError('LOCAL_FILE_NOT_FOUND',404);}if(!localInfo!.isFile()||localInfo!.size===0)experimentError('LOCAL_FILE_INVALID',400);if(localInfo!.size>MAX_DATASET_BYTES)experimentError('REQUEST_TOO_LARGE',413);}
-  if(this.transfers.has(requestId)||this.busy(project))experimentError('DATASET_BUSY',409);
   const declared=Number(request.headers['content-length']);if(Number.isFinite(declared)&&declared>MAX_DATASET_BYTES)experimentError('REQUEST_TOO_LARGE',413);
   const id='dataset_'+randomUUID(),parent=posix.join(root,'datasets'),target=posix.join(parent,directoryLabel(name));
-  let dataset:DatasetRef={dataset_id:id,project_id:project,profile_id:profile,name,version:'1',notes:'',path:target,verification_status:'unverified',transfer_status:'uploading',transfer_request_id:requestId,transfer_stage:localFile?'validating':'receiving',transfer_sent:0,transfer_total:localInfo?.size??(Number(request.headers['content-length'])||0)};
+  let dataset:DatasetRef={dataset_id:id,project_id:project,profile_id:profile,name,version:'1',notes:'',path:target,verification_status:'unverified',transfer_status:'uploading',transfer_request_id:requestId,transfer_stage:'receiving',transfer_sent:0,transfer_total:Number(request.headers['content-length'])||0};
   const transfer:Transfer={project,dataset:id,controller:new AbortController(),stage:'receiving'};this.transfers.set(requestId,transfer);
   let temporary:string|undefined,owned=false;
   const update=(stage:string,sent=0,total=0)=>{transfer.stage=stage;dataset={...dataset,transfer_stage:stage,transfer_sent:sent,transfer_total:total};this.data.saveDataset(dataset);};
   const stopped=()=>{if(transfer.controller.signal.aborted)experimentError('UPLOAD_CANCELLED',409);};
   try{
-   this.data.saveDataset(dataset);if(!localFile)temporary=await mkdtemp(join(tmpdir(),'trash-dataset-'));const file=localFile??join(temporary!,'upload'),digest=createHash('sha256');let hashes:{path:string;sha256:string}[]=[];let received=0,last=0;
-   const limit=new Transform({transform(chunk:Buffer,_encoding,callback){received+=chunk.length;digest.update(chunk);if(received>MAX_DATASET_BYTES){callback(Object.assign(new Error('REQUEST_TOO_LARGE'),{statusCode:413}));return;}if(Date.now()-last>250){last=Date.now();update(localFile?'validating':'receiving',received,dataset.transfer_total);}callback(null,chunk);}});
-   if(localFile)await pipeline(createReadStream(localFile),limit,new Writable({write(_chunk,_encoding,callback){callback();}}),{signal:transfer.controller.signal});
-   else await pipeline(request,limit,createWriteStream(file,{mode:0o600}),{signal:transfer.controller.signal});stopped();
-   const unchanged=async()=>{if(localInfo){const current=await stat(file);if(current.size!==localInfo.size||current.mtimeMs!==localInfo.mtimeMs||current.ino!==localInfo.ino)experimentError('LOCAL_FILE_CHANGED',409);}};await unchanged();
+   this.data.saveDataset(dataset);temporary=await mkdtemp(join(tmpdir(),'trash-dataset-'));const file=join(temporary,'upload'),digest=createHash('sha256');let hashes:{path:string;sha256:string}[]=[];let received=0,last=0;
+   const limit=new Transform({transform(chunk:Buffer,_encoding,callback){received+=chunk.length;digest.update(chunk);if(received>MAX_DATASET_BYTES){callback(Object.assign(new Error('REQUEST_TOO_LARGE'),{statusCode:413}));return;}if(Date.now()-last>250){last=Date.now();update('receiving',received,dataset.transfer_total);}callback(null,chunk);}});
+   await pipeline(request,limit,createWriteStream(file,{mode:0o600}),{signal:transfer.controller.signal});stopped();
    const bytes=(await stat(file)).size;if(!bytes)experimentError('DATASET_EMPTY_FILE',400);
    update('validating',bytes,bytes);
    if(extract){try{const result=await execute('python3',['-I','-B','-c',validateZip,file],{timeout:1800000,maxBuffer:16*1024*1024,signal:transfer.controller.signal});hashes=JSON.parse(result.stdout);}catch{stopped();experimentError('DATASET_ARCHIVE_INVALID',422);}await remote.exec(['sh','-c','command -v unzip >/dev/null 2>&1']);}
    if(!extract)hashes=[{path:filename,sha256:digest.digest('hex')}];
-   await unchanged();stopped();await ensureRemoteDirectory(remote,parent);stopped();
+   stopped();await ensureRemoteDirectory(remote,parent);stopped();
    const sftp=await remote.sftp();try{const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(target,error=>{if(!error)resolve(true);else if(Number((error as Error&{code?:number}).code)===2)resolve(false);else reject(error);}));if(exists)experimentError('REPRODUCTION_REMOTE_TARGET_EXISTS',409);await new Promise<void>((resolve,reject)=>sftp.mkdir(target,{mode:0o755},error=>error?reject(error):resolve()));owned=true;}finally{sftp.end();}
-   stopped();const destination=posix.join(target,extract?'.trash-upload.zip':filename);update('uploading',0,bytes);await remote.upload(file,destination,(sent,total)=>update('uploading',sent,total),transfer.controller.signal);stopped();await unchanged();
+   stopped();const destination=posix.join(target,extract?'.trash-upload.zip':filename);update('uploading',0,bytes);await remote.upload(file,destination,(sent,total)=>update('uploading',sent,total),transfer.controller.signal);stopped();
    if(extract){update('extracting',bytes,bytes);await remote.exec(['unzip','-q','-n',destination,'-d',target],undefined,1800000);await remote.exec(['rm','--',destination]);}
    update('saving',bytes,bytes);this.saveHashes(project,id,hashes);dataset={...dataset,size_bytes:bytes,transfer_status:'ready',transfer_message:extract?'已上传并解压，数据内容尚未验证。':'已上传，数据内容尚未验证。'};this.data.saveDataset(dataset);return dataset;
   }catch(error){let cleanupFailed=false;if(owned){try{await remote.exec(['rm','-rf','--',target],undefined,60000);}catch{cleanupFailed=true;}}
