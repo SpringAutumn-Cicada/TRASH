@@ -17,7 +17,7 @@ export function EvaluationEditor({content,onChange}:{content:Record<string,unkno
  const [adding,setAdding]=useState('Precision');
  const evaluation=(content.evaluation??defaults) as Evaluation,matrix=content.confusion_matrix as BinaryConfusionMatrix|undefined;
  const metrics=(content.metrics??[]) as Metric[],manual=metrics.filter(metric=>metric.source!=='confusion_matrix');
- const calculated=validMatrix(matrix)?calculateBinaryMetrics(matrix):{};
+ const calculated:Record<string,number|undefined>=validMatrix(matrix)?calculateBinaryMetrics(matrix):{};
  const update=(patch:Partial<Evaluation>)=>onChange({...content,evaluation:{...evaluation,...patch}});
  const updateMatrix=(patch:Record<string,unknown>)=>onChange({...content,evaluation:{...evaluation,positive_class:String(patch.positive_label??matrix?.positive_label??evaluation.positive_class)},confusion_matrix:{...matrix,...patch}});
  const setManual=(values:Metric[])=>onChange({...content,metrics:values});
