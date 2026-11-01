@@ -51,6 +51,12 @@ export class EnvironmentAnalysisService {
   void this.run(active).finally(()=>{this.running.delete(project);release();}).catch(()=>{/* Persistence failure must not escape as an unhandled rejection. */});return task;
  }
  cancel(project:string,code:string,id:string){const active=this.running.get(project);if(!active||active.task.id!==id||active.task.reproduction_id!==code||!pending(active.task))experimentError("ENVIRONMENT_TASK_NOT_RUNNING",409);active.task.status="cancelled";active.task.finished_at=new Date().toISOString();this.save(active.task);this.terminate(active.child);return active.task;}
+ dismiss(project:string,code:string,id:string){
+  const running=this.running.get(project),task=running?.task.id===id&&running.task.reproduction_id===code?running.task:this.tasks(project,code).find(item=>item.id===id);
+  if(!task)experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);
+  if(task.status!=='cancelled')experimentError('ENVIRONMENT_TASK_NOT_CANCELLED',409);
+  task.dismissed_at=new Date().toISOString();this.save(task);return task;
+ }
  close(){this.closed=true;for(const active of this.running.values()){active.task.status="interrupted";active.task.finished_at=new Date().toISOString();active.task.error="服务停止，任务中断。";this.save(active.task);this.terminate(active.child);}}
  private terminate(child?:ChildProcess){if(!child)return;try{if(process.platform!=="win32"&&child.pid)process.kill(-child.pid,"SIGTERM");else child.kill("SIGTERM");}catch{/* Already exited. */}const timer=setTimeout(()=>{if(child.exitCode!==null||child.signalCode!==null)return;try{if(process.platform!=="win32"&&child.pid)process.kill(-child.pid,"SIGKILL");else child.kill("SIGKILL");}catch{/* Already exited. */}},3000);timer.unref();}
  private execute(active:Active,command:string,args:string[],cwd:string,input?:string){

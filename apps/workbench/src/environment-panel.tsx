@@ -1,7 +1,7 @@
 import { DeploymentProgress, type DeploymentView } from "./deployment-progress.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, ChevronDown, Copy, FolderOpen, Cpu, FileSearch, LoaderCircle, RefreshCw, Square } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Copy, FolderOpen, Cpu, LoaderCircle, RefreshCw } from "lucide-react";
 import type { CodeEnvironmentReport, EnvironmentAnalysisTask, HostEnvironmentComparison, SshProfile } from "@trash/protocol";
 import { RemoteDirectoryPicker } from "./remote-directory-picker.js";
 import { ModalLayer } from "./modal-layer.js";
@@ -19,15 +19,14 @@ export const environmentErrors:Record<string,string>={
  ENVIRONMENT_HOST_PROBE_FAILED:"无法通过所选 Python 读取主机环境，请确认解释器存在、Python 版本支持 importlib.metadata（3.8+）及 SSH 仍连接。",ENVIRONMENT_PYTHON_INVALID:"解释器名称或路径无效。",SSH_NOT_CONNECTED:"请先连接所选 AutoDL 主机。",ENVIRONMENT_TASK_NOT_RUNNING:"任务已经结束，请刷新状态。",
  REPRODUCTION_ARCHIVE_FAILED:"生成代码快照失败，请检查 Python 3、代码大小、符号链接与本机目录权限。",NOT_FOUND:"当前后端尚未加载部署环境分析接口，请重启 TRASH 后再试。"
 };
-const taskNames:Record<string,string>={preparing:"正在固定快照并采集环境文件",analyzing:"本机 Codex 正在分析源代码",completed:"报告已生成，尚未运行验证",failed:"分析失败",cancelled:"已取消分析",interrupted:"服务重启或停止，分析已中断"};
 const attributionNames={declared:"明确声明",inferred:"源码推断",unknown:"未知"};
 const categories:Record<string,string>={system:"系统",python:"Python",framework:"框架",cuda:"CUDA",tool:"工具",dependency:"依赖",other:"其他"};
 type Citation={path:string;line_start:number;line_end:number};
 function Evidence({items}:{items:Citation[]}){return <span className="environment-evidence">{items.length?items.map((item,index)=><span key={index} title={item.path}>{item.path}:{item.line_start}{item.line_end!==item.line_start?`–${item.line_end}`:""}</span>):"没有可引用依据"}</span>;}
-export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,profileId,refreshToken}:{projectId:string;codeId:string;profiles:SshProfile[];connectedProfiles:string[];profileId:string;refreshToken:number}){
+export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,profileId,refreshToken,selectedReportId}:{projectId:string;codeId:string;profiles:SshProfile[];connectedProfiles:string[];profileId:string;refreshToken:number;selectedReportId?:string}){
  const base=`/api/v1/projects/${encodeURIComponent(projectId)}/reproductions/${codeId}/environment`;
  const [tasks,setTasks]=useState<EnvironmentAnalysisTask[]>([]),[reports,setReports]=useState<CodeEnvironmentReport[]>([]),[reportId,setReportId]=useState("");
- const [error,setError]=useState(""),[loading,setLoading]=useState(true),[checking,setChecking]=useState(false),[canceling,setCanceling]=useState(false),[freshness,setFreshness]=useState<"checking"|"current"|"stale"|"unknown">("unknown");
+ const [error,setError]=useState(""),[loading,setLoading]=useState(true),[checking,setChecking]=useState(false),[freshness,setFreshness]=useState<"checking"|"current"|"stale"|"unknown">("unknown");
  const [host,setHost]=useState(profileId),[python,setPython]=useState(""),[comparisons,setComparisons]=useState<HostEnvironmentComparison[]>([]),[comparisonId,setComparisonId]=useState("");
  const [interpreters,setInterpreters]=useState<{path:string;version:string}[]>([]),[detecting,setDetecting]=useState(false),[discoveryError,setDiscoveryError]=useState(""),[detectRevision,setDetectRevision]=useState(0);
  const [deployments,setDeployments]=useState<DeploymentView[]>([]),[deploying,setDeploying]=useState(false),[deploymentRefresh,setDeploymentRefresh]=useState(0);
@@ -53,6 +52,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
    }catch(cause){if(!controller.signal.aborted){setLoading(false);setError(cause instanceof Error?cause.message:"读取报告失败。");}}
   };setLoading(true);setError("");void load();return()=>{controller.abort();clearTimeout(timer);};
  },[base,refreshToken,reload]);
+ useEffect(()=>{if(selectedReportId&&reports.some(item=>item.id===selectedReportId))setReportId(selectedReportId);},[selectedReportId,reports]);
  useEffect(()=>{
   if(!reportId||active){setFreshness("unknown");return;}
   const controller=new AbortController();setFreshness("checking");setComparisons([]);setComparisonId("");
@@ -88,7 +88,6 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
   if(!report||deploying||deploymentActive||!hostConnected||!python||!deployDirectory.trim())return;
   setDeploying(true);setError("");setDeploymentError("");try{const data=await request<{deployment:typeof deployments[number]}>(`/reports/${report.id}/deploy`,{profile_id:host,python,directory:deployDirectory.trim(),confirm:true});setDeployments(items=>[data.deployment,...items.filter(item=>item.id!==data.deployment.id)]);setDeploymentConfirm(false);setDeploymentRefresh(value=>value+1);}catch(cause){const message=cause instanceof Error?cause.message:"部署启动失败";setDeploymentError(message);}finally{setDeploying(false);}
  };
- const cancel=async()=>{if(!active||canceling)return;setCanceling(true);setError("");try{await request(`/tasks/${active.id}/cancel`,{confirm:true});setReload(value=>value+1);}catch(cause){setError(cause instanceof Error?cause.message:"取消失败。");}finally{setCanceling(false);}};
  const compare=async()=>{if(checking||detecting||!python.trim()||!report||!hostConnected)return;setChecking(true);setError("");try{const data=await request<{comparison:HostEnvironmentComparison}>(`/reports/${report.id}/compare`,{profile_id:host,python,confirm:true});setComparisons(current=>[data.comparison,...current]);setComparisonId(data.comparison.id);}catch(cause){setError(cause instanceof Error?cause.message:"主机检查失败。");}finally{setChecking(false);}};
  const deploymentCommand=async(task:DeploymentView,action:"cancel"|"refresh")=>{
   if(deploymentWorking)return;setDeploymentWorking(task.id);setDeploymentError("");
@@ -114,9 +113,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
  return <details className="environment-panel" open><summary><span><Cpu size={16}/>部署环境</span><span className="environment-unverified">未运行验证<ChevronDown size={13}/></span></summary><div className="environment-panel-body">
   {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
   {loading&&<p role="status"><LoaderCircle size={14} className="spin"/>正在读取分析记录…</p>}
-  {tasks[0]&&<div className={`environment-task environment-task-${tasks[0].status}`} role="status"><FileSearch size={19}/><div><strong>{taskNames[tasks[0].status]}</strong><span>{new Date(tasks[0].created_at).toLocaleString("zh-CN")}{tasks[0].error?` · ${environmentErrors[tasks[0].error]??tasks[0].error}`:""}</span></div>{active&&<button type="button" className="secondary-button" disabled={canceling} onClick={()=>void cancel()}><Square size={12}/>{canceling?"正在取消…":"取消分析"}</button>}</div>}
-  <div className="environment-report-toolbar"><label>报告历史<select value={reportId} disabled={!reports.length||checking} onChange={event=>setReportId(event.target.value)}><option value="">尚无报告</option>{reports.map(item=><option key={item.id} value={item.id}>{new Date(item.created_at).toLocaleString("zh-CN")} · {item.id.slice(-8)}</option>)}</select></label><button type="button" className="icon-button" title="刷新环境报告" aria-label="刷新环境报告" disabled={checking} onClick={()=>setReload(value=>value+1)}><RefreshCw size={14}/></button></div>
-  {!report&&!loading&&<div className="environment-empty"><Cpu size={28}/><p>点击上方“分析源代码”，由本机 Codex 阅读代码并整理依赖与启动方式。</p><span>不运行代码，不安装软件，不修改源文件。</span></div>}
+  {!report&&!loading&&<div className="environment-empty"><Cpu size={28}/><p>打开“分析源代码”，点击“开始分析”生成报告，或在其中选择历史报告。</p><span>不运行代码，不安装软件，不修改源文件。</span></div>}
   {report&&<><div className="environment-report-meta"><span className={freshness==="stale"?"stale":""}>{freshnessLabels[freshness]}</span><span>Skill {report.skill_version}</span><span title={report.code_fingerprint}>代码指纹 {report.code_fingerprint.slice(0,12)}</span><span>{report.coverage.selected_files} 个文件 · {(report.coverage.selected_bytes/1024).toFixed(0)} KiB</span></div><p className="environment-summary">{report.content.summary}</p>
   {report.content.schema_version===2?<>
    <div className="environment-image-heading"><h4>AutoDL 镜像选择</h4><span>按这四项选择镜像</span></div>
