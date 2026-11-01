@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { calculateBinaryMetrics, defaultEvaluationMetrics, evaluationMetrics, type BinaryConfusionMatrix } from '@trash/protocol';
+import { calculateBinaryMetrics, defaultEvaluationMetrics, evaluationMetrics, type BinaryConfusionMatrix } from '@trash/protocol/browser';
 import './evaluation.css';
 
 type Metric={name:string;value:number|null;unit:string;condition:string;source?:'manual'|'confusion_matrix';direction?:'max'|'min'};

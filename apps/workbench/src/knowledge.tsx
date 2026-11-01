@@ -1,4 +1,4 @@
-import { experimentResultSchema } from "@trash/protocol";
+import { experimentResultSchema } from "@trash/protocol/browser";
 import { EvaluationEditor, formatEvaluationMetric } from "./evaluation.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
