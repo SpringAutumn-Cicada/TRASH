@@ -4,6 +4,14 @@ import sys,os,json,zipfile,hashlib,stat,pathlib
 mode,source,target=sys.argv[1:4]
 LIMIT=200*1024*1024
 MAXFILES=20000
+ANALYSIS_DIRS=['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor','outputs']
+def analysis_reason(rel):
+ p=pathlib.PurePosixPath(rel);name=p.name;low=name.lower();suffix=p.suffix.lower()
+ if any(part in ANALYSIS_DIRS for part in p.parts[:-1]): return 'excluded_directory'
+ if name=='.env' or name.startswith('.env.') and name!='.env.example' or name in ['id_rsa','id_ed25519','auth.json','credentials'] or suffix in ['.pem','.key','.p12','.pfx']: return 'excluded_sensitive'
+ eligible=low.startswith(('readme','requirements','dockerfile')) or low in ['makefile','pipfile','pipfile.lock','poetry.lock','uv.lock','pnpm-lock.yaml'] or suffix in ['.py','.md','.rst','.txt','.toml','.yaml','.yml','.json','.cfg','.ini','.c','.cpp','.h','.cu','.js','.ts','.r','.sh','.bat','.ps1']
+ if low in ['agents.md','skill.md','.mcp.json','mcp.json','.npmrc','.pypirc'] or not eligible: return 'not_analysis_source'
+ return None
 def safe(name):
  p=pathlib.PurePosixPath(name)
  if not name or chr(92) in name or p.is_absolute() or '..' in p.parts or any(ord(c)<32 for c in name) or (p.parts and ':' in p.parts[0]): raise ValueError('UNSAFE_ARCHIVE_PATH')
@@ -39,8 +47,8 @@ elif mode in ('snapshot','analysis-snapshot'):
   for root,dirs,files in os.walk(source,followlinks=False):
    if mode=='analysis-snapshot':
     for d in dirs:
-     if d in ['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor','outputs']: excluded.append({'path':os.path.relpath(os.path.join(root,d),source).replace(os.sep,'/'),'reason':'excluded_directory'})
-   dirs[:]=sorted(d for d in dirs if d not in (['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor','outputs'] if mode=='analysis-snapshot' else ['.git','__pycache__','.venv','venv','node_modules','datasets','weights','checkpoints','outputs']))
+     if d in ANALYSIS_DIRS: excluded.append({'path':os.path.relpath(os.path.join(root,d),source).replace(os.sep,'/'),'reason':'excluded_directory'})
+   dirs[:]=sorted(d for d in dirs if d not in (ANALYSIS_DIRS if mode=='analysis-snapshot' else ['.git','__pycache__','.venv','venv','node_modules','datasets','weights','checkpoints','outputs']))
    for d in dirs:
     if os.path.islink(os.path.join(root,d)): raise ValueError('SYMLINK_UNSUPPORTED')
    for name in sorted(files):
@@ -51,10 +59,9 @@ elif mode in ('snapshot','analysis-snapshot'):
       excluded.append({'path':rel,'reason':'excluded_sensitive'});continue
      raise ValueError('SENSITIVE_FILE')
     if mode=='analysis-snapshot':
-     low=name.lower();suffix=pathlib.Path(name).suffix.lower()
-     eligible=low.startswith(('readme','requirements','dockerfile')) or low in ['makefile','pipfile','pipfile.lock','poetry.lock','uv.lock','pnpm-lock.yaml'] or suffix in ['.py','.md','.rst','.txt','.toml','.yaml','.yml','.json','.cfg','.ini','.c','.cpp','.h','.cu','.js','.ts','.r','.sh','.bat','.ps1']
-     if low in ['agents.md','skill.md','.mcp.json','mcp.json','.npmrc','.pypirc'] or not eligible:
-      excluded.append({'path':rel,'reason':'not_analysis_source'});continue
+     reason=analysis_reason(rel)
+     if reason:
+      excluded.append({'path':rel,'reason':reason});continue
     h=hashlib.sha256();size=0;info=zipfile.ZipInfo.from_file(path,rel,strict_timestamps=False)
     info.compress_type=zipfile.ZIP_DEFLATED
     with open(path,'rb') as inp,z.open(info,'w') as out:
@@ -67,5 +74,5 @@ elif mode in ('snapshot','analysis-snapshot'):
     records.append({'path':rel,'size_bytes':size,'sha256':h.hexdigest()})
     if len(records)>MAXFILES: raise ValueError('ARCHIVE_LIMIT')
  if not records: raise ValueError('EMPTY_CODE_DIRECTORY')
- print(json.dumps({'files':records,'size_bytes':total,**({'analysis_excluded':excluded} if mode=='analysis-snapshot' else {})}))
+ print(json.dumps({'files':records,'analysis_files':[record for record in records if analysis_reason(record['path']) is None],'size_bytes':total,**({'analysis_excluded':excluded} if mode=='analysis-snapshot' else {})}))
 `;

@@ -186,7 +186,10 @@ export class EnvironmentAnalysisService {
  }
  assertUploadReady(project:string,code:string,snapshot:ReproductionSnapshot){
   if(this.running.has(project))experimentError('ENVIRONMENT_ANALYSIS_BUSY',409);
-  const report=this.reports(project,code).find(item=>item.code_fingerprint===fingerprint(snapshot)&&item.content.schema_version===2&&item.content.adaptation?.status==='ready');
+  // Upload includes assets that are intentionally absent from analysis snapshots.
+  // Compare source hashes extracted from these exact uploaded bytes, not a separate rescan.
+  const sourceFingerprint=fingerprint({...snapshot,files:snapshot.analysis_files??snapshot.files});
+  const report=this.reports(project,code).find(item=>item.code_fingerprint===sourceFingerprint&&item.content.schema_version===2&&item.content.adaptation?.status==='ready');
   if(!report)experimentError('ENVIRONMENT_SOURCE_NOT_READY',409);
   return report;
  }
