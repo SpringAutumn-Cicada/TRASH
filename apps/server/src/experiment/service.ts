@@ -1,5 +1,5 @@
 import { DatasetUploadService } from "./dataset-upload.js";
-import { WorkspaceService } from "./workspace.js";
+import { WorkspaceService, directoryLabel, ensureRemoteDirectory } from "./workspace.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
@@ -64,6 +64,7 @@ export class ExperimentService {
     if(id&&!previous)experimentError("EXPERIMENT_PLAN_NOT_FOUND",404);
     if((previous?.version??0)!==baseVersion)experimentError("VERSION_CONFLICT",409);
     const datasets=content.dataset_ids.map(key=>this.data.datasets(projectId).find(d=>d.dataset_id===key)??experimentError("DATASET_NOT_FOUND",404));
+    if(datasets.some(d=>d.transfer_status&&d.transfer_status!=="ready"))experimentError("DATASET_NOT_READY",409);
     if(datasets.some(d=>d.profile_id!==profile.profile_id))experimentError("DATASET_HOST_MISMATCH");
     const plan:ExperimentPlanVersion={plan_id:id??`plan_${randomUUID()}`,project_id:projectId,version:(previous?.version??0)+1,status:"draft",repository:repo,...(reproduction?{reproduction}:{}),profile,datasets,content,created_at:new Date().toISOString()};this.data.savePlan(plan);return plan;
   }
@@ -101,7 +102,7 @@ export class ExperimentService {
     if(input.preparation&&!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");
     if(!input.preparation&&plan.content.preparation_script&&!this.data.runs(projectId).some(r=>r.preparation&&r.status==="completed"&&r.exit_code===0&&r.plan.plan_id===plan.plan_id&&r.plan.version===plan.version))experimentError("PREPARATION_REQUIRED",409);
     const id=`run_${randomUUID()}`,at=new Date().toISOString();
-    const run:ExperimentRun={run_id:id,project_id:projectId,profile_id:plan.profile.profile_id,host_key:this.hostKey(plan.profile),plan,idempotency_key:input.idempotency_key,status:"queued",remote_dir:posix.join(plan.profile.remote_root,projectId,id),token:randomUUID(),created_at:at,updated_at:at,artifacts:[],preparation:input.preparation,...(retryOf?{retry_of:retryOf}:{})};
+    const run:ExperimentRun={run_id:id,project_id:projectId,profile_id:plan.profile.profile_id,host_key:this.hostKey(plan.profile),plan,idempotency_key:input.idempotency_key,status:"queued",remote_dir:this.workspaces.get(projectId,plan.profile.profile_id)?posix.join(this.workspaces.get(projectId,plan.profile.profile_id)!.root,"outputs",plan.reproduction?"reproductions":"experiments",directoryLabel(plan.reproduction?.name??plan.content.method),id):posix.join(plan.profile.remote_root,projectId,id),token:randomUUID(),created_at:at,updated_at:at,artifacts:[],preparation:input.preparation,...(retryOf?{retry_of:retryOf}:{})};
     this.data.saveRun(run);this.data.event(id,"queued",input.preparation?"已单独授权环境准备脚本":"已确认代码版本、命令、时限与同步范围");void this.tick();return run;
   }
   private async tick():Promise<void>{
@@ -123,6 +124,7 @@ export class ExperimentService {
       bundle=run.plan.reproduction?await this.reproductions.bundle(run.project_id,run.plan.reproduction):await this.repository.bundle(run.project_id,run.plan.content.commit_sha);
       if(this.closed)return;
       remote=await this.ssh.connect(run.plan.profile);
+      if(this.workspaces.get(run.project_id,run.profile_id))await ensureRemoteDirectory(remote,run.remote_dir);
       await remote.exec([run.plan.content.python,"-c","import os,sys; os.makedirs(sys.argv[1],mode=0o700,exist_ok=True); os.makedirs(sys.argv[1]+'/runner',exist_ok=True)",run.remote_dir]);
       this.mark(run,"syncing");await remote.upload(bundle.path,posix.join(run.remote_dir,"code.bundle.part"));
       await remote.exec([run.plan.content.python,"-c","import os,sys,hashlib; p=sys.argv[1]; h=hashlib.sha256(); f=open(p,'rb'); [h.update(b) for b in iter(lambda:f.read(1048576),b'')]; assert h.hexdigest()==sys.argv[2],'BUNDLE_HASH_MISMATCH'; os.replace(p,sys.argv[3])",posix.join(run.remote_dir,"code.bundle.part"),bundle.sha256,posix.join(run.remote_dir,"code.bundle")]);

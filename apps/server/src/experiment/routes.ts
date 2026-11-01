@@ -1,3 +1,5 @@
+import { directoryLabel, ensureRemoteDirectory } from "./workspace.js";
+import { posix } from "node:path";
 /* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -15,7 +17,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
   if(parts[0]==="remote-workspace"){
     const profileId=z.string().min(1).parse(url.searchParams.get("profile_id"));service.data.profile(projectId,profileId);
     if(parts.length===1&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{workspace:service.workspaces.get(projectId,profileId)??null,suggested_root:service.workspaces.suggested(projectId)});return true;}
-    if(parts.length===1&&method==="PUT"){const input=z.object({root:z.string().trim().min(1).max(2048)}).strict().parse(await readJson(request));send(response,200,{workspace:service.workspaces.save(projectId,profileId,input.root)});return true;}
+    if(parts.length===1&&method==="PUT"){const input=z.object({root:z.string().trim().min(1).max(2048)}).strict().parse(await readJson(request));if(service.reproductions.busy(projectId)||service.datasetUploads.busy(projectId)||service.deployments.busyProject(projectId)||service.data.runs(projectId).some(run=>service.data.active(run)))experimentError('WORKSPACE_BUSY',409);send(response,200,{workspace:service.workspaces.save(projectId,profileId,input.root)});return true;}
     if(parts.length===2&&parts[1]==="initialize"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{workspace:await service.workspaces.initialize(projectId,profileId,service.terminals.connection(projectId,profileId))});return true;}
   }
   if(parts.length===1&&parts[0]==="terminals"&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{terminals:service.terminals.list(projectId)});return true;}
@@ -33,6 +35,18 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===3&&parts[2]==="resize"&&method==="POST"){const input=z.object({cols:z.number().int().min(2).max(500),rows:z.number().int().min(1).max(200)}).strict().parse(await readJson(request));service.terminals.resize(projectId,parts[1],token,input.cols,input.rows);send(response,200,{accepted:true});return true;}
   }
   if(parts[0]==="reproduction-snapshots"&&parts.length===2&&method==="GET"){send(response,200,{snapshot:service.reproductions.snapshotInfo(projectId,parts[1])});return true;}
+  if(parts[0]==="experiment-code"){
+    if(parts.length===2&&parts[1]==="upload-progress"&&method==="GET"){const id=z.string().uuid().parse(url.searchParams.get('request_id'));send(response,200,{progress:service.reproductions.progress(projectId,'experiment-code',id)});return true;}
+    if(parts.length===2&&parts[1]==="cancel-upload"&&method==="POST"){const input=z.object({request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.reproductions.cancelUpload(projectId,'experiment-code',input.request_id));return true;}
+    if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
+      const input=z.object({profile_id:z.string(),name:z.string().trim().min(1).max(100),request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));service.data.profile(projectId,input.profile_id);
+      const workspace=service.workspaces.get(projectId,input.profile_id)??experimentError('WORKSPACE_REQUIRED',409),remote=service.terminals.connection(projectId,input.profile_id),release=service.reproductions.acquire(projectId),operation=service.reproductions.beginUpload(projectId,'experiment-code',input.request_id);
+      const report=(stage:string,sent=0,total=0)=>{if(operation.signal.aborted)experimentError('UPLOAD_CANCELLED',409);service.reproductions.report(projectId,'experiment-code',input.request_id,stage,sent,total);};
+      try{report('snapshot');const status=await service.repository.status(projectId);await service.repository.preflight(projectId,status.head);const name=directoryLabel(input.name);const snapshot=await service.reproductions.sourceSnapshot(projectId,service.repository.bound(projectId).path,name);await service.repository.preflight(projectId,status.head);if((await service.repository.status(projectId)).head!==status.head)experimentError('GIT_TREE_DIRTY',409);const parent=posix.join(workspace.root,'experiments');await ensureRemoteDirectory(remote,parent);const deployed=await service.reproductions.deploy(remote,projectId,snapshot,parent,report,operation.signal,name);service.workspaces.recordExperimentUpload(projectId,input.profile_id,workspace.root,{name,path:deployed.path,commit:status.head,snapshot_id:snapshot.snapshot_id,at:new Date().toISOString()});send(response,201,{...deployed,commit:status.head});}
+      catch(error){service.reproductions.report(projectId,'experiment-code',input.request_id,operation.signal.aborted?'cancelled':'failed');throw error;}
+      finally{operation.finish();release();}return true;
+    }
+  }
   if(parts[0]==="reproductions"){
     if(parts[1]&&parts[2]==="environment"){
       service.reproductions.get(projectId,parts[1]);
@@ -110,7 +124,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="snapshots"&&method==="POST"){send(response,201,{snapshot:await service.reproductions.snapshot(projectId,parts[1])});return true;}
       if(parts[2]==="upload-progress"&&method==="GET"){const requestId=z.string().uuid().parse(url.searchParams.get("request_id"));response.setHeader("cache-control","no-store");send(response,200,{progress:service.reproductions.progress(projectId,parts[1],requestId)});return true;}
       if(parts[2]==="upload"&&method==="POST"){
-        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),python:z.string().max(2000).optional(),request_id:z.string().uuid().optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        const input=z.object({profile_id:z.string(),directory:z.string().min(1).max(2000),layout:z.enum(["workspace","legacy"]).default("legacy"),python:z.string().max(2000).optional(),request_id:z.string().uuid().optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
         if(!input.directory.startsWith("/")||input.directory.split("/").includes("..")||/[\x00-\x1f]/.test(input.directory))experimentError("UPLOAD_PATH_INVALID");
         const profile=service.data.profile(projectId,input.profile_id);
         const remote=service.terminals.connection(projectId,profile.profile_id);
@@ -121,7 +135,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         try{
           const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
           service.terminals.connection(projectId,profile.profile_id);
-          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,input.directory,report,operation.signal);
+          const workspace=service.workspaces.get(projectId,profile.profile_id);
+          if(input.layout==='workspace'&&!workspace)experimentError('WORKSPACE_REQUIRED',409);
+          const parent=input.layout==='workspace'?posix.join(workspace!.root,'reproductions'):input.directory;
+          if(input.layout==='workspace')await ensureRemoteDirectory(remote,parent);
+          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,parent,report,operation.signal,input.layout==='workspace'?directoryLabel(service.reproductions.get(projectId,parts[1]).name):undefined);
           let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}
           send(response,201,{...deployed,record_saved});
         }catch(error){

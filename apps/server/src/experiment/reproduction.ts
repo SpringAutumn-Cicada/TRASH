@@ -25,7 +25,7 @@ export class ReproductionService {
 
  beginUpload(project:string,id:string,request:string){const key=`${project}:${id}:${request}`;const controller=new AbortController();this.uploadControllers.set(key,controller);return {signal:controller.signal,finish:()=>this.uploadControllers.delete(key)};}
  cancelUpload(project:string,id:string,request:string){
-  this.get(project,id);const controller=this.uploadControllers.get(`${project}:${id}:${request}`),progress=this.progress(project,id,request);
+  if(id!=="experiment-code")this.get(project,id);const controller=this.uploadControllers.get(`${project}:${id}:${request}`),progress=this.progress(project,id,request);
   if(!controller||!progress)experimentError("UPLOAD_NOT_RUNNING",409);
   if(!["snapshot","preparing","uploading","cancelling"].includes(progress.stage))experimentError("UPLOAD_FINALIZING",409);
   controller.abort();this.report(project,id,request,"cancelling",progress.sent,progress.total);return {requested:true};
@@ -82,6 +82,12 @@ export class ReproductionService {
  async tree(project:string,id:string,path:string){return (await readdir(await this.safe(project,id,path),{withFileTypes:true})).filter(e=>e.name!==".git").slice(0,1000).map(e=>({name:e.name,path:path?`${path}/${e.name}`:e.name,directory:e.isDirectory(),symlink:e.isSymbolicLink()}));}
  async file(project:string,id:string,path:string){const target=await this.safe(project,id,path),info=await stat(target);if(!info.isFile())experimentError("NOT_A_FILE");if(info.size>1024*1024)return {path,size_bytes:info.size,preview:false,reason:"文件超过 1 MiB"};const data=await readFile(target);try{if(data.includes(0))throw new Error();return {path,size_bytes:data.length,preview:true,text:new TextDecoder("utf8",{fatal:true}).decode(data)};}catch{return {path,size_bytes:info.size,preview:false,reason:"二进制或非 UTF-8 文件"};}}
  async snapshot(project:string,id:string,analysis=false):Promise<ReproductionSnapshot>{const code=this.get(project,id),snapshot_id=`snapshot_${randomUUID()}`,root=join(this.root(project),"snapshots",snapshot_id);const rel=relative(code.path,root);if(rel===""||!rel.startsWith(`..${sep}`)&&rel!==".."&&!isAbsolute(rel))experimentError("REPRODUCTION_DIRECTORY_INVALID");await mkdir(root,{recursive:true});const path=join(root,"code.zip");try{const manifest=await this.python(analysis?"analysis-snapshot":"snapshot",code.path,path);const bytes=await readFile(path);if(bytes.length>200*1024*1024)experimentError("ARCHIVE_LIMIT");const value:ReproductionSnapshot={snapshot_id,reproduction_id:id,name:code.name,archive_name:code.archive_name??`${this.directoryName(code.name).slice(6)}.zip`,source_id:code.source_id,sha256:createHash("sha256").update(bytes).digest("hex"),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,"manifest.json"),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}}
+ async sourceSnapshot(project:string,path:string,name:string):Promise<ReproductionSnapshot>{
+  const snapshot_id='snapshot_'+randomUUID(),root=join(this.root(project),'snapshots',snapshot_id),rel=relative(path,root);
+  if(rel===''||!rel.startsWith(`..${sep}`)&&rel!=='..'&&!isAbsolute(rel))experimentError('REPRODUCTION_DIRECTORY_INVALID');
+  await mkdir(root,{recursive:true});const archive=join(root,'code.zip');
+  try{const manifest=await this.python('snapshot',path,archive);const bytes=await readFile(archive);if(bytes.length>200*1024*1024)experimentError('ARCHIVE_LIMIT');const value:ReproductionSnapshot={snapshot_id,reproduction_id:'experiment-code',name,archive_name:name+'.zip',sha256:createHash('sha256').update(bytes).digest('hex'),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,'manifest.json'),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}
+ }
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
  async preparation(project:string,snapshot:ReproductionSnapshot,path:string){await this.bundle(project,snapshot);const script=String.raw`import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);i=z.getinfo(sys.argv[2]);assert i.file_size<=1048576;sys.stdout.write(z.read(i).decode('utf8'))`;return (await execute("python3",["-c",script,join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),path],{maxBuffer:2*1024*1024})).stdout;}
@@ -98,7 +104,7 @@ export class ReproductionService {
    await new Promise<void>((resolve,reject)=>sftp.rmdir(directory,error=>ignoreMissing(error)?resolve():reject(error)));
   }finally{sftp.end();}
  }
- async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{},signal?:AbortSignal){
+ async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{},signal?:AbortSignal,targetName?:string){
   const archiveName=this.archiveName(snapshot.archive_name??`${this.directoryName(snapshot.name).slice(6)}.zip`);
   const parent=directory;
   let createdDirectory:string|undefined;
@@ -115,7 +121,8 @@ export class ReproductionService {
    stage="REPRODUCTION_REMOTE_DIRECTORY_FAILED";
    const sftp=await remote.sftp();
    try{
-    const stem=this.directoryName(archiveName.slice(0,-4)).slice(6);
+    const stem=targetName??this.directoryName(archiveName.slice(0,-4)).slice(6);
+    if(!stem||stem==="."||stem===".."||/[\\/\x00-\x1f]/.test(stem))experimentError("UPLOAD_PATH_INVALID",400);
     const candidate=posix.join(parent,stem),archivePath=posix.join(parent,archiveName);
     for(const path of [candidate,archivePath]){
       const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(path,error=>{if(!error)resolve(true);else if(Number((error as Error&{code?:number}).code)===2)resolve(false);else reject(error);}));
@@ -139,7 +146,7 @@ export class ReproductionService {
    stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
    // Flatten only a ZIP-name wrapper; do not strip genuine source subdirectories.
    const wrapper=archiveName.slice(0,-4);
-   const strip=snapshot.files.length>0&&snapshot.files.every(file=>file.path.startsWith(wrapper+"/"));
+   const strip=snapshot.reproduction_id!=="experiment-code"&&Boolean(wrapper)&&snapshot.files.length>0&&snapshot.files.every(file=>file.path.startsWith(wrapper+"/"));
    if(strip){
      const staging=posix.join(directory,".trash-extract-"+randomUUID());
      await remote.exec(["mkdir","--",staging]);

@@ -39,8 +39,8 @@ elif mode in ('snapshot','analysis-snapshot'):
   for root,dirs,files in os.walk(source,followlinks=False):
    if mode=='analysis-snapshot':
     for d in dirs:
-     if d in ['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor']: excluded.append({'path':os.path.relpath(os.path.join(root,d),source).replace(os.sep,'/'),'reason':'excluded_directory'})
-   dirs[:]=sorted(d for d in dirs if d not in (['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor'] if mode=='analysis-snapshot' else ['.git','__pycache__']))
+     if d in ['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor','outputs']: excluded.append({'path':os.path.relpath(os.path.join(root,d),source).replace(os.sep,'/'),'reason':'excluded_directory'})
+   dirs[:]=sorted(d for d in dirs if d not in (['.git','__pycache__','.agents','.codex','.claude','node_modules','.venv','venv','data','datasets','weights','checkpoints','vendor','outputs'] if mode=='analysis-snapshot' else ['.git','__pycache__','.venv','venv','node_modules','datasets','weights','checkpoints','outputs']))
    for d in dirs:
     if os.path.islink(os.path.join(root,d)): raise ValueError('SYMLINK_UNSUPPORTED')
    for name in sorted(files):
