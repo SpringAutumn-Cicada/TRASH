@@ -6,7 +6,7 @@ import { UploadProgress } from "./upload-progress.js";
 import { RemoteDirectoryPicker } from "./remote-directory-picker.js";
 import { copyText } from "./clipboard.js";
 import { ModalLayer } from "./modal-layer.js";
-import { Cpu, Search, ChevronDown, X, Archive, FileUp, FolderOpen, Pencil, Plus, Trash2, Upload, Play, LoaderCircle } from "lucide-react";
+import { FileSearch, Cpu, Search, ChevronDown, X, Archive, FileUp, FolderOpen, Pencil, Plus, Trash2, Upload, Play, LoaderCircle } from "lucide-react";
 import type { ReproductionCode, ReproductionSnapshot, SshProfile, RemoteWorkspace } from "@trash/protocol";
 import { RepositoryBrowser } from "./repository-browser.js";
 import { readPreference, writePreference, useUnsavedChanges } from "./navigation.js";
