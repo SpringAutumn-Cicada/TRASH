@@ -26,7 +26,7 @@ function Markdown({body}:{body:string}) {
     return <p key={i}>{line.split(/(\[[^\]]+\]\([^)]+\))/g).map((part,j)=>{const m=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);return m && /^(https?:\/\/|#)/.test(m[2])?<a key={j} href={m[2]} target={m[2].startsWith("#")?undefined:"_blank"} rel="noreferrer">{m[1]}</a>:part;}) || "\u00a0"}</p>;
   })}</div>;
 }
-export function KnowledgePanel({projectId,sources,section,action,focusId,initialStatus,onNavigate}:{projectId:string;sources:Source[];section:Section;action?:string;focusId?:string;initialStatus?:string;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void}) {
+export function KnowledgePanel({projectId,sources,section,action,focusId,initialStatus,onNavigate,heading,onRecordsChanged}:{projectId:string;sources:Source[];section:Section;action?:string;focusId?:string;initialStatus?:string;heading?:string;onRecordsChanged?:()=>void;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void}) {
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
   const resultImportRef=useRef<HTMLInputElement>(null);
   const [records,setRecords]=useState<(KnowledgeVersion & {stale?:boolean})[]>([]);
@@ -44,7 +44,7 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
   const refresh=async()=>{
     if(!alive.current)return;
     if(section==="knowledge-tasks"){const data=await call<{tasks:typeof tasks}>(`${base}/knowledge-tasks`);if(alive.current)setTasks(data.tasks);return;}
-    const data=await call<{records:typeof records;total:number}>(`${base}/${section}?q=${encodeURIComponent(query)}&status=${status}&page=${page}&limit=20&sort=${sort}&${encodeURIComponent(field)}=${encodeURIComponent(fieldValue)}`);if(alive.current){setRecords(data.records);setTotal(data.total);}
+    const data=await call<{records:typeof records;total:number}>(`${base}/${section}?q=${encodeURIComponent(query)}&status=${status}&page=${page}&limit=20&sort=${sort}&${encodeURIComponent(field)}=${encodeURIComponent(fieldValue)}`);if(alive.current){setRecords(data.records);setTotal(data.total);onRecordsChanged?.();}
   };
   useEffect(()=>{void run(refresh);},[section,page]);
   useEffect(()=>{if(section!=="knowledge-tasks")return;const timer=setInterval(()=>{void refresh().catch(()=>{});},3000);return()=>clearInterval(timer);},[section,projectId]);
@@ -84,7 +84,7 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
     });
   },[action,focusId,section,sources]);
   return <section className="knowledge-panel">
-    <div className="section-heading"><div><h2>{labels[section]}</h2><p>{section==="knowledge-tasks"?"查看本地 Agent 的生成进度与结果。":"整理当前项目内容，保留每一次修改与审阅。"}</p></div></div>
+    <div className="section-heading"><div><h2>{heading??labels[section]}</h2><p>{section==="knowledge-tasks"?"查看本地 Agent 的生成进度与结果。":"整理当前项目内容，保留每一次修改与审阅。"}</p></div></div>
     {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="knowledge-toolbar">
       {section!=="knowledge-tasks"&&<><input aria-label="查询知识内容" placeholder="标题、方法、数据集或内容" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="审阅状态" value={status} onChange={e=>setStatus(e.target.value)}><option value="">全部状态</option>{["draft","pending","accepted","rejected"].map(s=><option value={s} key={s}>{statuses[s]}</option>)}</select></>}
