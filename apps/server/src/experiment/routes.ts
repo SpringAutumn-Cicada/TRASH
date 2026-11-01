@@ -239,7 +239,10 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="diagnostics"&&method==="POST"){send(response,200,{environment:await service.diagnostics(projectId,profile.profile_id)});return true;}
     }
   }
-  if(parts[0]==='local-files'&&parts[1]==='select'&&parts.length===2&&method==='POST'){send(response,200,await chooseLocalFile(await readJson(request)));return true;}
+  if(parts[0]==='local-files'&&parts[1]==='select'&&parts.length===2&&method==='POST'){
+    const controller=new AbortController(),cancel=()=>controller.abort();response.once('close',cancel);
+    try{const result=await chooseLocalFile(await readJson(request),controller.signal);if(!response.destroyed)send(response,200,result);}finally{response.off('close',cancel);}return true;
+  }
   if(parts[0]==='local-files'&&parts.length===1&&method==='GET'){send(response,200,await browseLocalFiles(url.searchParams.get('path')??undefined));return true;}
   if(parts[0]==="datasets"){
     if(parts.length===2&&parts[1]==="upload"&&method==="POST"){

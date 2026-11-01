@@ -79,21 +79,22 @@ async function normalizeLocalFile(path:string){
  }
  try{const resolved=await realpath(selected);const info=await stat(resolved);if(!info.isFile()||!info.size)experimentError('LOCAL_FILE_INVALID',400);if(info.size>5*1024**3)experimentError('REQUEST_TOO_LARGE',413);return {path:resolved,name:basename(resolved),size_bytes:info.size};}catch(error){if(error&&typeof error==='object'&&'statusCode' in error)throw error;return experimentError('LOCAL_FILE_NOT_FOUND',404);}
 }
-export async function chooseLocalFile(input:unknown){
+export async function chooseLocalFile(input:unknown,signal?:AbortSignal){
  const value=z.object({path:z.string().max(4096).optional(),confirm:z.literal(true)}).strict().parse(input);
  if(value.path)return normalizeLocalFile(value.path);
+ if(signal?.aborted)return {cancelled:true};
  if(nativePickerBusy)experimentError('LOCAL_FILE_PICKER_BUSY',409);nativePickerBusy=true;
  try{
   let windows=process.platform==='win32';
   if(process.platform==='linux'){const {release}=await import('node:os');windows=/microsoft/i.test(release())||Boolean(process.env.WSL_DISTRO_NAME);}
   if(windows){
    // Fixed script, no user input interpolation; Base64 avoids terminal code-page damage to Chinese paths.
-   const script="Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = '选择数据集文件'; $d.Multiselect = $false; $d.CheckFileExists = $true; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($d.FileName))) }; $d.Dispose()";
-   const output=await execute(process.platform==='win32'?'powershell.exe':'powershell.exe',['-NoProfile','-STA','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{encoding:'utf8',timeout:300000,maxBuffer:65536,windowsHide:true});
+   const script="Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = '选择数据集文件'; $d.Multiselect = $false; $d.CheckFileExists = $true; $owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.StartPosition = 'CenterScreen'; $owner.Width = 1; $owner.Height = 1; $owner.Show(); $owner.Activate(); if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($d.FileName))) }; $d.Dispose(); $owner.Dispose()";
+   const output=await execute(process.platform==='win32'?'powershell.exe':'powershell.exe',['-NoProfile','-STA','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{encoding:'utf8',timeout:120000,maxBuffer:65536,windowsHide:true,signal});
    const encoded=output.stdout.trim();if(!encoded)return {cancelled:true};return normalizeLocalFile(Buffer.from(encoded,'base64').toString('utf8'));
   }
-  try{const output=await execute('zenity',['--file-selection','--title=选择数据集文件'],{encoding:'utf8',timeout:300000,maxBuffer:65536});const selected=output.stdout.trim();return selected?normalizeLocalFile(selected):{cancelled:true};}
+  try{const output=await execute('zenity',['--file-selection','--title=选择数据集文件'],{encoding:'utf8',timeout:120000,maxBuffer:65536,signal});const selected=output.stdout.trim();return selected?normalizeLocalFile(selected):{cancelled:true};}
   catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code===1)return {cancelled:true};throw error;}
- }catch(error){if(error&&typeof error==='object'&&'statusCode' in error)throw error;return experimentError('LOCAL_NATIVE_PICKER_UNAVAILABLE',422);}
+ }catch(error){if(signal?.aborted)return {cancelled:true};if(error&&typeof error==='object'&&'statusCode' in error)throw error;return experimentError('LOCAL_NATIVE_PICKER_UNAVAILABLE',422);}
  finally{nativePickerBusy=false;}
 }
