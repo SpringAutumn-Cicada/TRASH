@@ -94,7 +94,13 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
           const deployed=await service.reproductions.deploy(remote,projectId,snapshot,input.directory,report,operation.signal);
           let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}
           send(response,201,{...deployed,record_saved});
-        }catch(error){service.reproductions.report(projectId,parts[1],requestId,operation.signal.aborted?"cancelled":"failed");if(operation.signal.aborted)experimentError("UPLOAD_CANCELLED",409);throw error;}finally{operation.finish();}return true;
+        }catch(error){
+          if(error instanceof Error&&error.message==="UPLOAD_CANCEL_CLEANUP_FAILED"&&"residual_path" in error){
+            service.reproductions.report(projectId,parts[1],requestId,"cleanup_failed");
+            send(response,409,{error:"UPLOAD_CANCEL_CLEANUP_FAILED",path:error.residual_path});return true;
+          }
+          service.reproductions.report(projectId,parts[1],requestId,operation.signal.aborted?"cancelled":"failed");if(operation.signal.aborted)experimentError("UPLOAD_CANCELLED",409);throw error;
+        }finally{operation.finish();}return true;
       }
     }
     }finally{release();}

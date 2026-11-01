@@ -74,11 +74,13 @@ export class RemoteConnection {
     try{await new Promise<void>((resolve,reject)=>{
       let settled=false;
       const finish=(error?:Error)=>{if(settled)return;settled=true;signal?.removeEventListener("abort",abort);if(error)reject(error);else resolve();};
-      const abort=()=>{sftp.destroy();finish(new Error("UPLOAD_CANCELLED"));};
-      sftp.on("error",()=>finish(new Error("SFTP_UPLOAD_FAILED")));
+      const abort=()=>{sftp.destroy();};
+      // Wait for this SFTP channel to close before deleting its partial files.
+      sftp.once("close",()=>finish(new Error(signal?.aborted?"UPLOAD_CANCELLED":"SFTP_UPLOAD_FAILED")));
+      sftp.on("error",()=>{if(!signal?.aborted)finish(new Error("SFTP_UPLOAD_FAILED"));});
       signal?.addEventListener("abort",abort,{once:true});
       if(signal?.aborted){abort();return;}
-      sftp.fastPut(local,remote,{step:(total:number,_chunk:number,size:number)=>{if(!signal?.aborted)onProgress?.(total,size);}},error=>finish(error?new Error("SFTP_UPLOAD_FAILED"):undefined));
+      sftp.fastPut(local,remote,{step:(total:number,_chunk:number,size:number)=>{if(!signal?.aborted)onProgress?.(total,size);}},error=>{if(!signal?.aborted)finish(error?new Error("SFTP_UPLOAD_FAILED"):undefined);});
     });}finally{sftp.end();}
   }
   async write(remote:string,value:string):Promise<void>{const sftp=await this.sftp();try{await new Promise<void>((resolve,reject)=>sftp.writeFile(remote,value,{mode:0o600},error=>error?reject(new Error("SFTP_WRITE_FAILED")):resolve()));}finally{sftp.end();}}

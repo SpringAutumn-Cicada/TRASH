@@ -8,7 +8,7 @@ import { FileSearch, Cpu, Search, ChevronDown, X, Archive, FileUp, FolderOpen, P
 import type { ReproductionCode, ReproductionSnapshot, SshProfile } from "@trash/protocol";
 import { RepositoryBrowser } from "./repository-browser.js";
 import { readPreference, writePreference, useUnsavedChanges } from "./navigation.js";
-const messages:Record<string,string>={...environmentErrors,UPLOAD_CANCELLED:"上传已终止；远端可能保留未完成文件，不会登记为上传成功。",UPLOAD_NOT_RUNNING:"上传任务尚未就绪或已经结束，请稍后重试或查看结果。",UPLOAD_FINALIZING:"文件已传完，正在校验或归档，已无法终止文件传输，请等待处理结果。",SSH_NOT_CONNECTED:"所选主机尚未连接或连接已断开，请先点击连接。",
+const messages:Record<string,string>={...environmentErrors,UPLOAD_CANCELLED:"上传已终止；本次创建的远端目录已清理（未创建目录时无需清理）。",UPLOAD_CANCEL_CLEANUP_FAILED:"上传已终止，但远端目录清理失败，请手动检查残留目录。",UPLOAD_NOT_RUNNING:"上传任务尚未就绪或已经结束，请稍后重试或查看结果。",UPLOAD_FINALIZING:"文件已传完，正在校验或归档，已无法终止文件传输，请等待处理结果。",SSH_NOT_CONNECTED:"所选主机尚未连接或连接已断开，请先点击连接。",
  REPRODUCTION_UNZIP_UNAVAILABLE:"远端未找到可用的 unzip，请在实例中安装后重试；平台不会自动安装软件。",
  REPRODUCTION_SNAPSHOT_READ_FAILED:"无法读取本机代码快照，请检查文件和目录权限。",
  REPRODUCTION_REMOTE_DIRECTORY_FAILED:"SFTP 创建远端目录失败，请检查父目录是否存在、写入权限及磁盘空间。",
@@ -39,7 +39,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
  const alive=useRef(true);useUnsavedChanges(editing||busy);
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
  useEffect(()=>{if(!host&&profileId)setHost(profileId);},[profileId,host]);
- const call=async<T,>(route:string,body?:unknown,method=body===undefined?"GET":"POST"):Promise<T>=>{const response=await fetch(base+route,{method,...(body===undefined?{}:{headers:{"content-type":"application/json"},body:JSON.stringify(body)})});const data=await response.json();if(!response.ok)throw new Error(messages[data.error]??`操作失败（${data.error??response.status}），请检查代码目录和主机配置。`);return data;};
+ const call=async<T,>(route:string,body?:unknown,method=body===undefined?"GET":"POST"):Promise<T>=>{const response=await fetch(base+route,{method,...(body===undefined?{}:{headers:{"content-type":"application/json"},body:JSON.stringify(body)})});const data=await response.json();if(!response.ok)throw new Error((messages[data.error]??`操作失败（${data.error??response.status}），请检查代码目录和主机配置。`)+(data.error==="UPLOAD_CANCEL_CLEANUP_FAILED"&&typeof data.path==="string"?` 残留目录：${data.path}`:""));return data;};
  const load=async()=>{const data=await call<{codes:ReproductionCode[]}>("/reproductions");if(alive.current){setCodes(data.codes);setSelected(old=>data.codes.some(c=>c.id===old)?old:data.codes[0]?.id??"");}};
  const action=async(work:()=>Promise<void>)=>{if(busy)return;setBusy(true);setError("");setNotice("");try{await work();}catch(cause){if(alive.current)setError(cause instanceof Error?cause.message:"操作失败。");}finally{if(alive.current)setBusy(false);}};
  useEffect(()=>{void action(async()=>{await load();const data=await call<{sources:typeof sources}>("/sources");if(alive.current)setSources(data.sources);});},[projectId]);
@@ -76,7 +76,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
  const stopUpload=async()=>{
   if(!uploadRequest||!uploading||stoppingUpload)return;
   setStoppingUpload(true);setError("");
-  try{await call(`/reproductions/${uploadRequest.code}/cancel-upload`,{request_id:uploadRequest.id,confirm:true});if(alive.current)setProgressWarning("正在终止上传，请等待后端确认；远端可能保留未完成文件。");}
+  try{await call(`/reproductions/${uploadRequest.code}/cancel-upload`,{request_id:uploadRequest.id,confirm:true});if(alive.current)setProgressWarning("正在终止上传并清理本次创建的远端目录，请等待后端确认。");}
   catch(cause){if(alive.current){setError(cause instanceof Error?cause.message:"终止请求失败，请查看上传状态后重试。");setStoppingUpload(false);}}
  };
  const upload=async()=>{

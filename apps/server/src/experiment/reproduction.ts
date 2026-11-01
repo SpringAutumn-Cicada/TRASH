@@ -85,9 +85,23 @@ export class ReproductionService {
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
  async preparation(project:string,snapshot:ReproductionSnapshot,path:string){await this.bundle(project,snapshot);const script=String.raw`import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);i=z.getinfo(sys.argv[2]);assert i.file_size<=1048576;sys.stdout.write(z.read(i).decode('utf8'))`;return (await execute("python3",["-c",script,join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),path],{maxBuffer:2*1024*1024})).stdout;}
+ private async cleanupCancelledUpload(remote:RemoteConnection,parent:string,directory:string,archive:string){
+  // No recursive removal: cancellation is accepted only before extraction.
+  if(posix.dirname(directory)!==posix.normalize(parent)||directory===parent||!posix.isAbsolute(directory))throw new Error("UNSAFE_CLEANUP_PATH");
+  const sftp=await remote.sftp();
+  try{
+   const info=await new Promise<import("ssh2").Stats>((resolve,reject)=>sftp.lstat(directory,(error,value)=>error?reject(error):resolve(value)));
+   if(!info.isDirectory()||info.isSymbolicLink())throw new Error("UNSAFE_CLEANUP_PATH");
+   const ignoreMissing=(error:Error|undefined|null)=>!error||Number((error as Error&{code?:number}).code)===2;
+   await new Promise<void>((resolve,reject)=>sftp.unlink(posix.join(directory,archive),error=>ignoreMissing(error)?resolve():reject(error)));
+   await new Promise<void>((resolve,reject)=>sftp.rmdir(posix.join(directory,"code"),error=>ignoreMissing(error)?resolve():reject(error)));
+   await new Promise<void>((resolve,reject)=>sftp.rmdir(directory,error=>ignoreMissing(error)?resolve():reject(error)));
+  }finally{sftp.end();}
+ }
  async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{},signal?:AbortSignal){
   const archiveName=this.archiveName(snapshot.archive_name??`${this.directoryName(snapshot.name).slice(6)}.zip`);
   const parent=directory;
+  let createdDirectory:string|undefined;
   let stage="REPRODUCTION_SNAPSHOT_READ_FAILED";
   try{
    const bundle=await this.bundle(project,snapshot);
@@ -106,7 +120,7 @@ export class ReproductionService {
      const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(candidate,error=>{if(!error)resolve(true);else if(Number((error as Error & {code?:number}).code)===2)resolve(false);else reject(error);}));
      if(exists)continue;
      await new Promise<void>((resolve,reject)=>sftp.mkdir(candidate,{mode:0o700},error=>error?reject(error):resolve()));
-     directory=candidate;allocated=true;break;
+     directory=candidate;createdDirectory=candidate;allocated=true;break;
     }
     if(!allocated)throw new Error("UPLOAD_NAME_CONFLICT");
     await new Promise<void>((resolve,reject)=>sftp.mkdir(posix.join(directory,"code"),{mode:0o700},error=>error?reject(error):resolve()));
@@ -128,7 +142,13 @@ export class ReproductionService {
    report("completed",bundle.size,bundle.size);
    return {path:posix.join(directory,"code"),snapshot};
   }catch(error){
-   if(signal?.aborted)experimentError("UPLOAD_CANCELLED",409);
+   if(signal?.aborted){
+    if(createdDirectory){
+     try{await this.cleanupCancelledUpload(remote,parent,createdDirectory,archiveName);}
+     catch{throw Object.assign(new Error("UPLOAD_CANCEL_CLEANUP_FAILED"),{statusCode:409,residual_path:createdDirectory});}
+    }
+    experimentError("UPLOAD_CANCELLED",409);
+   }
    if(error instanceof Error&&"statusCode" in error)throw error;
    if(error instanceof Error&&error.message==="SSH_COMMAND_TIMEOUT")experimentError("REPRODUCTION_REMOTE_TIMEOUT",422);
    experimentError(stage,422);

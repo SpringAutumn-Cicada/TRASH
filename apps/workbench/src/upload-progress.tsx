@@ -2,7 +2,7 @@ import React from "react";
 import { Archive, Check, LoaderCircle, Upload, AlertCircle } from "lucide-react";
 
 const steps=[{label:"准备代码",stages:["snapshot","preparing"]},{label:"上传文件",stages:["uploading"]},{label:"完整性校验",stages:["verifying"]},{label:"解压归档",stages:["extracting","saving","completed"]}];
-const labels:Record<string,string>={snapshot:"正在生成代码快照",preparing:"正在准备远端目录",uploading:"正在上传代码包",verifying:"正在远端校验 SHA-256",extracting:"正在解压代码",saving:"正在保存快照清单",completed:"远端处理完成",failed:"上传失败",cancelling:"正在终止上传",cancelled:"上传已终止"};
+const labels:Record<string,string>={snapshot:"正在生成代码快照",preparing:"正在准备远端目录",uploading:"正在上传代码包",verifying:"正在远端校验 SHA-256",extracting:"正在解压代码",saving:"正在保存快照清单",completed:"远端处理完成",failed:"上传失败",cancelling:"正在终止上传",cancelled:"上传已终止，目录已清理",cleanup_failed:"上传已终止，目录清理失败"};
 export function UploadProgress({progress,warning,name}:{progress?:{stage:string;sent:number;total:number};warning:string;name:string}){
  const stage=progress?.stage??"snapshot",index=steps.findIndex(step=>step.stages.includes(stage));
  const total=progress?.total??0,sent=progress?.sent??0,percent=total>0?Math.min(100,Math.max(0,sent/total*100)):undefined;
