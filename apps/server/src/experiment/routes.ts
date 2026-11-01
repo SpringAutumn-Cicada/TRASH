@@ -193,7 +193,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         if(input.password)service.ssh.setCredential(profile.profile_id,{password:input.password});
         send(response,200,{profile:updated,credential_available:service.ssh.hasCredential(updated)});return true;
       }
-      if(parts.length===2&&method==="DELETE"){if(service.terminals.hasProfile(profile.profile_id))experimentError("TERMINAL_PROFILE_BUSY",409);if(service.reproductions.busy(projectId))experimentError("REPRODUCTION_BUSY",409);service.data.deleteProfile(projectId,profile.profile_id);service.ssh.forget(profile.profile_id);send(response,200,{deleted:true});return true;}
+      if(parts.length===2&&method==="DELETE"){if(service.terminals.hasProfile(profile.profile_id))experimentError("TERMINAL_PROFILE_BUSY",409);if(service.reproductions.busy(projectId))experimentError("REPRODUCTION_BUSY",409);if(service.datasetUploads.busy(projectId))experimentError("DATASET_BUSY",409);service.data.deleteProfile(projectId,profile.profile_id);service.ssh.forget(profile.profile_id);send(response,200,{deleted:true});return true;}
       if(parts[2]==="credentials"&&method==="PUT"){service.ssh.setCredential(profile.profile_id,sessionCredentialSchema.parse(await readJson(request)));send(response,200,{credential_available:service.ssh.hasCredential(profile)});return true;}
       if(parts[2]==="credentials"&&method==="DELETE"){service.ssh.forget(profile.profile_id);send(response,200,{forgotten:true});return true;}
       if(parts[2]==="fingerprint"&&method==="POST"){send(response,200,{fingerprint:await service.ssh.probe(profile),trusted:profile.fingerprint??null});return true;}
@@ -202,6 +202,20 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     }
   }
   if(parts[0]==="datasets"){
+    if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
+      const profile=z.string().min(1).parse(url.searchParams.get("profile_id")),name=z.string().trim().min(1).max(200).parse(url.searchParams.get("name")),filename=z.string().min(1).max(255).parse(url.searchParams.get("filename")),requestId=z.string().uuid().parse(url.searchParams.get("request_id"));
+      service.data.profile(projectId,profile);const workspace=service.workspaces.get(projectId,profile)??experimentError("WORKSPACE_REQUIRED",409);
+      send(response,201,{dataset:await service.datasetUploads.upload(projectId,profile,workspace.root,service.terminals.connection(projectId,profile),request,name,filename,url.searchParams.get("extract")==="true",requestId)});return true;
+    }
+    if(parts.length===3&&parts[2]==="cancel-upload"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.datasetUploads.cancel(projectId,parts[1]));return true;}
+    if(parts.length===2&&["PUT","DELETE"].includes(method)){
+      const dataset=service.data.datasets(projectId).find(item=>item.dataset_id===parts[1])??experimentError("DATASET_NOT_FOUND",404);
+      if(dataset.transfer_status==="uploading")experimentError("DATASET_BUSY",409);
+      if(service.data.runs(projectId).some(run=>service.data.active(run)&&run.plan.datasets.some(item=>item.dataset_id===dataset.dataset_id)))experimentError("EXPERIMENT_ACTIVE",409);
+      if(method==="DELETE"){service.store.db.prepare("DELETE FROM experiment_datasets WHERE project_id=? AND dataset_id=?").run(projectId,dataset.dataset_id);send(response,200,{deleted:true});}
+      else{const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const updated={...value,dataset_id:dataset.dataset_id,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(updated);send(response,200,{dataset:updated});}return true;
+    }
+
     if(parts.length===1&&method==="GET"){send(response,200,{datasets:service.data.datasets(projectId)});return true;}
     if(parts.length===1&&method==="POST"){const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const dataset={...value,dataset_id:`dataset_${randomUUID()}`,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(dataset);send(response,201,{dataset});return true;}
     if(parts[2]==="check"&&method==="POST"){send(response,200,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
