@@ -1,3 +1,4 @@
+import { deleteDatasetFiles } from "./delete-dataset.js";
 import { recognizeWorkspace, adoptWorkspace } from "./workspace-migration.js";
 import { directoryLabel, ensureRemoteDirectory } from "./workspace.js";
 import { posix } from "node:path";
@@ -253,6 +254,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     }
     if(parts.length===3&&parts[1]==='cancel-upload-request'&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.datasetUploads.cancelRequest(projectId,z.string().uuid().parse(parts[2])));return true;}
     if(parts.length===3&&parts[2]==="cancel-upload"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.datasetUploads.cancel(projectId,parts[1]));return true;}
+    if(parts.length===3&&parts[2]==='delete-files'&&method==='POST'){const input=z.object({confirm:z.literal(true),path:z.string().min(1)}).strict().parse(await readJson(request));send(response,200,await deleteDatasetFiles(service,projectId,parts[1],input.path));return true;}
     if(parts.length===2&&["PUT","DELETE"].includes(method)){
       const dataset=service.data.datasets(projectId).find(item=>item.dataset_id===parts[1])??experimentError("DATASET_NOT_FOUND",404);
       if(dataset.transfer_status==="uploading")experimentError("DATASET_BUSY",409);
