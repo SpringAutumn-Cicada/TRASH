@@ -1,3 +1,5 @@
+import { RemoteWorkspaceSettings } from "./remote-workspace.js";
+import "./data.css";
 import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
@@ -21,7 +23,7 @@ async function request<T>(base:string,path:string,body?:unknown,method=body===un
 const stateNames:Record<string,string>={queued:"排队",preflight:"预检查",syncing:"同步代码",running:"运行中",collecting:"收集产物",completed:"已完成",failed:"失败",cancel_requested:"取消请求中",cancelled:"已取消",disconnected:"连接中断",unknown_remote_state:"远端状态待确认"};
 const terminal=["completed","failed","cancelled"];
 const tabs=[{id:"overview",label:"实验概览"},{id:"code",label:"实验代码"},{id:"plans",label:"实验计划"},{id:"runs",label:"运行"},{id:"artifacts",label:"产物"}] as const;
-const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"workspace",label:"AutoDL 工作区"}] as const;
+const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"settings",label:"工作区设置"},{id:"workspace",label:"AutoDL 工作区"}] as const;
 type Tab=typeof tabs[number]["id"]|typeof autoDlTabs[number]["id"];
 
 export function ExperimentsPage({projectId,focusId,onResult,reproductionOnly=false,autoDlOnly=false,snapshotId,onReproductionPlan}:{projectId:string;focusId?:string;onResult:(id:string)=>void;reproductionOnly?:boolean;autoDlOnly?:boolean;snapshotId?:string;onReproductionPlan?:(snapshot:ReproductionSnapshot)=>void}) {
@@ -120,6 +122,7 @@ export function ExperimentsPage({projectId,focusId,onResult,reproductionOnly=fal
 
     </section>}
 
+    {autoDlOnly&&tab==="settings"&&<RemoteWorkspaceSettings projectId={projectId} profiles={profiles} profileId={profileId} connectedProfiles={terminalSessions.filter(item=>!item.ended).map(item=>item.profile_id)}/>}
     <div hidden={!autoDlOnly||tab!=="workspace"}><AutoDlUpload projectId={projectId} session={terminalSessions.find(session=>!session.ended)}/></div>
     <div hidden={!autoDlOnly||tab!=="workspace"} className="autodl-workspace">
       {terminalSessions.length>0?<><div className="autodl-workspace-heading"><div><strong>{terminalSessions[0]?.name} · AutoDL 终端</strong><span>{terminalSessions.length} / 3 个独立窗口</span></div><div><span>Shift + Alt + D 分屏 · 右键复制选区</span><button type="button" className="secondary-button" disabled={connecting||terminalSessions.length>=3||!terminalSessions.some(item=>!item.ended)} onClick={()=>{const source=terminalSessions.find(item=>!item.ended);if(source)void connectTerminal(source.profile_id,source);}}><Columns2 size={14}/>分屏</button><button type="button" className="secondary-button" disabled={busy||connecting} onClick={()=>void run(disconnectTerminals)}>断开连接</button></div></div><div className={`autodl-terminal-grid panes-${terminalSessions.length}`}>{terminalSessions.map((session,index)=><AutoDlTerminal key={session.id} projectId={projectId} session={session} number={index+1} splitDisabled={connecting||terminalSessions.length>=3||Boolean(session.ended)} onSplit={()=>void connectTerminal(session.profile_id,session)} onDisconnect={()=>{setTerminalSessions(current=>current.filter(item=>item.id!==session.id));setNotice("终端窗口已关闭。");}} onEnded={()=>setTerminalSessions(current=>current.map(item=>item.id===session.id?{...item,ended:true}:item))}/>)}</div></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>AutoDL 工作区</h3><p>点击内容顶栏“AutoDL 连接”选择主机，连接后即可在这里操作终端。</p><button type="button" className="primary-button" onClick={()=>window.dispatchEvent(new CustomEvent("trash-autodl-open",{detail:{projectId}}))}>AutoDL 连接</button></div>}

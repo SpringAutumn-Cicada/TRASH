@@ -12,6 +12,12 @@ import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
+  if(parts[0]==="remote-workspace"){
+    const profileId=z.string().min(1).parse(url.searchParams.get("profile_id"));service.data.profile(projectId,profileId);
+    if(parts.length===1&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{workspace:service.workspaces.get(projectId,profileId)??null,suggested_root:service.workspaces.suggested(projectId)});return true;}
+    if(parts.length===1&&method==="PUT"){const input=z.object({root:z.string().trim().min(1).max(2048)}).strict().parse(await readJson(request));send(response,200,{workspace:service.workspaces.save(projectId,profileId,input.root)});return true;}
+    if(parts.length===2&&parts[1]==="initialize"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{workspace:await service.workspaces.initialize(projectId,profileId,service.terminals.connection(projectId,profileId))});return true;}
+  }
   if(parts.length===1&&parts[0]==="terminals"&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{terminals:service.terminals.list(projectId)});return true;}
   if(parts[0]==="terminals"&&parts[1]){
     const token=typeof request.headers["x-terminal-token"]==="string"?request.headers["x-terminal-token"]:"";
