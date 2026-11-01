@@ -35,6 +35,28 @@ with zipfile.ZipFile(sys.argv[1]) as z:
    records.append({'path':str(p),'sha256':h.hexdigest()})
  print(json.dumps(records))
 `;
+const validateTar=String.raw`import sys,tarfile,pathlib,hashlib,json
+with tarfile.open(sys.argv[1],'r:*') as archive:
+ seen=set();records=[];total=0;count=0
+ for entry in archive:
+  count+=1;assert count<=100000
+  name=entry.name;p=pathlib.PurePosixPath(name)
+  assert name and not p.is_absolute() and '..' not in p.parts
+  assert not any(ord(c)<32 for c in name) and chr(92) not in name
+  assert entry.isfile() or entry.isdir()
+  if not p.parts:
+   assert entry.isdir();continue
+  assert p.parts[0] not in ('.trash-upload.zip','.trash-upload.tar','.trash')
+  assert str(p) not in seen;seen.add(str(p))
+  if entry.isfile():
+   total+=entry.size;assert total<=5*1024**3
+   h=hashlib.sha256()
+   with archive.extractfile(entry) as file:
+    for block in iter(lambda:file.read(1024*1024),b''):h.update(block)
+   records.append({'path':str(p),'sha256':h.hexdigest()})
+ assert records
+ print(json.dumps(records))
+`;
 interface Transfer {project:string;dataset:string;controller:AbortController;stage:string}
 export class DatasetUploadService {
  private transfers=new Map<string,Transfer>();
@@ -75,7 +97,8 @@ export class DatasetUploadService {
  async upload(project:string,profile:string,root:string,remote:RemoteConnection,request:IncomingMessage,name:string,filename:string,extract:boolean,requestId:string){
   if(this.transfers.has(requestId)||this.busy(project))experimentError('DATASET_BUSY',409);
   if(!filename||filename==='.'||filename==='..'||filename.includes('/')||filename.includes('\\')||Array.from(filename).some(c=>c.charCodeAt(0)<32)||Buffer.byteLength(filename)>255)experimentError('UPLOAD_PATH_INVALID',400);
-  if(extract&&!filename.toLowerCase().endsWith('.zip'))experimentError('DATASET_ARCHIVE_INVALID',400);
+  const archiveType=filename.toLowerCase().endsWith('.zip')?'zip':/\.(tar|tar\.gz|tgz)$/i.test(filename)?'tar':undefined;
+  if(extract&&!archiveType)experimentError('DATASET_ARCHIVE_INVALID',400);
   const declared=Number(request.headers['content-length']);if(Number.isFinite(declared)&&declared>MAX_DATASET_BYTES)experimentError('REQUEST_TOO_LARGE',413);
   const id='dataset_'+randomUUID(),parent=posix.join(root,'datasets'),target=posix.join(parent,directoryLabel(name));
   let dataset:DatasetRef={dataset_id:id,project_id:project,profile_id:profile,name,version:'1',notes:'',path:target,verification_status:'unverified',transfer_status:'uploading',transfer_request_id:requestId,transfer_stage:'receiving',transfer_sent:0,transfer_total:Number(request.headers['content-length'])||0};
@@ -89,12 +112,12 @@ export class DatasetUploadService {
    await pipeline(request,limit,createWriteStream(file,{mode:0o600}),{signal:transfer.controller.signal});stopped();
    const bytes=(await stat(file)).size;if(!bytes)experimentError('DATASET_EMPTY_FILE',400);
    update('validating',bytes,bytes);
-   if(extract){try{const result=await execute('python3',['-I','-B','-c',validateZip,file],{timeout:1800000,maxBuffer:16*1024*1024,signal:transfer.controller.signal});hashes=JSON.parse(result.stdout);}catch{stopped();experimentError('DATASET_ARCHIVE_INVALID',422);}await remote.exec(['sh','-c','command -v unzip >/dev/null 2>&1']);}
+   if(extract){try{const result=await execute('python3',['-I','-B','-c',archiveType==='zip'?validateZip:validateTar,file],{timeout:1800000,maxBuffer:16*1024*1024,signal:transfer.controller.signal});hashes=JSON.parse(result.stdout);}catch{stopped();experimentError('DATASET_ARCHIVE_INVALID',422);}await remote.exec(['sh','-c',archiveType==='zip'?'command -v unzip >/dev/null 2>&1':'command -v tar >/dev/null 2>&1']);}
    if(!extract)hashes=[{path:filename,sha256:digest.digest('hex')}];
    stopped();await ensureRemoteDirectory(remote,parent);stopped();
    const sftp=await remote.sftp();try{const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(target,error=>{if(!error)resolve(true);else if(Number((error as Error&{code?:number}).code)===2)resolve(false);else reject(error);}));if(exists)experimentError('REPRODUCTION_REMOTE_TARGET_EXISTS',409);await new Promise<void>((resolve,reject)=>sftp.mkdir(target,{mode:0o755},error=>error?reject(error):resolve()));owned=true;}finally{sftp.end();}
-   stopped();const destination=posix.join(target,extract?'.trash-upload.zip':filename);update('uploading',0,bytes);await remote.upload(file,destination,(sent,total)=>update('uploading',sent,total),transfer.controller.signal);stopped();
-   if(extract){update('extracting',bytes,bytes);await remote.exec(['unzip','-q','-n',destination,'-d',target],undefined,1800000);await remote.exec(['rm','--',destination]);}
+   stopped();const destination=posix.join(target,extract?(archiveType==='zip'?'.trash-upload.zip':'.trash-upload.tar'):filename);update('uploading',0,bytes);await remote.upload(file,destination,(sent,total)=>update('uploading',sent,total),transfer.controller.signal);stopped();
+   if(extract){update('extracting',bytes,bytes);await remote.exec(archiveType==='zip'?['unzip','-q','-n',destination,'-d',target]:['tar','--extract','--file',destination,'--directory',target,'--no-same-owner','--no-same-permissions','--keep-old-files'],undefined,1800000);await remote.exec(['rm','--',destination]);}
    update('saving',bytes,bytes);this.saveHashes(project,id,hashes);dataset={...dataset,size_bytes:bytes,transfer_status:'ready',transfer_message:extract?'已上传并解压。':'已上传。'};dataset={...dataset,transfer_status:'uploading',transfer_stage:'verifying'};transfer.stage='verifying';this.data.saveDataset(dataset);dataset=await this.verify(project,id,remote);dataset={...dataset,transfer_status:'ready',transfer_stage:'saving'};this.data.saveDataset(dataset);return dataset;
   }catch(error){let cleanupFailed=false;if(owned){try{await remote.exec(['rm','-rf','--',target],undefined,60000);}catch{cleanupFailed=true;}}
    const cancelled=transfer.controller.signal.aborted;dataset={...dataset,transfer_status:cancelled?'cancelled':'failed',transfer_message:cleanupFailed?'远端清理未完成，请检查：'+target:cancelled?'上传已终止，本次目录已清理。':'上传失败，本次创建的目录已清理；已有目录未改动。'};this.data.saveDataset(dataset);
