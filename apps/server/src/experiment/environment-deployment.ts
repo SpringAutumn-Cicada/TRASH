@@ -5,13 +5,13 @@ import { join, posix } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { experimentError, type TrashStore } from "@trash/storage";
-import type { CodeEnvironmentReport } from "@trash/protocol";
+import type { CodeEnvironmentReport, PackageInstallProgress } from "@trash/protocol";
 import type { ReproductionService } from "./reproduction.js";
 import type { RemoteConnection } from "./ssh.js";
 import { redact } from "./ssh.js";
 import { DEPLOYMENT_RUNNER } from "./deployment-runner.js";
-export interface DeploymentTask {id:string;project_id:string;code_id:string;report_id:string;profile_id:string;directory:string;python:string;status:"planning"|"installing"|"cancelling"|"completed"|"cancelled"|"failed"|"unknown";created_at:string;finished_at?:string;message:string;venv?:string;warnings?:string[];remote_job?:string;resumed_from?:string;stage?:string;completed_units?:number;total_units?:number;current?:string;log_tail?:string;resumed?:boolean}
-const planSchema=z.object({python_version:z.string().max(200).nullable().default(null),blocked:z.array(z.string().max(1000)).max(30),warnings:z.array(z.string().max(1000)).max(50).default([]),installs:z.array(z.object({packages:z.array(z.string().min(1).max(300).regex(/^[A-Za-z0-9][A-Za-z0-9_.\[\],<>=!~+;-]*$/)).min(1).max(100),index_url:z.string().url().nullable()}).strict()).max(50)}).strict();const remoteStateSchema=z.object({pending:z.boolean().optional(),status:z.enum(['installing','completed','cancelled','failed']).optional(),stage:z.string().max(100).optional(),completed_units:z.number().int().nonnegative().optional(),total_units:z.number().int().positive().optional(),current:z.string().max(4000).optional(),venv:z.string().optional(),resumed:z.boolean().optional(),log_tail:z.string().max(20000).optional()}).passthrough();
+export interface DeploymentTask {id:string;project_id:string;code_id:string;report_id:string;profile_id:string;directory:string;python:string;status:"planning"|"installing"|"cancelling"|"completed"|"cancelled"|"failed"|"unknown";created_at:string;finished_at?:string;message:string;venv?:string;warnings?:string[];remote_job?:string;resumed_from?:string;stage?:string;completed_units?:number;total_units?:number;current?:string;log_tail?:string;resumed?:boolean;package_progress?:PackageInstallProgress}
+const planSchema=z.object({python_version:z.string().max(200).nullable().default(null),blocked:z.array(z.string().max(1000)).max(30),warnings:z.array(z.string().max(1000)).max(50).default([]),installs:z.array(z.object({packages:z.array(z.string().min(1).max(300).regex(/^[A-Za-z0-9][A-Za-z0-9_.\[\],<>=!~+;-]*$/)).min(1).max(100),index_url:z.string().url().nullable()}).strict()).max(50)}).strict();const remoteStateSchema=z.object({pending:z.boolean().optional(),status:z.enum(['installing','completed','cancelled','failed']).optional(),stage:z.string().max(100).optional(),completed_units:z.number().int().nonnegative().optional(),total_units:z.number().int().positive().optional(),current:z.string().max(4000).optional(),venv:z.string().optional(),resumed:z.boolean().optional(),log_tail:z.string().max(20000).optional(),package_progress:z.object({phase:z.enum(['resolving','downloading','cached','building','installing','installed']),package:z.string().max(300).optional(),filename:z.string().max(400).optional(),downloaded_bytes:z.number().finite().nonnegative().optional(),total_bytes:z.number().finite().nonnegative().optional(),speed_bytes_per_second:z.number().finite().nonnegative().optional(),eta_seconds:z.number().finite().nonnegative().optional(),approximate:z.boolean().optional(),detail:z.string().max(1000).optional(),updated_at:z.number().finite().optional()}).optional()}).passthrough();
 const live=(task:DeploymentTask)=>['planning','installing','cancelling','unknown'].includes(task.status);
 interface Active {task:DeploymentTask;child?:ChildProcess;cancel:boolean}
 export class EnvironmentDeploymentService {
@@ -34,6 +34,7 @@ export class EnvironmentDeploymentService {
   if(!live(task)&&state.status==='installing')return;
   if(!state.status)throw new Error('远端状态格式不完整');
   if(task.status!=='cancelling'||state.status!=='installing')task.status=state.status;
+  task.package_progress=state.package_progress?{...state.package_progress,package:redact(state.package_progress.package??''),filename:redact(state.package_progress.filename??''),detail:redact(state.package_progress.detail??'')}:undefined;
   task.stage=state.stage;task.completed_units=state.completed_units;task.total_units=state.total_units;task.current=redact(state.current??'');task.log_tail=redact(state.log_tail??'');task.resumed=state.resumed;task.venv=state.venv;
   task.message=state.status==='completed'?'部署完成，依赖检查通过；尚未运行论文实验。':task.status==='cancelling'?'正在停止当前安装步骤，请等待远端确认。':task.current||'正在部署';
   if(!live(task))task.finished_at=new Date().toISOString();this.save(task);

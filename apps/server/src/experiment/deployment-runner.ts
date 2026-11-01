@@ -1,5 +1,5 @@
 // Fixed remote executor: subprocess groups are owned by this invocation; no shell commands.
-export const DEPLOYMENT_RUNNER=String.raw`import sys,json,pathlib,subprocess,os,hashlib,time,signal,fcntl
+export const DEPLOYMENT_RUNNER=String.raw`import sys,json,pathlib,subprocess,os,hashlib,time,signal,fcntl,pty,termios,struct,re,codecs
 p=json.load(sys.stdin)
 job=pathlib.Path(p['job'])
 action=p.get('action','run')
@@ -33,23 +33,79 @@ def stop(child):
   try: os.killpg(child.pid,signal.SIGKILL)
   except ProcessLookupError: pass
   child.wait()
-def command(args,timeout=900):
- cancelled();start=time.monotonic()
- with (job/'install.log').open('ab') as log:
-  child=subprocess.Popen(args,cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
-  try:
-   while child.poll() is None:
-    cancelled()
-    if time.monotonic()-start>timeout: raise TimeoutError('当前安装步骤超时，已停止本步骤，可继续部署')
-    if time.monotonic()-started>1800: raise TimeoutError('部署超过三十分钟，已停止，可继续部署')
-    if (job/'install.log').stat().st_size>2*1024*1024:
-     log.truncate(0)
-    update();time.sleep(0.5)
+ansi=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)')
+def amount(number,unit):
+ unit=unit.lower();power={'b':0,'kb':1,'kib':1,'mb':2,'mib':2,'gb':3,'gib':3,'tb':4,'tib':4}.get(unit,0)
+ return int(float(number)*(1024 if 'i' in unit else 1000)**power)
+def parse_package_line(text):
+ text=ansi.sub('',text).strip()
+ if not text:return
+ info=state.setdefault('package_progress',{'phase':'resolving'})
+ if text.startswith(('Collecting ','Processing ')):
+  info={'phase':'resolving','package':text.split(' ',1)[1][:300]};state['package_progress']=info
+ elif 'Downloading ' in text or 'Using cached ' in text:
+  cached='Using cached ' in text;value=text.split('Using cached ' if cached else 'Downloading ',1)[1]
+  filename=value.split(' ',1)[0].rsplit('/',1)[-1].split('?',1)[0]
+  info={'phase':'cached' if cached else 'downloading','package':info.get('package',''),'filename':filename[:400]};state['package_progress']=info
+  total=re.search(r'\((\d+(?:\.\d+)?)\s*([kMGT]?i?B)\)',text,re.I)
+  if total:info['total_bytes']=amount(total[1],total[2])
+ elif text.startswith('Installing collected packages:'):info={'phase':'installing'};state['package_progress']=info
+ elif 'Building wheel for ' in text:info={'phase':'building','package':text.split('Building wheel for ',1)[1].split(' ',1)[0][:300]};state['package_progress']=info
+ elif 'Preparing metadata' in text or 'Installing build dependencies' in text:info={'phase':'building'};state['package_progress']=info
+ elif text.startswith('Successfully installed '):info={'phase':'installed'};state['package_progress']=info
+ elif text.startswith('Requirement already satisfied:'):info={'phase':'cached','package':text.split(':',1)[1].strip().split(' ',1)[0][:300]};state['package_progress']=info
+ progress=re.search(r'(\d+(?:\.\d+)?)\s*([kMGT]?i?B)?\s*/\s*(\d+(?:\.\d+)?)\s*([kMGT]?i?B)\b',text,re.I)
+ if progress:
+  info['phase']='downloading';info['downloaded_bytes']=amount(progress[1],progress[2] or progress[4]);info['total_bytes']=amount(progress[3],progress[4]);info['approximate']=True
+  speed=re.search(r'(\d+(?:\.\d+)?)\s*([kMGT]?i?B)/s',text,re.I)
+  if speed:info['speed_bytes_per_second']=amount(speed[1],speed[2])
+  eta=re.search(r'eta\s+(\d+):(\d+):(\d+)',text,re.I)
+  if eta:info['eta_seconds']=int(eta[1])*3600+int(eta[2])*60+int(eta[3])
+ info['updated_at']=time.time();info['detail']=text[:1000]
+def package_line(text):
+ try:parse_package_line(text)
+ except (ValueError,OverflowError,KeyError):pass
+def command(args,timeout=900,track=False):
+ cancelled();start=time.monotonic();master,slave=pty.openpty();child=None
+ try:
+  fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,200,0,0))
+  child=subprocess.Popen(args,cwd=root,env={**env,'PYTHONUNBUFFERED':'1','TERM':'xterm','COLUMNS':'200'},stdout=slave,stderr=slave,start_new_session=True)
+ except BaseException:
+  os.close(master);raise
+ finally:os.close(slave)
+ decoder=codecs.getincrementaldecoder('utf8')(errors='replace');pending='';finished=None;last_update=0
+ try:
+  os.set_blocking(master,False)
+  with (job/'install.log').open('ab') as log:
+   while True:
+    cancelled();now=time.monotonic()
+    if now-start>timeout:raise TimeoutError('当前安装步骤超时，已停止本步骤，可继续部署')
+    if now-started>1800:raise TimeoutError('部署超过三十分钟，已停止，可继续部署')
+    try:data=os.read(master,65536)
+    except BlockingIOError:data=None
+    except OSError:data=b''
+    if data:
+     text=ansi.sub('',decoder.decode(data));log.write(text.encode('utf8'));log.flush()
+     if track:
+      pending+=text;lines=re.split(r'[\r\n]',pending);pending=lines.pop()[-4000:]
+      for line in lines:package_line(line)
+    if now-last_update>=0.5:
+     if track and pending:package_line(pending)
+     update();last_update=now
+    if (job/'install.log').stat().st_size>2*1024*1024:log.seek(0);log.truncate(0)
+    if child.poll() is not None:
+     if finished is None:finished=now
+     if data==b'' or now-finished>2:break
+    if not data:time.sleep(0.05)
+   if track and pending:package_line(pending)
    cancelled()
-   if child.returncode: raise RuntimeError('安装/检查命令退出码 '+str(child.returncode)+'；请查看安装日志')
-  except BaseException:
-   if child.poll() is None: stop(child)
-   raise
+   if child.returncode:raise RuntimeError('安装/检查命令退出码 '+str(child.returncode)+'；请查看安装日志')
+   update()
+ except BaseException:
+  if child and child.poll() is None:stop(child)
+  raise
+ finally:os.close(master)
+
 update()
 started=time.monotonic()
 lock=None
@@ -99,9 +155,11 @@ try:
  for index,group in enumerate(p['plan']['installs']):
   if index<saved.get('completed_groups',0):continue
   update(stage='packages',completed_units=index+2,current='安装 '+', '.join(group['packages'])[:500],group_index=index+1)
-  args=[python,'-I','-m','pip','--isolated','install','--disable-pip-version-check']
+  state['package_progress']={'phase':'resolving','detail':'解析依赖与检查缓存','updated_at':time.time()}
+  args=[python,'-I','-m','pip','--isolated','install','--disable-pip-version-check','--progress-bar','on']
   if group['index_url']:args+=['--index-url',group['index_url']]
-  command(args+group['packages'])
+  command(args+group['packages'],track=True)
+  state['package_progress']={'phase':'installed','detail':'当前安装组已完成','updated_at':time.time()}
   saved['completed_groups']=index+1;saved['inventory']=inventory();atomic(checkpoint,saved)
   update(completed_units=index+3)
  update(stage='checking',completed_units=state['total_units']-1,current='检查依赖一致性')
