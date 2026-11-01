@@ -239,6 +239,12 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="diagnostics"&&method==="POST"){send(response,200,{environment:await service.diagnostics(projectId,profile.profile_id)});return true;}
     }
   }
+  if(parts[0]==='dataset-upload-sessions'){
+    if(parts.length===1&&method==='POST'){send(response,201,{session:service.datasetUploadSessions.create(projectId,await readJson(request))});return true;}
+    if(parts.length===2&&method==='GET'){send(response,200,{session:await service.datasetUploadSessions.state(projectId,parts[1])});return true;}
+    if(parts.length===3&&parts[2]==='chunk'&&method==='PUT'){send(response,200,{session:await service.datasetUploadSessions.chunk(projectId,parts[1],z.coerce.number().int().nonnegative().parse(url.searchParams.get('offset')),request)});return true;}
+    if(parts.length===3&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));if(parts[2]==='finish'){send(response,202,{session:service.datasetUploadSessions.finish(projectId,parts[1])});return true;}if(parts[2]==='cancel'){send(response,200,{session:await service.datasetUploadSessions.cancel(projectId,parts[1])});return true;}}
+  }
   if(parts[0]==="datasets"){
     if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
       const profile=z.string().min(1).parse(url.searchParams.get("profile_id")),name=z.string().trim().min(1).max(200).parse(url.searchParams.get("name")),filename=z.string().min(1).max(255).parse(url.searchParams.get("filename")),requestId=z.string().uuid().parse(url.searchParams.get("request_id"));

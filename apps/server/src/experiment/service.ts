@@ -1,3 +1,4 @@
+import { DatasetUploadSessions } from "./dataset-upload-sessions.js";
 import { ReproductionQueueService } from "./reproduction-queue.js";
 import { DatasetUploadService } from "./dataset-upload.js";
 import { WorkspaceService, directoryLabel, ensureRemoteDirectory } from "./workspace.js";
@@ -19,16 +20,18 @@ const artifactListSchema=z.array(z.object({path:z.string(),size_bytes:z.number()
 const remoteStatusSchema=z.object({run_id:z.string(),token:z.string(),state:z.string(),at:z.number(),exit_code:z.number().int().nullable().optional(),reason:z.string().nullable().optional(),started_at:z.number().optional(),finished_at:z.number().optional()}).passthrough();
 export class ExperimentService {
   readonly datasetUploads:DatasetUploadService;readonly workspaces:WorkspaceService;readonly deployments:EnvironmentDeploymentService;readonly environmentAnalysis:EnvironmentAnalysisService;readonly reproductions:ReproductionService;readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;readonly terminals:TerminalService;
+  readonly datasetUploadSessions:DatasetUploadSessions;
   readonly reproductionQueues:ReproductionQueueService;
   private inFlight=new Set<string>();private closed=false;private timer:ReturnType<typeof setInterval>;
   constructor(readonly store:TrashStore){
     this.workspaces=new WorkspaceService(store);this.reproductions=new ReproductionService(store);this.data=new ExperimentStore(store.db);this.datasetUploads=new DatasetUploadService(this.data,store.listProjects().map(item=>item.project_id),store.root);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);this.environmentAnalysis=new EnvironmentAnalysisService(store,this.reproductions);this.deployments=new EnvironmentDeploymentService(store,this.reproductions,this.workspaces);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
+    this.datasetUploadSessions=new DatasetUploadSessions(this);
     this.reproductionQueues=new ReproductionQueueService(this);
     this.timer=setInterval(()=>{void this.tick();},5000);this.timer.unref();
   }
   close():void{this.closed=true;this.reproductionQueues.close();this.datasetUploads.close();clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
-  busyProject(projectId:string):boolean{return this.reproductionQueues.list(projectId).some(queue=>queue.status==='running'||queue.status==='paused')||this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
+  busyProject(projectId:string):boolean{return this.datasetUploadSessions.busy(projectId)||this.reproductionQueues.list(projectId).some(queue=>queue.status==='running'||queue.status==='paused')||this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
   private hostKey(profile:SshProfile):string{return `${profile.host.toLowerCase()}:${profile.port}:${profile.username}`;}
   private mark(run:ExperimentRun,state:ExperimentRunState,error?:string):void{
     if(this.closed)return;
