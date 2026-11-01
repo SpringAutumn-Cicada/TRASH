@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { experimentBindingsSchema, type ExperimentBindings, type CodeEnvironmentReport } from '@trash/protocol';
 import { experimentError } from '@trash/storage';
 import type { ExperimentService } from './service.js';
+import type { Queue } from './reproduction-queue.js';
 export const automaticExperimentInputSchema=z.object({code_id:z.string().min(1),report_id:z.string().min(1),profile_id:z.string().min(1),plan_index:z.number().int().nonnegative(),directory:z.string().startsWith('/').max(2048).refine(value=>value!=='/'&&!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..')),bindings:experimentBindingsSchema.shape.bindings,gpu:z.string().regex(/^(cpu|\d+(,\d+)*)$/).default('0'),timeout_seconds:z.number().int().min(10).max(604800).default(7200),confirm:z.literal(true)}).strict();
 type Input=z.infer<typeof automaticExperimentInputSchema>;
 function reportFor(service:ExperimentService,project:string,code:string,id:string){return service.environmentAnalysis.report(project,code,id);}
@@ -72,7 +73,7 @@ export async function prepareAutomaticExperiment(service:ExperimentService,proje
  const checks=JSON.parse(await remote.exec([posix.join(input.directory,'.venv/bin/python'),'-c',CHECK,input.directory,JSON.stringify(resolved.items.map(item=>({name:item.binding.dataset_name,path:item.dataset.path,subdir:item.recipe.dataset_subdirectory,required:item.recipe.required_paths,mappings:item.recipe.mappings,steps:item.recipe.steps})))],undefined,120000)) as {dataset_name:string;path:string;errors:string[]}[];
  return {input,...resolved,checks,ready:checks.every(item=>!item.errors.length)};
 }
-export async function createAutomaticExperiment(service:ExperimentService,project:string,value:unknown){
+export async function createAutomaticExperiment(service:ExperimentService,project:string,value:unknown):Promise<Queue>{
  const prepared=await prepareAutomaticExperiment(service,project,value);if(!prepared.ready)experimentError('EXPERIMENT_DATASET_LAYOUT_INVALID',409);
  const {input,items}=prepared;
  const options=Object.fromEntries(items.map(({binding,recipe})=>[binding.dataset_id,{command:['python'],config:recipe.config,execution_resume:recipe.resume,execution_steps:recipe.steps,result_collection:recipe.result,dataset_subdirectory:recipe.dataset_subdirectory,required_dataset_paths:recipe.required_paths,data_mappings:recipe.mappings.map(mapping=>({...mapping,dataset_id:binding.dataset_id})),evaluation_protocol:recipe.evaluation_protocol,expected_metrics:recipe.result.metrics.map(metric=>({name:metric.name,unit:metric.unit}))}]));
