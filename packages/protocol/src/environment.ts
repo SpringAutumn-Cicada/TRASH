@@ -8,6 +8,11 @@ const deploymentSchema=z.object({
  prerequisites:z.array(text).max(100),blockers:z.array(text).max(100),runtime_notes:z.array(text).max(100).optional(),
  steps:z.array(z.object({purpose:text,command:text,...attributed}).strict()).min(1).max(80)
 }).strict();
+const codeInformationSchema=z.object({
+ datasets:z.array(z.object({name:text,version:text,role:text,format:text,paths:z.array(text).max(40),directory_structure:text,source:text,preprocessing:text,split:text,weights:text,manual_preparation:z.array(text).max(40),...attributed}).strict()).max(80),
+ run_plans:z.array(z.object({name:text,scope:text,status:z.enum(['ready','blocked']),parameters:z.array(text).max(80),blockers:z.array(text).max(80),steps:z.array(z.object({stage:z.enum(['prepare','preprocess','train','evaluate','collect','other']),purpose:text,working_directory:text,entrypoint:text,command:text,inputs:z.array(text).max(40),outputs:z.array(text).max(40),metrics:z.array(text).max(40),...attributed}).strict()).max(60),...attributed}).strict()).max(40),
+ unresolved:z.array(text).max(100)
+}).strict();
 const legacyEnvironmentContentSchema=z.object({
  schema_version:z.literal(1),summary:text,
  requirements:z.array(z.object({category:z.enum(["system","python","framework","cuda","tool","dependency","other"]),name:text,requirement:text,...attributed,check:z.object({kind:z.enum(["python","package","tool","gpu","other"]),name:z.string().max(200),operator:z.enum(["eq","gte","lte","present","unknown"]),version:z.string().max(100)}).strict()}).strict()).max(300),
@@ -19,7 +24,7 @@ export const codeEnvironmentContentSchema=z.discriminatedUnion("schema_version",
  legacyEnvironmentContentSchema,
  legacyEnvironmentContentSchema.extend({schema_version:z.literal(2),
   image_selection:z.object({framework:imageValue,framework_version:imageValue,python:imageValue,cuda:imageValue}).strict(),
-  agent_deployment:deploymentSchema
+  agent_deployment:deploymentSchema,code_information:codeInformationSchema.optional()
  }).strict()
 ]);
 export type CodeEnvironmentContent=z.infer<typeof codeEnvironmentContentSchema>;

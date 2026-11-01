@@ -19,7 +19,7 @@ export const environmentErrors:Record<string,string>={
  ENVIRONMENT_HOST_PROBE_FAILED:"无法通过所选 Python 读取主机环境，请确认解释器存在、Python 版本支持 importlib.metadata（3.8+）及 SSH 仍连接。",ENVIRONMENT_PYTHON_INVALID:"解释器名称或路径无效。",SSH_NOT_CONNECTED:"请先连接所选 AutoDL 主机。",ENVIRONMENT_TASK_NOT_RUNNING:"任务已经结束，请刷新状态。",
  REPRODUCTION_ARCHIVE_FAILED:"生成代码快照失败，请检查 Python 3、代码大小、符号链接与本机目录权限。",NOT_FOUND:"当前后端尚未加载部署环境分析接口，请重启 TRASH 后再试。"
 };
-const taskNames:Record<string,string>={preparing:"正在固定快照并采集环境文件",analyzing:"本机 Codex 正在分析部署环境",completed:"报告已生成，尚未运行验证",failed:"分析失败",cancelled:"已取消分析",interrupted:"服务重启或停止，分析已中断"};
+const taskNames:Record<string,string>={preparing:"正在固定快照并采集环境文件",analyzing:"本机 Codex 正在分析源代码",completed:"报告已生成，尚未运行验证",failed:"分析失败",cancelled:"已取消分析",interrupted:"服务重启或停止，分析已中断"};
 const attributionNames={declared:"明确声明",inferred:"源码推断",unknown:"未知"};
 const categories:Record<string,string>={system:"系统",python:"Python",framework:"框架",cuda:"CUDA",tool:"工具",dependency:"依赖",other:"其他"};
 type Citation={path:string;line_start:number;line_end:number};
@@ -116,7 +116,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
   {loading&&<p role="status"><LoaderCircle size={14} className="spin"/>正在读取分析记录…</p>}
   {tasks[0]&&<div className={`environment-task environment-task-${tasks[0].status}`} role="status"><FileSearch size={19}/><div><strong>{taskNames[tasks[0].status]}</strong><span>{new Date(tasks[0].created_at).toLocaleString("zh-CN")}{tasks[0].error?` · ${environmentErrors[tasks[0].error]??tasks[0].error}`:""}</span></div>{active&&<button type="button" className="secondary-button" disabled={canceling} onClick={()=>void cancel()}><Square size={12}/>{canceling?"正在取消…":"取消分析"}</button>}</div>}
   <div className="environment-report-toolbar"><label>报告历史<select value={reportId} disabled={!reports.length||checking} onChange={event=>setReportId(event.target.value)}><option value="">尚无报告</option>{reports.map(item=><option key={item.id} value={item.id}>{new Date(item.created_at).toLocaleString("zh-CN")} · {item.id.slice(-8)}</option>)}</select></label><button type="button" className="icon-button" title="刷新环境报告" aria-label="刷新环境报告" disabled={checking} onClick={()=>setReload(value=>value+1)}><RefreshCw size={14}/></button></div>
-  {!report&&!loading&&<div className="environment-empty"><Cpu size={28}/><p>点击上方“分析部署环境”，由本机 Codex 阅读代码并整理依赖与启动方式。</p><span>不运行代码，不安装软件，不修改源文件。</span></div>}
+  {!report&&!loading&&<div className="environment-empty"><Cpu size={28}/><p>点击上方“分析源代码”，由本机 Codex 阅读代码并整理依赖与启动方式。</p><span>不运行代码，不安装软件，不修改源文件。</span></div>}
   {report&&<><div className="environment-report-meta"><span className={freshness==="stale"?"stale":""}>{freshnessLabels[freshness]}</span><span>Skill {report.skill_version}</span><span title={report.code_fingerprint}>代码指纹 {report.code_fingerprint.slice(0,12)}</span><span>{report.coverage.selected_files} 个文件 · {(report.coverage.selected_bytes/1024).toFixed(0)} KiB</span></div><p className="environment-summary">{report.content.summary}</p>
   {report.content.schema_version===2?<>
    <div className="environment-image-heading"><h4>AutoDL 镜像选择</h4><span>按这四项选择镜像</span></div>

@@ -1,6 +1,6 @@
 # 报告 JSON
 
-根对象字段：schema_version:2、summary（中文概述）、requirements、commands、resources、issues、limitations（字符串数组）。另须包含 image_selection 和 agent_deployment；除这些字段外不添加字段。
+根对象字段：schema_version:2、summary（中文概述）、requirements、commands、resources、issues、limitations（字符串数组）。另须包含 image_selection、agent_deployment 和 code_information；除这些字段外不添加字段。
 
 requirements 每项：
 - category: system/python/framework/cuda/tool/dependency/other
@@ -30,3 +30,15 @@ steps 至少一项，按执行顺序给出完整 shell 命令。prerequisites �
 commands 保留训练/评估等参考命令；环境安装以 agent_deployment.steps 为准。两部分均不得声称已执行。
 
 blockers 只记录使环境安装无法执行的事项；runtime_notes 记录实验数据/权重/缓存、未锁版本的兼容性、GPU 运行验证等提醒。包名映射明确但没有声明版本时允许输出无版本包名安装，不捏造版本；已有明确版本和构建必须保留。未运行实际安装或未联网确认可下载不是静态安装阻塞。status:ready 表示安装方案可尝试，不代表已验证；blocked 不代表放弃已经确定的步骤。旧版报告可能将运行提醒写入 blockers，部署 Agent 应基于材料重新分类。
+
+
+## code_information（代码信息）
+
+根对象：{datasets:[],run_plans:[],unresolved:string[]}。本次生成必须包含，历史报告缺少此字段仍可查看。各数组长度分别最多 80、40、100；未识别时用空数组并在 unresolved 解释，不填伪造数据。
+
+datasets 每项严格为：{name,version,role,format,paths:string[],directory_structure,source,preprocessing,split,weights,manual_preparation:string[],attribution,evidence}。除数组及 attribution/evidence 外均为字符串，未知字符串明确填“未知”。role 区分原始数据、预处理产物与训练/验证/测试用途，paths 保留相对或绝对原路径。source 只有材料明确时才写地址。不要记录凭据、真实数据内容或编造数据集名称。
+
+run_plans 每项严格为：{name,scope,status:"ready"|"blocked",parameters:string[],blockers:string[],steps:[],attribution,evidence}。
+steps 每项严格为：{stage:"prepare"|"preprocess"|"train"|"evaluate"|"collect"|"other",purpose,working_directory,entrypoint,command,inputs:string[],outputs:string[],metrics:string[],attribution,evidence}。各字符串数组最多 40 项（parameters/blockers 最多 80），每方案最多 60 步。未知工作目录/入口明写未知；无法形成明确命令时 command 留空，并在 blockers 说明，方案标 blocked。不得给未填占位符命令。顺序表示建议执行顺序，不代表执行记录；指标数组记录名称，不填想象的分数。
+
+新增对象和每个步骤采用同样的证据规则，declared/inferred 至少一项有效引用。unresolved 记录关键未知和采集限制。原有 commands/resources 继续兼容保留，详细数据需求与运行方案以 code_information 为准。

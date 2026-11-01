@@ -16,7 +16,7 @@ def priority(path):
     name = path.name.lower()
     if name.startswith('readme') or name in env_names or name.startswith('requirements') or name.startswith('dockerfile'):
         return 0
-    if path.suffix.lower() in {'.sh', '.bat', '.ps1'} or re.search(r'(install|setup|train|eval|main|run|infer)', name):
+    if path.suffix.lower() in {'.sh', '.bat', '.ps1'} or re.search(r'(install|setup|train|eval|main|run|infer|dataset|loader|preprocess|prepare|config|split)', name):
         return 1
     return 2
 
