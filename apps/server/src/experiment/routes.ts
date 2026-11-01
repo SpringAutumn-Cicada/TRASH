@@ -52,8 +52,12 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         if(!directory.startsWith("/")||directory==="/"||directory.split("/").includes("..")||Array.from(directory).some(char=>char.charCodeAt(0)<32))experimentError("DEPLOYMENT_DIRECTORY_INVALID",400);
         if(upload&&directory===upload.path){
           const snapshot=service.reproductions.snapshotInfo(projectId,upload.snapshot_id),analyzed=service.reproductions.snapshotInfo(projectId,report.snapshot_id);
-          const files=(value:typeof snapshot)=>JSON.stringify([...value.files].sort((a,b)=>a.path.localeCompare(b.path)));
-          if(files(snapshot)!==files(analyzed))experimentError("DEPLOYMENT_UPLOAD_STALE",409);
+          const uploaded=new Map(snapshot.files.map(file=>[file.path,file]));
+          const analyzedPaths=new Set(analyzed.files.map(file=>file.path));
+          const exclusions=analyzed.analysis_excluded??[];
+          const mismatched=analyzed.files.some(file=>{const other=uploaded.get(file.path);return !other||other.sha256!==file.sha256||other.size_bytes!==file.size_bytes;});
+          const unexpected=snapshot.files.some(file=>!analyzedPaths.has(file.path)&&!exclusions.some(excluded=>excluded.path===file.path||excluded.reason==="excluded_directory"&&file.path.startsWith(excluded.path+"/")));
+          if(mismatched||unexpected)experimentError("DEPLOYMENT_UPLOAD_STALE",409);
         }
         send(response,202,{deployment:await service.deployments.start(report,input.profile_id,input.python,directory,service.terminals.connection(projectId,input.profile_id))});return true;
       }
