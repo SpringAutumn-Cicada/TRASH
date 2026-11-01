@@ -350,6 +350,8 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     }
     void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis).catch(onError);
   });
+  // Streaming datasets can reach 5 GiB; retain a bounded receive deadline for slow uploads.
+  server.requestTimeout = 2 * 60 * 60 * 1000;
   server.on("close", () => { codeAgent.close(); experiments.close(); agent.close(); });
   return { server, store, closeConnections: () => experiments.terminals.close() };
 }
