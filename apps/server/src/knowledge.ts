@@ -122,10 +122,10 @@ export async function knowledgeRoute(
       const input = z.object({ ids: z.array(z.string()).min(1).max(100), metric: z.string().min(1) }).strict().parse(await readJson(request));
       const records = [...new Set(input.ids)].map(key => knowledge.get(projectId, kind, key) ?? requestError("NOT_FOUND", 404));
       const results = records.map(v => experimentResultSchema.parse(v.content));
-      const signature = (r: typeof results[number]) => JSON.stringify([r.method,r.dataset,r.dataset_version,r.task,r.split,r.evaluation_protocol,r.config]);
+      const signature = (r: typeof results[number]) => JSON.stringify([r.method,r.dataset,r.dataset_version,r.task,r.split,r.evaluation_protocol,r.evaluation?[r.evaluation.granularity,r.evaluation.positive_class,r.evaluation.threshold,r.evaluation.averaging]:null,r.confusion_matrix?[r.confusion_matrix.negative_label,r.confusion_matrix.positive_label]:null,r.config]);
       if (new Set(results.map(signature)).size !== 1) requestError("INCOMPATIBLE_CONDITIONS", 409);
       const metrics = results.map(r => { const matches = r.metrics.filter(m => m.name === input.metric); if (matches.length !== 1) requestError("METRIC_MISSING_OR_AMBIGUOUS"); return matches[0]; });
-      if (new Set(metrics.map(m => JSON.stringify([m.unit,m.condition]))).size !== 1) requestError("INCOMPATIBLE_CONDITIONS", 409);
+      if (new Set(metrics.map(m => JSON.stringify([m.unit,m.condition,m.source??"manual"]))).size !== 1) requestError("INCOMPATIBLE_CONDITIONS", 409);
       const mean = metrics.reduce((s,m) => s+m.value,0)/metrics.length;
       send(response, 200, { count: metrics.length, mean, sample_stddev: metrics.length > 1 ? Math.sqrt(metrics.reduce((s,m) => s+(m.value-mean)**2,0)/(metrics.length-1)) : null, unit: metrics[0].unit, condition: metrics[0].condition }); return true;
     }

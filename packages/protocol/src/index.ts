@@ -190,3 +190,5 @@ export * from "./knowledge.js";
 export * from "./overview.js";
 export * from "./experiment.js";
 export * from "./environment.js";
+
+export * from "./evaluation.js";
