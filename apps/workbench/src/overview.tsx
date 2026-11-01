@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowUpRight, BookOpen, FileText, FlaskConical, RefreshCw, Sparkles } from "lucide-react";
 import type { ProjectOverview, ProjectPage } from "@trash/protocol";
@@ -14,7 +15,7 @@ export function OverviewPage({projectId,onNavigate}:{projectId:string;onNavigate
   if(!data&&loading)return <div className="page-loading">正在加载概览…</div>;
   return <section className="overview-page">
     <div className="section-heading"><div><h2>项目概览</h2><p>从当前材料出发，接着推进你的研究。</p></div><button className="icon-button" title="刷新概览" aria-label="刷新概览" disabled={loading} onClick={refresh}><RefreshCw size={16} className={loading?"spin":""}/></button></div>
-    {error&&<div className="notice error-notice" role="alert">{error}</div>}
+    {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}
     {data&&<>
       <div className="overview-counts">{[
         {label:"参考文献",value:data.counts.sources,page:"literature" as const,icon:BookOpen},

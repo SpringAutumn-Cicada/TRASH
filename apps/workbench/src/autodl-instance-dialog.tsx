@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ModalLayer } from "./modal-layer.js";
 import { LoaderCircle, Server, X } from "lucide-react";
@@ -53,7 +54,7 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     {mode === "edit" && !loadingPassword && selected?.auth === "password" && !originalPassword && <p className="autodl-dialog-hint" role="status">该实例尚未保存密码，请输入一次并保存，后续重启平台无需重复填写。</p>}
     {mode === "edit" && selected && selected.auth !== "password" && <p className="autodl-dialog-hint">当前使用私钥或 SSH Agent；填写新密码将切换为密码认证，留空保留原认证方式。</p>}
     <p className="autodl-dialog-hint">主机名仅用于平台显示。原密码以遮罩回填，可直接修改；密码在本机加密保存，重启平台后仍可使用。更换连接后需核对指纹并填写对应密码。</p>
-    {error && <p role="alert" className="notice error-notice">{error}</p>}
+    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || loadingPassword || !command.trim() || (mode === "add" ? !password : !selectedId)}>{busy && <LoaderCircle size={14} className="spin"/>}{busy ? "正在保存…" : "保存实例"}</button></div>
   </form></div></ModalLayer>;
 }

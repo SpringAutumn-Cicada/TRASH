@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
@@ -154,11 +155,11 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   });
 
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
-  if (!detail) return <div role="alert">{error || "未找到该项目。"}</div>;
+  if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
   return <section className="literature-page">
     <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing || Boolean(deleting)} onChanged={onChanged}/>
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
-    {error && <div role="alert" className="notice error-notice">{error}</div>}
+    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid">
           <section className="literature-main">
             <div className="section-heading"><div><h2>项目文献</h2><p>已导入的文献记录和来源文件</p></div><label className="primary-button upload-button"><FileUp size={15} />{importing ? "正在导入…" : "导入文件"}<input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={(event) => { void uploadFiles(event.target.files); event.currentTarget.value = ""; }} /></label></div>
@@ -207,7 +208,7 @@ function DeleteSourceDialog({ source, busy, blocked, error, onClose, onConfirm }
     <h2 id="source-delete-title">删除参考文献</h2><p className="source-delete-name">{source.title}</p>
     <p id="source-delete-description">将删除此文献的记录、阅读信息与正文检索内容，原始文件保留。此操作无法撤销；被知识内容历史引用的文献不能删除。</p>
     {blocked && <p role="status" className="notice">正在导入或检索，请等待操作结束后再确认删除。</p>}
-    {error && <p role="alert" className="notice error-notice">{error}</p>}
+    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button project-delete-confirm" disabled={busy || blocked} onClick={onConfirm}>{busy ? "正在删除…" : "确认删除"}</button></div>
   </div></div></ModalLayer>;
 }

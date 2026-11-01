@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useState } from "react";
 import { ModalLayer } from "./modal-layer.js";
 import { X } from "lucide-react";
@@ -19,7 +20,7 @@ export function CreateProjectDialog({onClose,onCreated}:{onClose:()=>void;onCrea
     <label>项目名称<input autoFocus required maxLength={120} value={title} onChange={e=>setTitle(e.target.value)} placeholder="例如：基于溯源图的 APT 检测"/></label>
     <label>研究问题<textarea required minLength={5} maxLength={2000} rows={4} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="这个项目希望研究什么问题？"/></label>
     <label>研究模块<select disabled><option>APT 检测与溯源 · 0.1.0</option></select></label>
-    {error&&<p className="notice error-notice" role="alert">{error}</p>}
+    {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={close}>取消</button><button className="primary-button" disabled={busy}>{busy?"正在创建…":"创建项目"}</button></div>
   </form></div></ModalLayer>;
 }
@@ -32,7 +33,7 @@ export function DeleteProjectDialog({project,onClose,onDeleted}:{project:Researc
   };
   return <ModalLayer><div className="modal-backdrop" onKeyDown={e=>{if(e.key==="Escape"&&!busy)onClose();}}><form className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-title" onSubmit={event=>void submit(event)}>
     <h2 id="delete-title">删除项目</h2><p>将永久删除“{project.title}”及其文献、卡片、Wiki、实验结果、任务记录和工作区文件。此操作无法撤销，建议先导出项目知识包。外部引用文件不受影响。</p>
-    {error&&<p role="alert" className="notice error-notice">{error}</p>}
+    {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="modal-actions"><button autoFocus type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button project-delete-confirm" disabled={busy}>{busy?"正在删除…":"确认永久删除"}</button></div>
   </form></div></ModalLayer>;
 }

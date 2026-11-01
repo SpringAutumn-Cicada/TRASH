@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { copyText } from "./clipboard.js";
 import { ArrowUp, ChevronRight, Code2, Copy, FileCode2, FileText, Folder, FolderOpen, LoaderCircle, RefreshCw, Search } from "lucide-react";
@@ -44,7 +45,7 @@ export function RepositoryBrowser({ projectId, repositoryPath, endpoint }: { pro
       </aside>
       <div className="repository-preview">
         <div className="repository-preview-heading">{preview ? <><FileCode2 size={15}/><strong title={preview.path}>{preview.path}</strong><span className="repository-language">{language(preview.path)}</span><button type="button" className="icon-button" disabled={!preview.preview || opening} title={copied ? "已复制" : "复制文件内容"} aria-label={copied ? "文件内容已复制" : "复制文件内容"} onClick={() => void copyText(preview.text ?? "").then(() => setCopied(true)).catch(() => setError("无法复制，请手动选择文件内容。"))}><Copy size={14}/></button></> : <span>文件预览</span>}</div>
-        {error && <div role="alert" className="notice error-notice">{error}</div>}
+        {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         {opening ? <div className="repository-browser-empty repository-preview-empty"><LoaderCircle size={24} className="spin"/><span>正在打开文件…</span></div> : !preview ? <div className="repository-browser-empty repository-preview-empty"><span className="repository-empty-icon"><Code2 size={28}/></span><h3>从左侧选择一个文件</h3><p>浏览实验代码，查看脚本与配置。</p></div> : !preview.preview ? <div className="repository-browser-empty repository-preview-empty"><FileText size={28}/><h3>此文件无法预览</h3><p>{preview.reason || "不支持预览此类型文件"}</p></div> : <div className="repository-code-scroll" tabIndex={0} role="region" aria-label={`${preview.path} 文件内容`}><div className="repository-code-lines">{lines.slice(0, lineLimit).map((line, index) => <div className="repository-code-line" key={index}><span className="repository-line-number" aria-hidden="true">{index + 1}</span><code>{line || " "}</code></div>)}</div>{lines.length > lineLimit && <button type="button" className="repository-more-lines" onClick={() => setLineLimit(value => value + 2000)}>已显示 {lineLimit} / {lines.length} 行，继续显示</button>}</div>}
         <footer className="repository-preview-footer"><span>{preview ? `${preview.size_bytes.toLocaleString("zh-CN")} bytes${preview.preview ? ` · ${lines.length} 行` : ""}` : "未选择文件"}</span><span>{copied ? "已复制文件内容" : "本地代码 · 只读"}</span></footer>
       </div>

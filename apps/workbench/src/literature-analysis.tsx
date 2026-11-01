@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { LoaderCircle, Sparkles, Square } from "lucide-react";
 import { api, uiError } from "./api.js";
@@ -35,6 +36,6 @@ export function LiteratureAnalysisButton({ projectId, sourceCount, blocked, onCh
   return <div className="literature-analysis">
     <div className="literature-analysis-heading"><button type="button" className="secondary-button" disabled={busy || blocked || !sourceCount || analysis?.active} onClick={() => void submit()}>{busy || analysis?.active ? <LoaderCircle size={15} className="spin"/> : <Sparkles size={15}/>} {analysis?.active ? "Agent 正在分析…" : "Agent 分析"}</button><span>分析文献 → 生成卡片 → 归纳知识 Wiki，使用本机 Codex，生成内容待审。</span>{analysis?.active && <button type="button" className="text-button" disabled={busy} onClick={() => void submit(true)}><Square size={12}/>停止分析</button>}</div>
     {analysis && <div className="literature-analysis-progress" role="status"><strong>{stages[analysis.stage] ?? analysis.stage}</strong><span>卡片 {analysis.cards.completed}/{analysis.cards.total}{analysis.cards.failed > 0 ? `，失败或取消 ${analysis.cards.failed}` : ""} · Wiki {analysis.wiki.completed}/{analysis.wiki.total}{analysis.wiki.failed > 0 ? `，失败或取消 ${analysis.wiki.failed}` : ""}{analysis.groups.total > 0 ? ` · 分组汇总 ${analysis.groups.completed}/${analysis.groups.total}` : ""}</span>{analysis.skipped_count > 0 && <span>跳过 {analysis.skipped_count} 篇：没有可分析的正文或摘要。</span>}{analysis.error && <span>{analysis.error}</span>}<span><a href={`/projects/${encodeURIComponent(projectId)}/cards`}>查看卡片</a> · <a href={`/projects/${encodeURIComponent(projectId)}/wiki`}>查看 Wiki</a> · <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>查看任务与日志</a></span></div>}
-    {error && <p role="alert" className="notice error-notice">{error}</p>}
+    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
   </div>;
 }

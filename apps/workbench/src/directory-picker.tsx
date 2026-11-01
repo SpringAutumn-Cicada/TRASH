@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ModalLayer } from "./modal-layer.js";
 import { ArrowUp, Folder, FolderPlus, X } from "lucide-react";
@@ -65,7 +66,7 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose, gitEnabl
     <form className="directory-location" onSubmit={event => { event.preventDefault(); void open(path); }}><input aria-label="当前目录路径" value={path} onChange={event => setPath(event.target.value)} placeholder="输入绝对路径" disabled={busy}/><button className="secondary-button" disabled={busy}>进入</button></form>
     <div className="directory-actions"><button type="button" className="secondary-button" disabled={busy || !directory?.parent} onClick={() => void open(directory!.parent!)}><ArrowUp size={14}/>上一级</button><button type="button" className="secondary-button" disabled={busy} onClick={() => void open("")}>主目录</button><button type="button" className="secondary-button" disabled={busy || !directory} onClick={() => setCreating(!creating)}><FolderPlus size={14}/>新建文件夹</button></div>
     {creating && <form className="directory-location" onSubmit={event => void create(event)}><input autoFocus aria-label="新文件夹名称" value={name} onChange={event => setName(event.target.value)} placeholder="文件夹名称" maxLength={255} disabled={busy}/><button className="primary-button" disabled={busy || !name.trim()}>创建并进入</button></form>}
-    {error && <p role="alert" className="notice error-notice">{error}</p>}
+    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="directory-list" aria-label="子目录" aria-busy={busy}>{busy ? <p role="status">正在读取目录…</p> : directory?.directories.map(entry => <button type="button" key={entry.path} className="directory-entry" onClick={() => void open(entry.path)}><Folder size={16}/><span>{entry.name}</span><span aria-hidden="true">›</span></button>)}{!busy && directory && !directory.directories.length && <p>此目录下没有子文件夹。</p>}</div>
     <p className="directory-selection">已浏览到：{directory?.path ?? "尚未选择"}</p>
     {gitEnabled&&<label className="directory-git-option"><input type="checkbox" checked={initializeGit} disabled={busy} onChange={event => setInitializeGit(event.target.checked)}/><span>选择时初始化 Git 仓库<small>已有仓库直接使用；新仓库默认分支为 main，不自动提交文件。</small></span></label>}

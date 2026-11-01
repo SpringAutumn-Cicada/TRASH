@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowLeft, ChartColumn, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
@@ -29,7 +30,7 @@ function ThemeControl() {
 function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projectId:string;page:Exclude<ProjectPage,"overview"|"literature"|"experiments"|"reproductions"|"autodl"|"chat"|"paper">;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
   const [sources,setSources]=useState<Source[]>();const [error,setError]=useState("");
   useEffect(()=>{let active=true;void api<{sources:Source[]}>(`/projects/${encodeURIComponent(projectId)}/sources`).then(data=>{if(active)setSources(data.sources);}).catch(cause=>{if(active)setError(uiError(cause,"无法读取项目文献。"));});return()=>{active=false;};},[projectId]);
-  if(error)return <div role="alert" className="notice error-notice">{error}</div>;
+  if(error)return <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>;
   if(!sources)return <div className="page-loading">正在加载项目资料…</div>;
   const section={cards:"literature-cards",wiki:"wiki-pages",results:"experiment-results",tasks:"knowledge-tasks"} as const;
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
@@ -131,7 +132,7 @@ function App() {
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
       <main className="workspace-content">
-        {error&&<div className="notice error-notice" role="alert">{error}</div>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
+        {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+":"+path}>
           {page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"?<LiteraturePage projectId={project.project_id} action={route.action} focusId={route.focusId} onChanged={()=>void refresh()}/>:page==="experiments"||page==="reproductions"||page==="autodl"?<ExperimentsPage projectId={project.project_id} reproductionOnly={page==="reproductions"} autoDlOnly={page==="autodl"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onResult={id=>goPage("results",{focus:id})}/>:page==="paper"?<section aria-label="论文"><h2>论文</h2></section>:page==="chat"?<ProjectChat projectId={project.project_id}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}

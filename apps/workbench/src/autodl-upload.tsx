@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { FileUp, FolderOpen, LoaderCircle, Upload } from "lucide-react";
 import type { TerminalSession } from "./autodl-terminal.js";
@@ -44,6 +45,6 @@ export function AutoDlUpload({ projectId, session }: { projectId: string; sessio
     </div>
     <p>通过当前 SSH 连接使用 SFTP 上传，单文件上限 200 MiB；目录需已存在，同名文件不会覆盖。</p>
     {busy && <div className="autodl-upload-progress"><progress value={progress} max={100} aria-label="文件发送进度"/><span>{progress}%{progress === 100 ? " · 等待远端写入确认" : ""}</span></div>}
-    {message && <p role={failed ? "alert" : "status"} className={failed ? "autodl-upload-error" : "autodl-upload-message"}>{message}</p>}
+    {message && (failed ? <ErrorNotice className="autodl-upload-error">{message}</ErrorNotice> : <p role="status" className="autodl-upload-message">{message}</p>)}
   </section>;
 }

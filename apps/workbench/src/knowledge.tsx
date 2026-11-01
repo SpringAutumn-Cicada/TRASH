@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import type { Source, ResearchProject, ProjectPage, KnowledgeVersion, KnowledgeKind } from "@trash/protocol";
@@ -84,7 +85,7 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
   },[action,focusId,section,sources]);
   return <section className="knowledge-panel">
     <div className="section-heading"><div><h2>{labels[section]}</h2><p>{section==="knowledge-tasks"?"查看本地 Agent 的生成进度与结果。":"整理当前项目内容，保留每一次修改与审阅。"}</p></div></div>
-    {error&&<div role="alert" className="notice error-notice">{error}</div>}
+    {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="knowledge-toolbar">
       {section!=="knowledge-tasks"&&<><input aria-label="查询知识内容" placeholder="标题、方法、数据集或内容" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="审阅状态" value={status} onChange={e=>setStatus(e.target.value)}><option value="">全部状态</option>{["draft","pending","accepted","rejected"].map(s=><option value={s} key={s}>{statuses[s]}</option>)}</select></>}
       {section!=="knowledge-tasks"&&<><select aria-label="筛选字段" value={field} onChange={e=>setField(e.target.value)}>{Object.entries({method:"方法",datasets:"文献数据集",dataset:"实验数据集",metrics:"指标",authors:"作者",year:"年份",tags:"标签",purposes:"用途",reading_status:"阅读状态"}).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select><input placeholder="字段筛选值" value={fieldValue} onChange={e=>setFieldValue(e.target.value)}/><select aria-label="排序" value={sort} onChange={e=>setSort(e.target.value)}><option value="updated">最近版本</option><option value="title">标题</option></select></>}<button className="secondary-button" disabled={busy} onClick={()=>void run(refresh)}>查询 / 刷新</button>

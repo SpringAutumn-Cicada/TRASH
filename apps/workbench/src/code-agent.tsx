@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useState } from "react";
 import { Bot, Play, RefreshCw, Square } from "lucide-react";
 import { useUnsavedChanges } from "./navigation.js";
@@ -47,9 +48,9 @@ export function CodeAgentPanel({ projectId, repositoryPath }: { projectId: strin
       <p>不要在任务里填写密码或密钥。默认不测试、不提交、不推送；需要时请在本次任务中明确要求。超出所选权限的操作会失败，不会自动升级权限。</p>
       <button className="primary-button" disabled={busy || active || !confirmed || !instructions.trim()}><Play size={14}/>启动 Agent</button>
     </form>
-    {error && <p role="alert" className="notice error-notice">{error}</p>}
+    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="code-agent-history">{tasks.map(task => <button type="button" key={task.task_id} className={`experiment-run ${task.task_id === selectedId ? "selected" : ""}`} onClick={() => { setSelectedId(task.task_id); setSelected(undefined); }}><span>{task.instructions.slice(0, 70)}</span><small>{statusNames[task.status] ?? task.status}</small></button>)}</div>
-    {selected && <article className="code-agent-output"><p>{statusNames[selected.status]} · {selected.version} · {selected.sandbox}</p><p>实际目录：{selected.path}</p>{selected.error && <p role="alert">{selected.error}</p>}
+    {selected && <article className="code-agent-output"><p>{statusNames[selected.status]} · {selected.version} · {selected.sandbox}</p><p>实际目录：{selected.path}</p>{selected.error && <ErrorNotice >{selected.error}</ErrorNotice>}
       {["running", "cancelling"].includes(selected.status) && <button type="button" className="secondary-button" disabled={busy || selected.status === "cancelling"} onClick={() => void act(async () => { await call(`/tasks/${selected.task_id}/cancel`, { confirm: true }); setSelected({ ...selected, status: "cancelling" }); })}><Square size={13}/>取消任务</button>}
       {selected.status === "interrupted" && <button type="button" className="secondary-button" disabled={busy} onClick={() => { if (window.confirm("请先在本机确认旧 Codex 进程已停止，并检查仓库改动。是否已完成核对？")) void act(async () => { await call(`/tasks/${selected.task_id}/acknowledge`, { confirm: true }); setSelected({ ...selected, status: "failed" }); }); }}>已确认旧进程停止，解除中断状态</button>}
       <h4>Agent 回复</h4><pre>{selected.response || "等待 Agent 回复，可在事件日志中查看执行过程。"}</pre><details><summary>执行事件与日志{selected.truncated ? "（已截断）" : ""}</summary><pre>{selected.logs || "暂无日志"}</pre></details><details><summary>运行前后 Git 状态</summary><pre>运行前：{"\n"}{selected.before || "无记录或无改动"}{"\n"}运行后：{"\n"}{selected.after || "无记录或无改动"}</pre></details>

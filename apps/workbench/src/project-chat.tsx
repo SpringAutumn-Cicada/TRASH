@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { Bot, MessageSquarePlus, Send, Square } from "lucide-react";
 import { useUnsavedChanges } from "./navigation.js";
@@ -54,7 +55,7 @@ export function ProjectChat({ projectId }: { projectId: string }) {
           {messages.map(turn => <React.Fragment key={turn.task_id}><article className="chat-message chat-user"><span>你</span><div>{turn.instructions}</div></article><article className="chat-message chat-assistant"><span><Bot size={14}/>Agent · {states[turn.status] ?? turn.status}</span><div>{turn.response || (turn.status === "running" ? "正在读取项目资料或执行操作，可查看执行日志。" : "本轮没有返回文本。")}</div>{turn.error && <p className="chat-error">{turn.error}</p>}<div className="chat-turn-actions"><button type="button" className="text-button" disabled={busy} onClick={() => void act(async () => { const data = await call<{ task: Turn }>(`/code-agent/tasks/${turn.task_id}`); setLogs({ id: turn.task_id, text: data.task.logs }); })}>查看执行日志</button>{turn.status === "interrupted" && <button type="button" className="text-button" disabled={busy} onClick={() => { if (window.confirm("请先在本机确认旧 Codex 进程已停止，并检查已产生的项目改动。确认已完成？")) void act(async () => { await call(`/code-agent/tasks/${turn.task_id}/acknowledge`, { confirm: true }); }); }}>确认旧进程已停止</button>}</div>{logs?.id === turn.task_id && <pre className="chat-event-log">{logs.text || "暂无日志"}</pre>}</article></React.Fragment>)}
           <div ref={bottom}/>
         </div>
-        {error && <p role="alert" className="notice error-notice">{error}</p>}
+        {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <form className="chat-composer" onSubmit={event => void send(event)}>
           <details><summary>模型与项目操作权限</summary><div className="chat-settings"><label>模型<input value={model} maxLength={200} placeholder="沿用 WSL 本机配置" onChange={event => { setModel(event.target.value); setAuthorized(false); }}/></label><label>执行权限<select value={sandbox} onChange={event => { setSandbox(event.target.value); setAuthorized(false); }}><option value="read-only">只读交流</option><option value="workspace-write">项目资料与代码读写</option><option value="danger-full-access">完整本机权限</option></select></label></div><p>项目读写模式允许访问本机平台工具和网络；完整本机权限还可操作项目外文件。不修改全局配置。</p></details>
           <label className="chat-authorization"><input type="checkbox" checked={authorized} onChange={event => setAuthorized(event.target.checked)}/><span>授权此对话按所选权限操作当前项目{sandbox === "danger-full-access" ? "，包括完整本机权限" : ""}。模型调用使用本机账户。</span></label>

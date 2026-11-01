@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ArrowUp, FolderPlus, Folder, LoaderCircle, X } from "lucide-react";
 import { ModalLayer } from "./modal-layer.js";
@@ -36,7 +37,7 @@ export function RemoteDirectoryPicker({projectId,profileId,hostName,initialPath,
  <form className="directory-location" onSubmit={event=>{event.preventDefault();void open(path);}}><input aria-label="远端目录路径" value={path} disabled={busy||making} onChange={event=>setPath(event.target.value)} placeholder="输入远端绝对路径"/><button className="secondary-button" disabled={busy||making||!path.trim()}>进入</button></form>
  <div className="directory-actions"><button type="button" className="secondary-button" disabled={busy||making} onClick={()=>void open("/")}>根目录</button><button type="button" className="secondary-button" disabled={busy||making||!listing?.parent} onClick={()=>listing?.parent&&void open(listing.parent)}><ArrowUp size={14}/>上一级</button><button type="button" className="secondary-button" disabled={busy||making||!listing} onClick={()=>setCreating(value=>!value)}><FolderPlus size={14}/>新建目录</button></div>
  {creating&&<form className="directory-location" onSubmit={event=>{event.preventDefault();void create();}}><input autoFocus aria-label="远端新目录名称" value={name} maxLength={255} disabled={busy||making} onChange={event=>setName(event.target.value)} placeholder="输入新目录名称"/><button className="primary-button" disabled={busy||making||!listing||!name.trim()}>{making?"正在创建…":"创建并进入"}</button></form>}
- {error&&<p role="alert" className="notice error-notice">{error}</p>}
+ {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
  <div className="directory-list" aria-label="远端子目录" aria-busy={busy}>{busy?<p role="status"><LoaderCircle size={14} className="spin"/>正在读取远端目录…</p>:listing?.directories.map(entry=><button type="button" className="directory-entry" disabled={making} key={entry.path} onClick={()=>void open(entry.path)}><Folder size={16}/><span>{entry.name}</span><span aria-hidden="true">›</span></button>)}{listing&&!listing.directories.length&&<p>此目录下没有可浏览的子目录。</p>}</div>
  {listing?.truncated&&<p role="status">目录过多，仅显示前 2000 项，可输入完整路径进入。</p>}<p className="directory-selection">当前目录：{listing?.path??"尚未读取成功"}</p><div className="modal-actions"><button type="button" className="secondary-button" disabled={making} onClick={onClose}>取消</button><button type="button" className="primary-button" disabled={busy||making||!listing||path!==listing.path} onClick={()=>listing&&onSelect(listing.path)}>选择此目录</button></div>
  </div></div></ModalLayer>;
