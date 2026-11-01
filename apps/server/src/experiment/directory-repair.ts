@@ -1,3 +1,4 @@
+import { synchronizeRepairedSource } from './remote-source-repair.js';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute, sep, posix } from 'node:path';
@@ -8,7 +9,7 @@ import type { CodeEnvironmentReport, EnvironmentAnalysisTask } from '@trash/prot
 import { experimentError } from '@trash/storage';
 import type { ExperimentService } from './service.js';
 import { automaticExperimentInputSchema, prepareAutomaticExperiment, saveExperimentBindings } from './automatic-experiment.js';
-export interface DirectoryRepair {id:string;input:z.infer<typeof automaticExperimentInputSchema>;status:'analyzing'|'checking'|'completed'|'blocked'|'cancelled';message:string;changes:string[];task?:EnvironmentAnalysisTask;report?:CodeEnvironmentReport;plan_index?:number;checks?:{dataset_name:string;path:string;errors:string[]}[];error?:string}
+export interface DirectoryRepair {phase?:'analyzing'|'syncing'|'weights'|'rechecking'|'done';id:string;input:z.infer<typeof automaticExperimentInputSchema>;status:'analyzing'|'checking'|'completed'|'blocked'|'cancelled';message:string;changes:string[];task?:EnvironmentAnalysisTask;report?:CodeEnvironmentReport;plan_index?:number;checks?:{dataset_name:string;path:string;errors:string[]}[];error?:string}
 const active=new Map<string,AbortController>();
 const file=(s:ExperimentService,p:string,id:string)=>{if(!/^env_[a-f0-9-]+$/.test(id))experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);return join(s.store.root,'projects',p,'directory-repairs',id+'.json');};
 function save(s:ExperimentService,p:string,value:DirectoryRepair){const path=file(s,p,value.id);mkdirSync(join(path,'..'),{recursive:true});writeFileSync(path+'.tmp',JSON.stringify(value),{mode:0o600});renameSync(path+'.tmp',path);}
@@ -24,8 +25,8 @@ export async function startDirectoryRepair(s:ExperimentService,p:string,value:un
  const checked=await prepareAutomaticExperiment(s,p,value);
  if(checked.ready)experimentError('DIRECTORY_CHECK_PASSED',409);
  const input=checked.input;
- const task=s.environmentAnalysis.start(p,input.code_id,{input,checks:checked.checks,previous_report:checked.report,selected_plan:checked.plan,notes:'目录列表限深两层、最多500项，元数据限64KiB，目录不存在或文件不完整不得推断已就绪。只生成报告修正，不修改源码。'});
- const repair:DirectoryRepair={id:task.id,input,status:'analyzing',message:'Agent 正在核对源码、目录布局及预处理方案',changes:[],task};save(s,p,repair);return repair;
+ const task=s.environmentAnalysis.start(p,input.code_id,{input,checks:checked.checks,previous_report:checked.report,selected_plan:checked.plan,notes:'目录列表限深两层、最多500项，元数据限64KiB，目录不存在或文件不完整不得推断已就绪。允许最小路径源码适配；平台备份、重新分析和校验后同步远端。'});
+ const repair:DirectoryRepair={id:task.id,input,status:'analyzing',phase:'analyzing',message:'Agent 正在核对源码、目录布局及预处理方案',changes:[],task};save(s,p,repair);return repair;
 }
 const modelSetup=String.raw`import pathlib,sys,json
 root=pathlib.Path(sys.argv[1]).resolve();path=pathlib.Path(sys.argv[2]);assert root.is_dir() and path.parent.resolve().is_relative_to(root)
@@ -47,18 +48,14 @@ async function finish(s:ExperimentService,p:string,repair:DirectoryRepair,signal
  if((await s.environmentAnalysis.freshness(p,repair.input.code_id,report.id)).stale)throw new Error('源码已变化，请重新分析；本次不自动覆盖远端源码。');
  const remote=s.terminals.connection(p,repair.input.profile_id);
  repair.message='正在核对远端源码与修复报告的 SHA-256';save(s,p,repair);
+ repair.phase='syncing';save(s,p,repair);
  const sourceFiles=s.reproductions.snapshotInfo(p,report.snapshot_id).files;
- const sourceCheck=await remote.exec([posix.join(repair.input.directory,'.venv/bin/python'),'-c',String.raw`import pathlib,sys,json,hashlib
-root=pathlib.Path(sys.argv[1]).resolve();bad=[]
-for entry in json.loads(sys.argv[2]):
- path=(root/entry['path']).resolve()
- if not path.is_relative_to(root) or not path.is_file(): bad.append(entry['path']);continue
- h=hashlib.sha256()
- with path.open('rb') as stream:
-  for block in iter(lambda:stream.read(1048576),b''):h.update(block)
- if h.hexdigest()!=entry['sha256']:bad.append(entry['path'])
-print(json.dumps(bad))`,repair.input.directory,JSON.stringify(sourceFiles)],undefined,300000);
- if((JSON.parse(sourceCheck) as string[]).length)throw new Error('远端源码与报告不一致，请在源代码模块同步上传后重新检查；本次不覆盖远端代码。');
+ const changes=s.environmentAnalysis.adaptationChanges(p,repair.input.code_id,report.task_id) as {path:string;original:string;text:string}[];
+ checkStopped();repair.message=changes.length?'正在备份并同步本轮适配源码':'正在检查远端源码一致性';save(s,p,repair);
+ const synchronized=await synchronizeRepairedSource(remote,repair.input.directory,report.task_id,sourceFiles,changes);
+ checkStopped();
+ if(changes.length){repair.changes.push('本地已适配：'+changes.map(item=>item.path).join('、'));repair.changes.push(synchronized.files.length?'远端已同步并校验：'+synchronized.files.join('、')+'；原文备份：'+synchronized.backup:'远端已是本轮适配版本，SHA-256 已核对，跳过重复写入。');save(s,p,repair);}
+ repair.phase='weights';save(s,p,repair);
  const root=realpathSync(s.reproductions.get(p,repair.input.code_id).path);
  for(const binding of repair.input.bindings.filter(item=>item.enabled)){
   checkStopped();const recipe=selected.plan.execution!.dataset_runs.find(item=>item.dataset_name===binding.dataset_name);
@@ -81,10 +78,11 @@ print(json.dumps(bad))`,repair.input.directory,JSON.stringify(sourceFiles)],unde
    repair.changes.push('已补传并校验默认权重：'+model.default_path+' · SHA-256 '+expected);save(s,p,repair);
   }catch(error){if(owned)await new Promise<void>(resolve=>sftp.unlink(destination,()=>resolve()));throw error;}finally{sftp.end();}
  }
- checkStopped();repair.message='修复完成，正在重新检查运行目录';save(s,p,repair);
+ checkStopped();repair.phase='rechecking';repair.message='正在重新检查运行目录';save(s,p,repair);
  const input={...repair.input,report_id:report.id,plan_index:selected.index};
  const result=await prepareAutomaticExperiment(s,p,input);checkStopped();
  repair.report=report;repair.plan_index=selected.index;repair.checks=result.checks;
+ if(result.ready)repair.phase='done';
  repair.status=result.ready?'completed':'blocked';repair.message=result.ready?'已修正运行方案并通过目录复查；未执行实验。':'已完成分析，目录仍有阻塞，请查看复查结果及报告。';
  repair.changes.unshift('已生成包含目录诊断依据的新分析报告，原报告保留。');
  if(result.ready)saveExperimentBindings(s,p,input.code_id,{report_id:report.id,profile_id:input.profile_id,bindings:input.bindings});
@@ -94,7 +92,7 @@ export function applyDirectoryRepair(s:ExperimentService,p:string,id:string):Dir
  if(repair.task?.status!=='completed')experimentError('DIRECTORY_ANALYSIS_PENDING',409);
  if(s.environmentAnalysis.busy(p)||s.deployments.busyProject(p)||s.reproductionQueues.list(p).some(queue=>['running','paused'].includes(queue.status))||s.data.runs(p).some(run=>s.data.active(run))||[...active.keys()].some(path=>path.startsWith(join(s.store.root,'projects',p,'directory-repairs')+sep)))experimentError('EXPERIMENT_ACTIVE',409);
  const controller=new AbortController();active.set(key,controller);repair.status='checking';repair.message='正在应用有依据的方案修复并检查缺失权重';repair.error=undefined;save(s,p,repair);
- void finish(s,p,repair,controller.signal).catch(error=>{repair.status=controller.signal.aborted?'cancelled':'blocked';repair.error=error instanceof Error?error.message:'目录修复失败';repair.message='未宣称运行就绪，请查看剩余问题。';}).finally(()=>{try{save(s,p,repair);}finally{active.delete(key);}}).catch(()=>{});return repair;
+ void finish(s,p,repair,controller.signal).catch(error=>{repair.status=controller.signal.aborted?'cancelled':'blocked';repair.error=error instanceof Error?error.message:'目录修复失败';repair.message='修复受阻，请查看未完成操作及剩余问题。';}).finally(()=>{try{save(s,p,repair);}finally{active.delete(key);}}).catch(()=>{});return repair;
 }
 export function stopDirectoryRepair(s:ExperimentService,p:string,id:string):DirectoryRepair {
  const repair=directoryRepair(s,p,id);active.get(file(s,p,id))?.abort();
@@ -103,6 +101,6 @@ export function stopDirectoryRepair(s:ExperimentService,p:string,id:string):Dire
 }
 export async function resumeDirectoryRepair(s:ExperimentService,p:string,id:string):Promise<DirectoryRepair> {
  const repair=directoryRepair(s,p,id);if(repair.task&&['cancelled','failed','interrupted'].includes(repair.task.status)){repair.task=s.environmentAnalysis.resume(p,repair.input.code_id,id);repair.status='analyzing';repair.error=undefined;repair.message='正在恢复 Agent 分析';save(s,p,repair);return repair;}
- if(repair.task?.status==='completed'&&repair.status==='blocked'&&repair.report)return startDirectoryRepair(s,p,repair.input);
+ if(repair.task?.status==='completed'&&repair.status==='blocked'&&repair.report&&!repair.task.adaptation)return startDirectoryRepair(s,p,repair.input);
  return applyDirectoryRepair(s,p,id);
 }

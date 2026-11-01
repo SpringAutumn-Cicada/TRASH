@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Check, FileSearch, LoaderCircle } from 'lucide-react';
 import type { EnvironmentAnalysisTask } from '@trash/protocol';
-const stages=[{id:'snapshot',name:'固定快照'},{id:'collecting',name:'采集文件'},{id:'analyzing',name:'Agent 分析'},{id:'adapting',name:'本地适配'},{id:'reanalyzing',name:'复核代码'},{id:'validating',name:'校验依据'},{id:'saving',name:'保存报告'}];
+const allStages=[{id:'snapshot',name:'固定快照'},{id:'collecting',name:'采集文件'},{id:'analyzing',name:'Agent 分析'},{id:'adapting',name:'本地适配'},{id:'reanalyzing',name:'复核代码'},{id:'validating',name:'校验依据'},{id:'saving',name:'保存报告'}];
 export function SourceAnalysisProgress({task}:{task:EnvironmentAnalysisTask}){
  const running=task.status==='preparing'||task.status==='analyzing';
  const [now,setNow]=useState(Date.now());
  useEffect(()=>{setNow(Date.now());if(!running)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[task.id,running]);
  const stage=task.stage??(task.status==='analyzing'?'analyzing':'snapshot');
+ const stages=allStages.filter(item=>task.adaptation||['adapting','reanalyzing'].includes(stage)||!['adapting','reanalyzing'].includes(item.id));
  const completed=task.status==='completed'?stages.length:Math.max(0,stages.findIndex(item=>item.id===stage));
  const seconds=Math.max(0,Math.floor(((task.finished_at?Date.parse(task.finished_at):now)-Date.parse(task.resumed_at??task.created_at))/1000));
  const elapsed=seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`;
