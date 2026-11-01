@@ -134,7 +134,12 @@ try:
  assert not checkpoint.is_symlink() and not target.is_symlink(),'环境路径不能是符号链接'
  owner=hashlib.sha256(json.dumps({'fingerprint':p['fingerprint'],'plan':p['plan'],'python':str(pathlib.Path(sys.executable).absolute())},sort_keys=True).encode()).hexdigest()
  saved=json.loads(checkpoint.read_text()) if checkpoint.exists() else None
- if saved: assert saved.get('owner')==owner,'已有环境属于另一份代码/安装计划/解释器，不能自动覆盖'
+ if saved:
+  if saved.get('owner')!=owner:
+   previous_owners=[hashlib.sha256(json.dumps({'fingerprint':p['fingerprint'],'plan':previous,'python':str(pathlib.Path(sys.executable).absolute())},sort_keys=True).encode()).hexdigest() for previous in p.get('previous_plans',[])]
+   assert saved.get('owner') in previous_owners,'已有环境属于另一份代码/安装计划/解释器，不能自动覆盖'
+   backup=root/('.trash-venv-checkpoint-before-repair-'+p['id']+'-'+str(time.time_ns())+'.json')
+   atomic(backup,saved);saved={**saved,'owner':owner,'completed_groups':0};atomic(checkpoint,saved)
  else:
   assert not target.exists(),'.venv 并非当前部署创建，不自动接管已有环境'
   saved={'owner':owner,'environment_ready':False,'completed_groups':0};atomic(checkpoint,saved)
@@ -152,12 +157,22 @@ try:
   return hashlib.sha256(output).hexdigest()
  if saved.get('completed_groups') and saved.get('inventory')!=inventory():
   saved['completed_groups']=0;atomic(checkpoint,saved)
+ constraints=[]
+ for install in p['plan']['installs']:
+  for spec in install['packages']:
+   match=re.match(r'^([A-Za-z0-9_.-]+)(?:\[[^]]+\])?(.*)$',spec)
+   if match and re.search(r'[<>=!~]',match[2]):constraints.append(match[1]+match[2])
+ constraints_file=job/'constraints.txt'
+ if constraints:constraints_file.write_text('\n'.join(sorted(set(constraints)))+'\n')
  for index,group in enumerate(p['plan']['installs']):
   if index<saved.get('completed_groups',0):continue
   update(stage='packages',completed_units=index+2,current='安装 '+', '.join(group['packages'])[:500],group_index=index+1)
   state['package_progress']={'phase':'resolving','detail':'解析依赖与检查缓存','updated_at':time.time()}
   args=[python,'-I','-m','pip','--isolated','install','--disable-pip-version-check','--progress-bar','on']
+  if constraints:args+=['--constraint',str(constraints_file)]
   if group['index_url']:args+=['--index-url',group['index_url']]
+  for address in group.get('extra_index_urls',[]):args+=['--extra-index-url',address]
+  for address in group.get('find_links',[]):args+=['--find-links',address]
   command(args+group['packages'],track=True)
   state['package_progress']={'phase':'installed','detail':'当前安装组已完成','updated_at':time.time()}
   saved['completed_groups']=index+1;saved['inventory']=inventory();atomic(checkpoint,saved)

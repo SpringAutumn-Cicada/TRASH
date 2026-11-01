@@ -75,7 +75,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         response.setHeader("cache-control","no-store");send(response,200,{deployments:service.deployments.list(projectId).filter(task=>task.code_id===parts[1])});return true;
       }
       if(parts.length===6&&parts[3]==="reports"&&parts[5]==="deploy"&&method==="POST"){
-        const input=z.object({profile_id:z.string(),python:z.string().min(1).max(4096),directory:z.string().trim().min(1).max(4096).optional(),resume_id:z.string().regex(/^deploy_[a-f0-9-]+$/).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        const input=z.object({profile_id:z.string(),python:z.string().min(1).max(4096),directory:z.string().trim().min(1).max(4096).optional(),resume_id:z.string().regex(/^deploy_[a-f0-9-]+$/).optional(),repair:z.boolean().default(false),confirm:z.literal(true)}).strict().parse(await readJson(request));
         service.data.profile(projectId,input.profile_id);
         const report=service.environmentAnalysis.report(projectId,parts[1],parts[4]);
         if((await service.environmentAnalysis.freshness(projectId,parts[1],report.id)).stale)experimentError("DEPLOYMENT_REPORT_STALE",409);
@@ -92,7 +92,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
           const unexpected=snapshot.files.some(file=>!analyzedPaths.has(file.path)&&!exclusions.some(excluded=>excluded.path===file.path||excluded.reason==="excluded_directory"&&file.path.startsWith(excluded.path+"/")));
           if(mismatched||unexpected)experimentError("DEPLOYMENT_UPLOAD_STALE",409);
         }
-        send(response,202,{deployment:await service.deployments.start(report,input.profile_id,input.python,directory,service.terminals.connection(projectId,input.profile_id),input.resume_id)});return true;
+        send(response,202,{deployment:await service.deployments.start(report,input.profile_id,input.python,directory,service.terminals.connection(projectId,input.profile_id),input.resume_id,input.repair)});return true;
       }
       if(parts.length===3&&method==="GET"){send(response,200,{tasks:service.environmentAnalysis.tasks(projectId,parts[1]),reports:service.environmentAnalysis.reports(projectId,parts[1])});return true;}
       if(parts.length===3&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{task:service.environmentAnalysis.start(projectId,parts[1])});return true;}
