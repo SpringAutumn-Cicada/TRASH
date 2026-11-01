@@ -62,6 +62,9 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         const code=service.reproductions.get(projectId,parts[1]),upload=code.uploads?.filter(item=>item.profile_id===profileId).at(-1);
         response.setHeader("cache-control","no-store");send(response,200,{directory:upload?.path??"",source:upload?"latest-upload":"none"});return true;
       }
+      if(parts.length===5&&parts[3]==="deployments"&&method==="DELETE"){
+        z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));service.deployments.remove(projectId,parts[1],parts[4]);send(response,200,{deleted:true});return true;
+      }
       if(parts.length===6&&parts[3]==="deployments"&&["cancel","refresh"].includes(parts[5])&&method==="POST"){
         z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
         const task=service.deployments.list(projectId).find(item=>item.id===parts[4]&&item.code_id===parts[1])??experimentError("DEPLOYMENT_NOT_FOUND",404);
