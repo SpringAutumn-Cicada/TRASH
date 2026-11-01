@@ -64,7 +64,7 @@ for request in requests:
  errors=[]
  if request.get('model') and not pathlib.Path(request['model']).is_file(): errors.append('模型权重或训练检查点文件不存在')
  data=pathlib.Path(request['path']).resolve(); root=(data/request['subdir']).resolve()
- if not root.is_relative_to(data) or not root.exists(): errors.append('绑定的数据目录或子目录不存在')
+ if not root.is_relative_to(data) or not root.is_dir(): errors.append('绑定的数据目录或子目录不存在')
  for name in request['required']:
   target=(root/name).resolve()
   if not target.is_relative_to(root) or not target.exists(): errors.append('缺少所需数据路径：'+name)
@@ -76,14 +76,28 @@ for request in requests:
   if not target.is_relative_to(root) or not target.exists(): errors.append('映射目标不存在：'+mapping['subpath'])
   if not link.parent.resolve().is_relative_to(code) or not link.parent.is_dir(): errors.append('映射父目录不存在：'+mapping['path'])
   elif (link.exists() or link.is_symlink()) and not (link.is_symlink() and link.resolve()==target): errors.append('映射位置已被占用：'+mapping['path'])
- results.append(dict(dataset_name=request['name'],path=str(root),errors=errors))
+ entries=[]
+ if root.is_dir():
+  for parent in [root]+[item for item in sorted(root.iterdir())[:100] if item.is_dir() and not item.is_symlink()]:
+   if not parent.resolve().is_relative_to(root): continue
+   for item in sorted(parent.iterdir())[:200]:
+    if len(entries)>=500: break
+    if item.is_symlink(): continue
+    record={'path':str(item.relative_to(root)),'directory':item.is_dir()}
+    if item.is_file():
+     record['size']=item.stat().st_size
+     if item.name=='metadata.json' and item.stat().st_size<=65536:
+      try: record['metadata']=json.loads(item.read_text(encoding='utf-8'))
+      except (ValueError,UnicodeError,OSError): pass
+    entries.append(record)
+ results.append(dict(entries=entries,dataset_name=request['name'],path=str(root),errors=errors))
 print(json.dumps(results,ensure_ascii=False))`;
 export async function prepareAutomaticExperiment(service:ExperimentService,project:string,value:unknown){
  const input=automaticExperimentInputSchema.parse(value),resolved=resolve(service,project,input);
  if((await service.environmentAnalysis.freshness(project,input.code_id,input.report_id)).stale)experimentError('DEPLOYMENT_REPORT_STALE',409);
  const remote=service.terminals.connection(project,input.profile_id);
  const resources=await discoverComputeResources(remote);assertComputeSelection(resources,input.gpu,resolved.plan.execution!.resource);
- const checks=JSON.parse(await remote.exec([posix.join(input.directory,'.venv/bin/python'),'-c',CHECK,input.directory,JSON.stringify(resolved.items.map(item=>({name:item.binding.dataset_name,path:item.dataset.path,subdir:item.recipe.dataset_subdirectory,required:item.recipe.required_paths,mappings:item.recipe.mappings,steps:item.recipe.steps,model:item.modelPath})))],undefined,120000)) as {dataset_name:string;path:string;errors:string[]}[];
+ const checks=JSON.parse(await remote.exec([posix.join(input.directory,'.venv/bin/python'),'-c',CHECK,input.directory,JSON.stringify(resolved.items.map(item=>({name:item.binding.dataset_name,path:item.dataset.path,subdir:item.recipe.dataset_subdirectory,required:item.recipe.required_paths,mappings:item.recipe.mappings,steps:item.recipe.steps,model:item.modelPath})))],undefined,120000)) as {dataset_name:string;path:string;errors:string[];entries:{path:string;directory:boolean;size?:number;metadata?:unknown}[]}[];
  return {input,...resolved,checks,ready:checks.every(item=>!item.errors.length)};
 }
 export async function createAutomaticExperiment(service:ExperimentService,project:string,value:unknown):Promise<Queue>{

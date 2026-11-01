@@ -1,3 +1,4 @@
+import { startDirectoryRepair, directoryRepair, applyDirectoryRepair, stopDirectoryRepair, resumeDirectoryRepair } from './directory-repair.js';
 import { discoverComputeResources } from './compute-resources.js';
 import { remoteDirectories } from './remote-directories.js';
 import { loadExperimentBindings, saveExperimentBindings, prepareAutomaticExperiment, createAutomaticExperiment, modelFileCandidates } from './automatic-experiment.js';
@@ -27,6 +28,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
   if(parts[0]==='ssh-profiles'&&parts[1]&&parts.length===3){
     if(parts[2]==='compute-resources'&&method==='GET'){send(response,200,{resources:await discoverComputeResources(service.terminals.connection(projectId,parts[1]))});return true;}
     if(parts[2]==='model-files'&&method==='GET'){send(response,200,await remoteDirectories(service.terminals.connection(projectId,parts[1]),url.searchParams.get('path')??'/',true));return true;}
+  }
+  if(parts[0]==='directory-repairs'){
+    if(parts.length===1&&method==='POST'){send(response,202,{repair:await startDirectoryRepair(service,projectId,await readJson(request))});return true;}
+    if(parts.length===2&&method==='GET'){send(response,200,{repair:directoryRepair(service,projectId,parts[1])});return true;}
+    if(parts.length===3&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));const value=parts[2]==='apply'?applyDirectoryRepair(service,projectId,parts[1]):parts[2]==='cancel'?stopDirectoryRepair(service,projectId,parts[1]):parts[2]==='resume'?await resumeDirectoryRepair(service,projectId,parts[1]):experimentError('NOT_FOUND',404);send(response,202,{repair:value});return true;}
   }
   if(parts[0]==='reproduction-queues'){
 

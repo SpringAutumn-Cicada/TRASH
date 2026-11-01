@@ -133,3 +133,8 @@
 .reproduction-upload-success p{margin:8px 0;font-size:13px;line-height:1.7}
 .reproduction-upload-success code{display:block;overflow-wrap:anywhere;font-size:12px;line-height:1.7}
 .reproduction-upload-success details{margin-top:10px;font-size:12px}
+
+.directory-repair-panel{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.directory-repair-panel>small{display:block;margin:10px 0;color:var(--muted);line-height:1.8}
+.directory-repair-panel pre{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.directory-repair-stages{display:flex;flex-wrap:wrap;gap:10px 28px;padding-left:22px;font-size:12px;color:var(--muted)}
