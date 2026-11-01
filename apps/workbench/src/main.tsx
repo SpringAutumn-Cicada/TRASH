@@ -1,3 +1,4 @@
+import { BackgroundDatasetTransfers } from "./background-dataset-upload.js";
 import { DataPage } from "./data.js";
 import { AutoDlConnectionStatus } from "./autodl-connection-status.js";
 import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
@@ -146,6 +147,7 @@ function App() {
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
+    <BackgroundDatasetTransfers/>
     {leaveDialog}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} onClose={()=>setAutoDlOpen(false)}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}

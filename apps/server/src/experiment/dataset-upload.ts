@@ -42,6 +42,7 @@ export class DatasetUploadService {
  hashes(project:string,id:string):{path:string;sha256:string}[]{const path=join(this.root,'projects',project,'dataset-hashes',id+'.json');return existsSync(path)?JSON.parse(readFileSync(path,'utf8')):[];}
  saveHashes(project:string,id:string,files:{path:string;sha256:string}[]){const directory=join(this.root,'projects',project,'dataset-hashes');mkdirSync(directory,{recursive:true});writeFileSync(join(directory,id+'.json'),JSON.stringify(files),{mode:0o600});}
  busy(project:string){return [...this.transfers.values()].some(item=>item.project===project);}
+ cancelRequest(project:string,id:string){const transfer=this.transfers.get(id);if(!transfer||transfer.project!==project)experimentError('DATASET_NOT_UPLOADING',409);return this.cancel(project,transfer.dataset);}
  cancel(project:string,id:string){const transfer=[...this.transfers.values()].find(item=>item.project===project&&item.dataset===id)??experimentError('DATASET_NOT_UPLOADING',409);if(['extracting','saving'].includes(transfer.stage))experimentError('DATASET_FINALIZING',409);transfer.controller.abort();return {requested:true};}
  close(){for(const transfer of this.transfers.values())if(!['extracting','saving'].includes(transfer.stage))transfer.controller.abort();}
  async upload(project:string,profile:string,root:string,remote:RemoteConnection,request:IncomingMessage,name:string,filename:string,extract:boolean,requestId:string){

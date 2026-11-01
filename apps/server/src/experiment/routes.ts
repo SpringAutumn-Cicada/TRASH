@@ -245,6 +245,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       service.data.profile(projectId,profile);const workspace=service.workspaces.get(projectId,profile)??experimentError("WORKSPACE_REQUIRED",409);
       send(response,201,{dataset:await service.datasetUploads.upload(projectId,profile,workspace.root,service.terminals.connection(projectId,profile),request,name,filename,url.searchParams.get("extract")==="true",requestId)});return true;
     }
+    if(parts.length===3&&parts[1]==='cancel-upload-request'&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.datasetUploads.cancelRequest(projectId,z.string().uuid().parse(parts[2])));return true;}
     if(parts.length===3&&parts[2]==="cancel-upload"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.datasetUploads.cancel(projectId,parts[1]));return true;}
     if(parts.length===2&&["PUT","DELETE"].includes(method)){
       const dataset=service.data.datasets(projectId).find(item=>item.dataset_id===parts[1])??experimentError("DATASET_NOT_FOUND",404);
