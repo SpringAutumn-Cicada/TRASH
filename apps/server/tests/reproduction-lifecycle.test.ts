@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, renameSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, renameSync, openSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -120,7 +120,7 @@ test("reproduction deploy preserves ZIP names, avoids remote Python and reports 
   const remoteRoot=join(f.root,"remote");await mkdir(remoteRoot);
   const commands:string[][]=[],stages:string[]=[];let damaged=false;
   const remote={
-   sftp:async()=>({lstat:(path:string,callback:(error:unknown)=>void)=>{void lstat(path).then(()=>callback(null),error=>callback({code:error.code==="ENOENT"?2:4}));},mkdir:(path:string,options:{mode:number},callback:(error?:unknown)=>void)=>{void mkdir(path,options).then(()=>callback(),callback);},end:()=>{}}),
+   sftp:async()=>({open:(path:string,flags:string,callback:(error:unknown,handle?:Buffer)=>void)=>{try{const handle=Buffer.alloc(4);handle.writeInt32BE(openSync(path,flags));callback(null,handle);}catch(error){callback(error);}},close:(handle:Buffer,callback:(error?:unknown)=>void)=>{try{closeSync(handle.readInt32BE());callback();}catch(error){callback(error);}},lstat:(path:string,callback:(error:unknown)=>void)=>{void lstat(path).then(()=>callback(null),error=>callback({code:error.code==="ENOENT"?2:4}));},mkdir:(path:string,options:{mode:number},callback:(error?:unknown)=>void)=>{void mkdir(path,options).then(()=>callback(),callback);},end:()=>{}}),
    upload:async(source:string,target:string,progress:(sent:number,total:number)=>void)=>{const bytes=readFileSync(source).length;progress(0,bytes);await copyFile(source,target);progress(bytes,bytes);},
    exec:async(args:string[])=>{commands.push(args);if(damaged&&args[0]==="sha256sum")return "0".repeat(64)+"  fixture";return execFileSync(args[0],args.slice(1),{encoding:"utf8"});},
    write:async(path:string,text:string)=>{await writeFile(path,text);}
@@ -130,7 +130,8 @@ test("reproduction deploy preserves ZIP names, avoids remote Python and reports 
   assert.equal(readFileSync(join(deployed.path,"train.py"),"utf8"),"print(1)\n");
   assert.deepEqual([...new Set(stages)],["preparing","uploading","verifying","extracting","saving","completed"]);
   assert.ok(!commands.some(args=>args[0].includes("python")));
-  const again=await f.reproductions.deploy(remote,f.project,snapshot,remoteRoot);assert.notEqual(again.path,deployed.path);
-  damaged=true;await assert.rejects(f.reproductions.deploy(remote,f.project,snapshot,remoteRoot),/REPRODUCTION_REMOTE_HASH_FAILED/);
+  await assert.rejects(f.reproductions.deploy(remote,f.project,snapshot,remoteRoot),/REPRODUCTION_REMOTE_TARGET_EXISTS/);
+  const another=join(f.root,"another");await mkdir(another);
+  damaged=true;await assert.rejects(f.reproductions.deploy(remote,f.project,snapshot,another),/REPRODUCTION_REMOTE_HASH_FAILED/);
  } finally {f.close();}
 });

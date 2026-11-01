@@ -93,8 +93,8 @@ export class ReproductionService {
    const info=await new Promise<import("ssh2").Stats>((resolve,reject)=>sftp.lstat(directory,(error,value)=>error?reject(error):resolve(value)));
    if(!info.isDirectory()||info.isSymbolicLink())throw new Error("UNSAFE_CLEANUP_PATH");
    const ignoreMissing=(error:Error|undefined|null)=>!error||Number((error as Error&{code?:number}).code)===2;
-   await new Promise<void>((resolve,reject)=>sftp.unlink(posix.join(directory,archive),error=>ignoreMissing(error)?resolve():reject(error)));
-   await new Promise<void>((resolve,reject)=>sftp.rmdir(posix.join(directory,"code"),error=>ignoreMissing(error)?resolve():reject(error)));
+   if(archive){if(posix.dirname(archive)!==posix.normalize(parent))throw new Error("UNSAFE_CLEANUP_PATH");await new Promise<void>((resolve,reject)=>sftp.unlink(archive,error=>ignoreMissing(error)?resolve():reject(error)));}
+   
    await new Promise<void>((resolve,reject)=>sftp.rmdir(directory,error=>ignoreMissing(error)?resolve():reject(error)));
   }finally{sftp.end();}
  }
@@ -102,9 +102,11 @@ export class ReproductionService {
   const archiveName=this.archiveName(snapshot.archive_name??`${this.directoryName(snapshot.name).slice(6)}.zip`);
   const parent=directory;
   let createdDirectory:string|undefined;
+  let createdArchive:string|undefined;
   let stage="REPRODUCTION_SNAPSHOT_READ_FAILED";
   try{
    const bundle=await this.bundle(project,snapshot);
+   if(snapshot.files.some(file=>file.path===".trash-snapshot.json"||file.path===archiveName.slice(0,-4)+"/.trash-snapshot.json"))experimentError("REPRODUCTION_RESERVED_FILE",409);
    report("preparing",0,bundle.size);
    stage="REPRODUCTION_UNZIP_UNAVAILABLE";
    await remote.exec(["sh","-c","command -v unzip >/dev/null 2>&1"]);
@@ -114,37 +116,46 @@ export class ReproductionService {
    const sftp=await remote.sftp();
    try{
     const stem=this.directoryName(archiveName.slice(0,-4)).slice(6);
-    let allocated=false;
-    for(let index=1;index<=10000;index++){
-     const candidate=posix.join(parent,index===1?stem:`${stem}_${index}`);
-     const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(candidate,error=>{if(!error)resolve(true);else if(Number((error as Error & {code?:number}).code)===2)resolve(false);else reject(error);}));
-     if(exists)continue;
-     await new Promise<void>((resolve,reject)=>sftp.mkdir(candidate,{mode:0o700},error=>error?reject(error):resolve()));
-     directory=candidate;createdDirectory=candidate;allocated=true;break;
+    const candidate=posix.join(parent,stem),archivePath=posix.join(parent,archiveName);
+    for(const path of [candidate,archivePath]){
+      const exists=await new Promise<boolean>((resolve,reject)=>sftp.lstat(path,error=>{if(!error)resolve(true);else if(Number((error as Error&{code?:number}).code)===2)resolve(false);else reject(error);}));
+      if(exists)experimentError("REPRODUCTION_REMOTE_TARGET_EXISTS",409);
     }
-    if(!allocated)throw new Error("UPLOAD_NAME_CONFLICT");
-    await new Promise<void>((resolve,reject)=>sftp.mkdir(posix.join(directory,"code"),{mode:0o700},error=>error?reject(error):resolve()));
+    await new Promise<void>((resolve,reject)=>sftp.mkdir(candidate,{mode:0o700},error=>error?reject(error):resolve()));
+    directory=candidate;createdDirectory=candidate;
+    const handle=await new Promise<Buffer>((resolve,reject)=>sftp.open(archivePath,"wx",(error,value)=>error?reject(error):resolve(value)));
+    createdArchive=archivePath;
+    await new Promise<void>((resolve,reject)=>sftp.close(handle,error=>error?reject(error):resolve()));
    }finally{sftp.end();}
    stage="REPRODUCTION_TRANSFER_FAILED";
    report("uploading",0,bundle.size);
-   await remote.upload(bundle.path,posix.join(directory,archiveName),(sent,total)=>report("uploading",sent,total),signal);
+   await remote.upload(bundle.path,posix.join(parent,archiveName),(sent,total)=>report("uploading",sent,total),signal);
    report("verifying",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_HASH_FAILED";
-   const output=await remote.exec(["sha256sum","--",posix.join(directory,archiveName)],undefined,120000,16384);
+   const output=await remote.exec(["sha256sum","--",posix.join(parent,archiveName)],undefined,120000,16384);
    const hash=/^([a-fA-F0-9]{64})[ \t]/.exec(output.trim())?.[1].toLowerCase();
    if(hash!==snapshot.sha256)throw new Error("REMOTE_HASH_MISMATCH");
    report("extracting",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_EXTRACT_FAILED";
-   await remote.exec(["unzip","-q","-n",posix.join(directory,archiveName),"-d",posix.join(directory,"code")],undefined,120000);
+   // Flatten only a ZIP-name wrapper; do not strip genuine source subdirectories.
+   const wrapper=archiveName.slice(0,-4);
+   const strip=snapshot.files.length>0&&snapshot.files.every(file=>file.path.startsWith(wrapper+"/"));
+   if(strip){
+     const staging=posix.join(directory,".trash-extract-"+randomUUID());
+     await remote.exec(["mkdir","--",staging]);
+     await remote.exec(["unzip","-q","-n",posix.join(parent,archiveName),"-d",staging],undefined,120000);
+     await remote.exec(["sh","-c",'for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$entry" ] || [ -L "$entry" ] || continue; mv -- "$entry" "$2/" || exit; done',"trash-flatten",posix.join(staging,wrapper),directory],undefined,120000);
+     await remote.exec(["rmdir","--",posix.join(staging,wrapper),staging]);
+   }else await remote.exec(["unzip","-q","-n",posix.join(parent,archiveName),"-d",directory],undefined,120000);
    report("saving",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_MANIFEST_FAILED";
-   await remote.write(posix.join(directory,"snapshot.json"),JSON.stringify(snapshot));
+   await remote.write(posix.join(directory,".trash-snapshot.json"),JSON.stringify(snapshot));
    report("completed",bundle.size,bundle.size);
-   return {path:posix.join(directory,"code"),snapshot};
+   return {path:directory,snapshot};
   }catch(error){
    if(signal?.aborted){
     if(createdDirectory){
-     try{await this.cleanupCancelledUpload(remote,parent,createdDirectory,archiveName);}
+     try{await this.cleanupCancelledUpload(remote,parent,createdDirectory,createdArchive??"");}
      catch{throw Object.assign(new Error("UPLOAD_CANCEL_CLEANUP_FAILED"),{statusCode:409,residual_path:createdDirectory});}
     }
     experimentError("UPLOAD_CANCELLED",409);

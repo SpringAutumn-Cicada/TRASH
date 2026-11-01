@@ -18,8 +18,13 @@ root=pathlib.Path(sys.argv[1]).resolve(strict=True)
 assert root.is_dir(),'代码目录不存在'
 expected=tuple(map(int,p['python_version'].split('.')))
 assert sys.version_info[:len(expected)]==expected,'Python 版本与报告要求不一致'
+paths=[pathlib.PurePosixPath(item['path']) for item in p['files']]
+wrapper=paths[0].parts[0] if paths and all(len(path.parts)>1 and path.parts[0]==paths[0].parts[0] for path in paths) else None
+strip=bool(wrapper) and not all((root/path).is_file() for path in paths)
 for item in p['files']:
- file=(root/item['path']).resolve(strict=True)
+ relative=pathlib.PurePosixPath(item['path'])
+ if strip: relative=pathlib.PurePosixPath(*relative.parts[1:])
+ file=(root/relative).resolve(strict=True)
  assert root in file.parents and file.is_file(),'快照文件路径异常'
  assert hashlib.sha256(file.read_bytes()).hexdigest()==item['sha256'],'远端代码已变化，请重新上传并分析'
 target=root/'.venv' 
