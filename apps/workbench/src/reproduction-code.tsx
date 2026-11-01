@@ -8,7 +8,7 @@ import { FileSearch, Cpu, Search, ChevronDown, X, Archive, FileUp, FolderOpen, P
 import type { ReproductionCode, ReproductionSnapshot, SshProfile } from "@trash/protocol";
 import { RepositoryBrowser } from "./repository-browser.js";
 import { readPreference, writePreference, useUnsavedChanges } from "./navigation.js";
-const messages:Record<string,string>={...environmentErrors,SSH_NOT_CONNECTED:"所选主机尚未连接或连接已断开，请先点击连接。",
+const messages:Record<string,string>={...environmentErrors,UPLOAD_CANCELLED:"上传已终止；远端可能保留未完成文件，不会登记为上传成功。",UPLOAD_NOT_RUNNING:"上传任务尚未就绪或已经结束，请稍后重试或查看结果。",UPLOAD_FINALIZING:"文件已传完，正在校验或归档，已无法终止文件传输，请等待处理结果。",SSH_NOT_CONNECTED:"所选主机尚未连接或连接已断开，请先点击连接。",
  REPRODUCTION_UNZIP_UNAVAILABLE:"远端未找到可用的 unzip，请在实例中安装后重试；平台不会自动安装软件。",
  REPRODUCTION_SNAPSHOT_READ_FAILED:"无法读取本机代码快照，请检查文件和目录权限。",
  REPRODUCTION_REMOTE_DIRECTORY_FAILED:"SFTP 创建远端目录失败，请检查父目录是否存在、写入权限及磁盘空间。",
@@ -28,7 +28,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
  const [progress,setProgress]=useState<{stage:string;sent:number;total:number}>();
  const [progressWarning,setProgressWarning]=useState("");
  const [uploadRequest,setUploadRequest]=useState<{id:string;code:string}>();
- const [uploading,setUploading]=useState(false);
+ const [uploading,setUploading]=useState(false),[stoppingUpload,setStoppingUpload]=useState(false);
  const uploadPending=useRef(false);
  const [remotePicker,setRemotePicker]=useState(false);
  const [deleting,setDeleting]=useState<ReproductionCode>();
@@ -73,19 +73,25 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
   };void poll();return()=>{controller.abort();clearTimeout(timer);};
  },[uploading,uploadRequest,base]);
 
+ const stopUpload=async()=>{
+  if(!uploadRequest||!uploading||stoppingUpload)return;
+  setStoppingUpload(true);setError("");
+  try{await call(`/reproductions/${uploadRequest.code}/cancel-upload`,{request_id:uploadRequest.id,confirm:true});if(alive.current)setProgressWarning("正在终止上传，请等待后端确认；远端可能保留未完成文件。");}
+  catch(cause){if(alive.current){setError(cause instanceof Error?cause.message:"终止请求失败，请查看上传状态后重试。");setStoppingUpload(false);}}
+ };
  const upload=async()=>{
   if(!current||busy||connecting||uploadPending.current)return;
   if(!connectedProfiles.includes(host)){setError("请先连接所选主机，再上传代码。");return;}
   if(!host||!remoteDir.trim()){setError("请填写目标主机和远端目录。");return;}
   const requestId=crypto.randomUUID();setUploadRequest({id:requestId,code:current.id});setProgress({stage:"snapshot",sent:0,total:0});setProgressWarning("");
-  uploadPending.current=true;setUploading(true);
+  uploadPending.current=true;setStoppingUpload(false);setUploading(true);
   try{await action(async()=>{
     const data=await call<{path:string;snapshot:ReproductionSnapshot;record_saved?:boolean}>(`/reproductions/${current.id}/upload`,{profile_id:host,directory:remoteDir,request_id:requestId,confirm:true});
     if(alive.current){
       setNotice(`上传完成：${data.path}；快照 SHA-256：${data.snapshot.sha256}${data.record_saved===false?"；本机上传记录保存失败，请保留远端路径。":""}`);
       try{await load();}catch{if(alive.current)setError("代码已上传成功，但列表刷新失败，请稍后重新进入页面查看记录。");}
     }
-  });}finally{uploadPending.current=false;if(alive.current)setUploading(false);}
+  });}finally{uploadPending.current=false;if(alive.current){setUploading(false);setStoppingUpload(false);}}
  };
  const save=async()=>{
   const metadata={name,source_id:sourceId||undefined,source_url:sourceUrl,notes};let code:ReproductionCode;
@@ -133,7 +139,7 @@ export function ReproductionCodes({projectId,profiles,profileId,onPlan,connected
     if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
    }
-  }}><div className="modal-heading"><div><span className="reproduction-title-eyebrow">代码部署</span><h2 id="reproduction-upload-title"><Upload size={20}/>上传到 AutoDL</h2><p>{current.name}</p></div><button type="button" className="icon-button" aria-label="关闭上传弹窗" disabled={busy||uploading||connecting} onClick={closeUpload}><X size={18}/></button></div><label>目标主机<select required value={host} disabled={busy||connecting} onChange={e=>setHost(e.target.value)}><option value="">选择主机</option>{profiles.map(p=><option key={p.profile_id} value={p.profile_id}>{p.name}</option>)}</select></label><label>远端父目录<div className="repository-path-control"><input required value={remoteDir} disabled={busy} onChange={e=>setRemoteDir(e.target.value)}/><button type="button" className="secondary-button" disabled={busy||connecting||!host||!connectedProfiles.includes(host)} onClick={()=>setRemotePicker(true)}><FolderOpen size={14}/>浏览目录</button></div></label><p>请先连接目标主机；浏览、新建目录和上传均复用该 SSH 连接。通过 SFTP 上传到独立快照子目录，校验后使用远端 unzip 解压，无需远端 Python。不会安装依赖、启动实验或覆盖已有代码。</p><div className="knowledge-toolbar"><button type="button" className="secondary-button" disabled={busy||connecting||!host||connectedProfiles.includes(host)} aria-busy={connecting} onClick={()=>void onConnect(host)}>{connecting?<><LoaderCircle size={14} className="spin"/>正在连接…</>:connectedProfiles.includes(host)?"已连接":"连接"}</button><button type="submit" className="primary-button" disabled={busy||connecting||!host||!connectedProfiles.includes(host)} aria-busy={uploading}>{uploading?<><LoaderCircle size={14} className="spin"/>正在上传…</>:"确认上传"}</button></div>{uploading&&<UploadProgress progress={progress} warning={progressWarning} name={current.archive_name??`${current.name}.zip`}/>}{error&&<p role="alert" className="notice error-notice">{error}</p>}{notice&&<p role="status" className="notice">{notice}</p>}<div className="reproduction-upload-footer"><span>{uploading?"上传进行中，请等待完成后关闭。":"文件将上传至独立目录，保留原 ZIP 名称。"}</span><button type="button" className="secondary-button" disabled={busy||uploading||connecting} onClick={closeUpload}>关闭</button></div></form></div></ModalLayer>}
+  }}><div className="modal-heading"><div><span className="reproduction-title-eyebrow">代码部署</span><h2 id="reproduction-upload-title"><Upload size={20}/>上传到 AutoDL</h2><p>{current.name}</p></div><button type="button" className="icon-button" aria-label="关闭上传弹窗" disabled={busy||uploading||connecting} onClick={closeUpload}><X size={18}/></button></div><label>目标主机<select required value={host} disabled={busy||connecting} onChange={e=>setHost(e.target.value)}><option value="">选择主机</option>{profiles.map(p=><option key={p.profile_id} value={p.profile_id}>{p.name}</option>)}</select></label><label>远端父目录<div className="repository-path-control"><input required value={remoteDir} disabled={busy} onChange={e=>setRemoteDir(e.target.value)}/><button type="button" className="secondary-button" disabled={busy||connecting||!host||!connectedProfiles.includes(host)} onClick={()=>setRemotePicker(true)}><FolderOpen size={14}/>浏览目录</button></div></label><p>请先连接目标主机；浏览、新建目录和上传均复用该 SSH 连接。通过 SFTP 上传到独立快照子目录，校验后使用远端 unzip 解压，无需远端 Python。不会安装依赖、启动实验或覆盖已有代码。</p><div className="knowledge-toolbar"><button type="button" className="secondary-button" disabled={busy||connecting||!host||connectedProfiles.includes(host)} aria-busy={connecting} onClick={()=>void onConnect(host)}>{connecting?<><LoaderCircle size={14} className="spin"/>正在连接…</>:connectedProfiles.includes(host)?"已连接":"连接"}</button><button type="submit" className="primary-button" disabled={busy||connecting||!host||!connectedProfiles.includes(host)} aria-busy={uploading}>{uploading?<><LoaderCircle size={14} className="spin"/>正在上传…</>:"确认上传"}</button>{uploading&&<button type="button" className="secondary-button reproduction-upload-stop" disabled={stoppingUpload||Boolean(progress&&!["snapshot","preparing","uploading","cancelling"].includes(progress.stage))} onClick={()=>void stopUpload()}>{stoppingUpload?<><LoaderCircle size={14} className="spin"/>正在终止…</>:"终止上传"}</button>}</div>{uploading&&<UploadProgress progress={progress} warning={progressWarning} name={current.archive_name??`${current.name}.zip`}/>}{error&&<p role="alert" className="notice error-notice">{error}</p>}{notice&&<p role="status" className="notice">{notice}</p>}<div className="reproduction-upload-footer"><span>{uploading?"准备或传输阶段可终止；校验归档阶段请等待结束。":"文件将上传至独立目录，保留原 ZIP 名称。"}</span><button type="button" className="secondary-button" disabled={busy||uploading||connecting} onClick={closeUpload}>关闭</button></div></form></div></ModalLayer>}
   {current?<><details className="reproduction-summary"><summary>代码信息与上传记录</summary><code>{current.path}</code><button type="button" className="text-button" onClick={()=>void copyText(current.path).then(()=>{setError("");setNotice("已复制本地目录，可在编辑器中打开。");}).catch(()=>{setNotice("");setError("浏览器未允许自动复制，请手动选中上方目录路径并按 Ctrl+C。");})}>复制本地目录路径</button>{current.source_url&&<span>来源：{current.source_url}</span>}{current.notes&&<p>{current.notes}</p>}{current.uploads?.at(-1)&&<span>最近上传：{current.uploads.at(-1)?.path} · {current.uploads.at(-1)?.at}</span>}</details><div id="reproduction-source-browser" hidden={!sourceOpen}>{codes.filter(code=>visited.includes(code.id)).map(code=><div hidden={code.id!==selected} key={code.id}><RepositoryBrowser projectId={projectId} repositoryPath={code.path} endpoint={`${base}/reproductions/${code.id}`}/></div>)}</div></>:!editing&&!busy&&<div className="repository-unbound"><Archive size={32}/><h3>添加第一份论文复现代码</h3><p>上传 ZIP 压缩包即可管理多篇论文的实现，并上传到 AutoDL 运行。</p><button className="primary-button" onClick={()=>edit()}>添加复现代码</button></div>}
  </div></div></div>;
 }

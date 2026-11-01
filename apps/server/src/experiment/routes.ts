@@ -61,6 +61,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts.length===6&&parts[3]==="reports"&&parts[5]==="freshness"&&method==="GET"){send(response,200,await service.environmentAnalysis.freshness(projectId,parts[1],parts[4]));return true;}
       return false;
     }
+    // Cancellation must bypass the upload's project lock.
+    if(parts.length===3&&parts[1]&&parts[2]==="cancel-upload"&&method==="POST"){
+      const input=z.object({request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+      send(response,202,service.reproductions.cancelUpload(projectId,parts[1],input.request_id));return true;
+    }
     const release=method!=="GET"?service.reproductions.acquire(projectId):()=>{};
     try{
     if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}
@@ -80,15 +85,16 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         const profile=service.data.profile(projectId,input.profile_id);
         const remote=service.terminals.connection(projectId,profile.profile_id);
         const requestId=input.request_id??randomUUID();
-        const report=(stage:string,sent=0,total=0)=>service.reproductions.report(projectId,parts[1],requestId,stage,sent,total);
+        const operation=service.reproductions.beginUpload(projectId,parts[1],requestId);
+        const report=(stage:string,sent=0,total=0)=>{if(operation.signal.aborted)experimentError("UPLOAD_CANCELLED",409);service.reproductions.report(projectId,parts[1],requestId,stage,sent,total);};
         report("snapshot");
         try{
           const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
           service.terminals.connection(projectId,profile.profile_id);
-          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,input.directory,report);
+          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,input.directory,report,operation.signal);
           let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}
           send(response,201,{...deployed,record_saved});
-        }catch(error){report("failed");throw error;}return true;
+        }catch(error){service.reproductions.report(projectId,parts[1],requestId,operation.signal.aborted?"cancelled":"failed");if(operation.signal.aborted)experimentError("UPLOAD_CANCELLED",409);throw error;}finally{operation.finish();}return true;
       }
     }
     }finally{release();}

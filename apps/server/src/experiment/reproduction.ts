@@ -18,10 +18,18 @@ const execute=promisify(execFile);
 export const reproductionInput=z.object({name:z.string().trim().min(1).max(200),source_id:z.string().max(200).optional(),source_url:z.string().max(2000).default(""),notes:z.string().max(10000).default("")}).strict();
 export class ReproductionService {
  private pending=new Set<string>();
+ private uploadControllers=new Map<string,AbortController>();
  private uploads=new Map<string,{request_id:string;stage:string;sent:number;total:number}>();
  progress(project:string,id:string,request:string){const value=this.uploads.get(`${project}:${id}`);return value?.request_id===request?value:null;}
  report(project:string,id:string,request:string,stage:string,sent=0,total=0){this.uploads.set(`${project}:${id}`,{request_id:request,stage,sent,total});}
 
+ beginUpload(project:string,id:string,request:string){const key=`${project}:${id}:${request}`;const controller=new AbortController();this.uploadControllers.set(key,controller);return {signal:controller.signal,finish:()=>this.uploadControllers.delete(key)};}
+ cancelUpload(project:string,id:string,request:string){
+  this.get(project,id);const controller=this.uploadControllers.get(`${project}:${id}:${request}`),progress=this.progress(project,id,request);
+  if(!controller||!progress)experimentError("UPLOAD_NOT_RUNNING",409);
+  if(!["snapshot","preparing","uploading","cancelling"].includes(progress.stage))experimentError("UPLOAD_FINALIZING",409);
+  controller.abort();this.report(project,id,request,"cancelling",progress.sent,progress.total);return {requested:true};
+ }
  constructor(private store:TrashStore){}
  busy(project:string){return this.pending.has(project);}
  acquire(project:string){if(this.pending.has(project))experimentError("REPRODUCTION_BUSY",409);this.pending.add(project);return ()=>this.pending.delete(project);}
@@ -77,7 +85,7 @@ export class ReproductionService {
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
  async preparation(project:string,snapshot:ReproductionSnapshot,path:string){await this.bundle(project,snapshot);const script=String.raw`import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);i=z.getinfo(sys.argv[2]);assert i.file_size<=1048576;sys.stdout.write(z.read(i).decode('utf8'))`;return (await execute("python3",["-c",script,join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),path],{maxBuffer:2*1024*1024})).stdout;}
- async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{}){
+ async deploy(remote:RemoteConnection,project:string,snapshot:ReproductionSnapshot,directory:string,report:(stage:string,sent?:number,total?:number)=>void=()=>{},signal?:AbortSignal){
   const archiveName=this.archiveName(snapshot.archive_name??`${this.directoryName(snapshot.name).slice(6)}.zip`);
   const parent=directory;
   let stage="REPRODUCTION_SNAPSHOT_READ_FAILED";
@@ -105,7 +113,7 @@ export class ReproductionService {
    }finally{sftp.end();}
    stage="REPRODUCTION_TRANSFER_FAILED";
    report("uploading",0,bundle.size);
-   await remote.upload(bundle.path,posix.join(directory,archiveName),(sent,total)=>report("uploading",sent,total));
+   await remote.upload(bundle.path,posix.join(directory,archiveName),(sent,total)=>report("uploading",sent,total),signal);
    report("verifying",bundle.size,bundle.size);
    stage="REPRODUCTION_REMOTE_HASH_FAILED";
    const output=await remote.exec(["sha256sum","--",posix.join(directory,archiveName)],undefined,120000,16384);
@@ -120,6 +128,7 @@ export class ReproductionService {
    report("completed",bundle.size,bundle.size);
    return {path:posix.join(directory,"code"),snapshot};
   }catch(error){
+   if(signal?.aborted)experimentError("UPLOAD_CANCELLED",409);
    if(error instanceof Error&&"statusCode" in error)throw error;
    if(error instanceof Error&&error.message==="SSH_COMMAND_TIMEOUT")experimentError("REPRODUCTION_REMOTE_TIMEOUT",422);
    experimentError(stage,422);
