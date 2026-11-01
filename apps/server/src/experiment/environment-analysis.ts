@@ -1,3 +1,4 @@
+import { applySourceAdaptation, restoreSourceAdaptation } from './source-adaptation.js';
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, statSync } from "node:fs";
@@ -85,10 +86,17 @@ export class EnvironmentAnalysisService {
   });
  }
  private progress(task:EnvironmentAnalysisTask,stage:NonNullable<EnvironmentAnalysisTask['stage']>,message:string){if(!pending(task))return;task.stage=stage;task.stage_message=message;this.save(task);}
- private async run(active:Active,resuming=false){
+ private async run(active:Active,resuming=false):Promise<void>{
   const {task}=active,directory=this.taskRoot(task),resumeStage=task.stage,hadSnapshot=Boolean(task.snapshot_id);
   const timer=setTimeout(()=>{active.timedOut=true;if(pending(task)){task.status="failed";task.error="ENVIRONMENT_ANALYSIS_TIMEOUT";task.finished_at=new Date().toISOString();this.save(task);}this.terminate(active.child);},600000);timer.unref();
   try{
+   if(task.adaptation?.status==='applying')throw new Error('ENVIRONMENT_ADAPTATION_REVIEW_REQUIRED');
+   if(task.adaptation&&['applied','reviewing'].includes(task.adaptation.status)&&task.snapshot_id===task.adaptation.original_snapshot_id){
+    task.snapshot_id=undefined;task.session_id=undefined;
+    if(existsSync(join(directory,'input.json')))renameSync(join(directory,'input.json'),join(directory,'input.before-adaptation.json'));
+    if(existsSync(join(directory,'output.json')))renameSync(join(directory,'output.json'),join(directory,'output.before-adaptation.json'));
+    this.save(task);
+   }
    const snapshot=task.snapshot_id?this.reproductions.snapshotInfo(task.project_id,task.snapshot_id):await this.reproductions.snapshot(task.project_id,task.reproduction_id,true);if(!pending(task))return;
    task.snapshot_id=snapshot.snapshot_id;this.save(task);
    const contextPath=join(directory,'analysis-context.json');
@@ -96,12 +104,12 @@ export class EnvironmentAnalysisService {
    if(existsSync(contextPath))context=JSON.parse(readFileSync(contextPath,'utf8'));
    else{
     const skillHash=createHash('sha256');for(const file of ['SKILL.md','references/report-format.md','scripts/collect_inputs.py'])skillHash.update(file).update(readFileSync(join(skillDirectory,file)));
-    context={skill:readFileSync(join(skillDirectory,'SKILL.md'),'utf8'),format:readFileSync(join(skillDirectory,'references/report-format.md'),'utf8'),hash:skillHash.digest('hex'),version:'2.5.0'};
+    context={skill:readFileSync(join(skillDirectory,'SKILL.md'),'utf8'),format:readFileSync(join(skillDirectory,'references/report-format.md'),'utf8'),hash:skillHash.digest('hex'),version:'2.6.0'};
     mkdirSync(join(directory,'references'),{recursive:true});writeFileSync(join(directory,'SKILL.md'),context.skill);writeFileSync(join(directory,'references/report-format.md'),context.format);writeFileSync(join(directory,'collect_inputs.py'),readFileSync(join(skillDirectory,'scripts/collect_inputs.py')));this.atomic(contextPath,context);
    }
    const {skill,format}=context;
    if(!hadSnapshot||!existsSync(join(directory,'input.json'))){
-    this.progress(task,'collecting','正在从固定快照采集文件');
+    this.progress(task,task.adaptation?'reanalyzing':'collecting',task.adaptation?'正在重新采集适配后的代码并复核':'正在从固定快照采集文件');
     const bundle=await this.reproductions.bundle(task.project_id,snapshot);
     await this.execute(active,'python3',[join(directory,'collect_inputs.py'),bundle.path,join(directory,'input.pending.json')],directory);
     const packet=JSON.parse(readFileSync(join(directory,'input.pending.json'),'utf8')) as Packet;packet.coverage.skipped=[...(snapshot.analysis_excluded??[]),...packet.coverage.skipped];this.atomic(join(directory,'input.json'),packet);
@@ -125,7 +133,7 @@ export class EnvironmentAnalysisService {
    if(new Set(names).size!==names.length)throw new Error("ENVIRONMENT_INVALID_REPORT");
    for(const plan of content.code_information.run_plans){
     if(!plan.execution||!plan.execution.mode||!plan.execution.resource||(plan.execution.resource.multi_gpu&&plan.execution.resource.attribution==='unknown'))throw new Error("ENVIRONMENT_INVALID_REPORT");
-    if(context.version==='2.5.0'&&!plan.execution.processing_method)throw new Error('ENVIRONMENT_INVALID_REPORT');
+    if(['2.5.0','2.6.0'].includes(context.version)&&!plan.execution.processing_method)throw new Error('ENVIRONMENT_INVALID_REPORT');
     if(plan.execution.processing_method==='unknown'&&plan.execution.dataset_runs.some(run=>run.status==='ready'))throw new Error('ENVIRONMENT_INVALID_REPORT');
     const keys=plan.execution.dataset_runs.map(run=>run.dataset_name);
     if(new Set(keys).size!==keys.length||keys.some(name=>!names.includes(name)))throw new Error("ENVIRONMENT_INVALID_REPORT");
@@ -143,11 +151,41 @@ export class EnvironmentAnalysisService {
     if(item.attribution!=="unknown"&&!item.evidence.length)throw new Error("ENVIRONMENT_INVALID_EVIDENCE");
     for(const evidence of item.evidence){const file=files.get(evidence.path);if(!file||evidence.line_end<evidence.line_start||evidence.line_end>file.line_count)throw new Error("ENVIRONMENT_INVALID_EVIDENCE");}
    }
+   if(context.version==='2.6.0'){
+    const adaptation=content.adaptation;if(!adaptation)throw new Error('ENVIRONMENT_INVALID_REPORT');
+    if(adaptation.status==='ready'&&(adaptation.blockers.length))throw new Error('ENVIRONMENT_INVALID_REPORT');
+    for(const patch of adaptation.patches)for(const evidence of patch.evidence){const file=files.get(evidence.path);if(!file||evidence.line_end<evidence.line_start||evidence.line_end>file.line_count)throw new Error('ENVIRONMENT_INVALID_EVIDENCE');}
+    if(adaptation.status==='patch'){
+     if(!adaptation.patches.length||task.adaptation)throw new Error('ENVIRONMENT_ADAPTATION_REVIEW_REQUIRED');
+     const managed=this.reproductions.get(task.project_id,task.reproduction_id);if(!managed.imported)throw new Error('ENVIRONMENT_ADAPTATION_UNSAFE');
+     this.progress(task,'adapting','正在备份原始代码并应用路径适配补丁');
+     task.adaptation={status:'applying',original_snapshot_id:snapshot.snapshot_id,files:adaptation.patches.map(p=>p.path),summary:adaptation.summary};this.save(task);
+     applySourceAdaptation(this.reproductions.get(task.project_id,task.reproduction_id).path,join(directory,'adaptation-backup'),adaptation.patches,packet.files);
+     task.adaptation.status='applied';this.save(task);
+     renameSync(join(directory,'input.json'),join(directory,'input.before-adaptation.json'));renameSync(join(directory,'output.json'),join(directory,'output.before-adaptation.json'));
+     task.snapshot_id=undefined;task.session_id=undefined;task.stage='reanalyzing';task.adaptation.status='reviewing';this.save(task);
+     clearTimeout(timer);return await this.run(active);
+    }
+    if(adaptation.patches.length)throw new Error('ENVIRONMENT_INVALID_REPORT');
+    if(task.adaptation)task.adaptation.status=adaptation.status==='ready'?'applied':'blocked';
+   }
    const report:CodeEnvironmentReport={id:task.id,task_id:task.id,project_id:task.project_id,reproduction_id:task.reproduction_id,created_at:new Date().toISOString(),code_fingerprint:fingerprint(snapshot),snapshot_id:snapshot.snapshot_id,skill_name:SKILL,skill_version:context.version,skill_hash:context.hash,cli_version:cliVersion,coverage:packet.coverage,content,verified:false};
    this.progress(task,"saving","正在保存报告、代码指纹和分析版本");
    this.atomic(join(directory,"report.json"),report);task.stage="completed";task.stage_message="报告已保存，可查看部署环境与代码信息；未运行实验验证";task.status="completed";task.report_id=report.id;task.finished_at=new Date().toISOString();this.save(task);
   }catch(error){if(pending(task)){task.status="failed";task.error=error instanceof Error&&/^ENVIRONMENT_[A-Z_]+$/.test(error.message)?error.message:"ENVIRONMENT_ANALYSIS_FAILED";task.finished_at=new Date().toISOString();this.save(task);}}
   finally{clearTimeout(timer);}
+ }
+ adaptationChanges(project:string,code:string,id:string){const task=this.tasks(project,code).find(item=>item.id===id)??experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);const file=join(this.taskRoot(task),'adaptation-backup','changes.json');return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):[];}
+ restoreAdaptation(project:string,code:string,id:string){
+  if(this.running.has(project))experimentError('ENVIRONMENT_ANALYSIS_BUSY',409);
+  const task=this.tasks(project,code).find(item=>item.id===id)??experimentError('ENVIRONMENT_TASK_NOT_FOUND',404),release=this.reproductions.acquire(project);
+  try{const files=restoreSourceAdaptation(this.reproductions.get(project,code).path,join(this.taskRoot(task),'adaptation-backup'));task.status='interrupted';task.error='已恢复原始代码，请开始新的分析生成对应报告。';task.report_id=undefined;if(task.adaptation)task.adaptation.status='blocked';this.save(task);return {files};}finally{release();}
+ }
+ assertUploadReady(project:string,code:string,snapshot:ReproductionSnapshot){
+  if(this.running.has(project))experimentError('ENVIRONMENT_ANALYSIS_BUSY',409);
+  const report=this.reports(project,code).find(item=>item.code_fingerprint===fingerprint(snapshot)&&item.content.schema_version===2&&item.content.adaptation?.status==='ready');
+  if(!report)experimentError('ENVIRONMENT_SOURCE_NOT_READY',409);
+  return report;
  }
  comparisons(project:string,code:string,report:string):HostEnvironmentComparison[]{
   const root=join(this.root(project,code),"comparisons");return existsSync(root)?readdirSync(root).filter(name=>/^comparison_[a-f0-9-]+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(join(root,name),"utf8")) as HostEnvironmentComparison).filter(value=>value.report_id===report).sort((a,b)=>b.created_at.localeCompare(a.created_at)):[];

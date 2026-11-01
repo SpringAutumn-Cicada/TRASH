@@ -129,9 +129,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         send(response,202,{deployment:await service.deployments.start(report,input.profile_id,input.python,directory,service.terminals.connection(projectId,input.profile_id),input.resume_id,input.repair)});return true;
       }
       if(parts.length===3&&method==="GET"){send(response,200,{tasks:service.environmentAnalysis.tasks(projectId,parts[1]),reports:service.environmentAnalysis.reports(projectId,parts[1])});return true;}
-      if(parts.length===3&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{task:service.environmentAnalysis.start(projectId,parts[1])});return true;}
+      if(parts.length===3&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));if(service.data.runs(projectId).some(run=>service.data.active(run)))experimentError('EXPERIMENT_ACTIVE',409);send(response,202,{task:service.environmentAnalysis.start(projectId,parts[1])});return true;}
       if(parts.length===5&&parts[3]==="tasks"&&method==="GET"){const task=service.environmentAnalysis.tasks(projectId,parts[1]).find(task=>task.id===parts[4])??experimentError("ENVIRONMENT_TASK_NOT_FOUND",404);send(response,200,{task});return true;}
-      if(parts.length===6&&parts[3]==="tasks"&&parts[5]==="resume"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{task:service.environmentAnalysis.resume(projectId,parts[1],parts[4])});return true;}
+      if(parts.length===6&&parts[3]==='tasks'&&parts[5]==='adaptation-changes'&&method==='GET'){send(response,200,{changes:service.environmentAnalysis.adaptationChanges(projectId,parts[1],parts[4])});return true;}
+      if(parts.length===6&&parts[3]==='tasks'&&parts[5]==='restore-adaptation'&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));if(service.data.runs(projectId).some(run=>service.data.active(run)))experimentError('EXPERIMENT_ACTIVE',409);send(response,200,service.environmentAnalysis.restoreAdaptation(projectId,parts[1],parts[4]));return true;}
+      if(parts.length===6&&parts[3]==="tasks"&&parts[5]==="resume"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));if(service.data.runs(projectId).some(run=>service.data.active(run)))experimentError('EXPERIMENT_ACTIVE',409);send(response,202,{task:service.environmentAnalysis.resume(projectId,parts[1],parts[4])});return true;}
       if(parts.length===6&&parts[3]==="tasks"&&parts[5]==="dismiss"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{task:service.environmentAnalysis.dismiss(projectId,parts[1],parts[4])});return true;}
       if(parts.length===6&&parts[3]==="tasks"&&parts[5]==="cancel"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{task:service.environmentAnalysis.cancel(projectId,parts[1],parts[4])});return true;}
       if(parts.length===5&&parts[3]==="reports"&&method==="GET"){send(response,200,{report:service.environmentAnalysis.report(projectId,parts[1],parts[4])});return true;}
@@ -171,7 +173,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         const report=(stage:string,sent=0,total=0)=>{if(operation.signal.aborted)experimentError("UPLOAD_CANCELLED",409);service.reproductions.report(projectId,parts[1],requestId,stage,sent,total);};
         report("snapshot");
         try{
-          const snapshot=await service.reproductions.snapshot(projectId,parts[1]);
+          const snapshot=await service.reproductions.snapshot(projectId,parts[1]);service.environmentAnalysis.assertUploadReady(projectId,parts[1],snapshot);
           service.terminals.connection(projectId,profile.profile_id);
           const workspace=service.workspaces.get(projectId,profile.profile_id);
           if(input.layout==='workspace'&&!workspace)experimentError('WORKSPACE_REQUIRED',409);

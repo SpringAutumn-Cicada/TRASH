@@ -37,9 +37,9 @@ function resolve(service:ExperimentService,project:string,input:Input){
   if((mode==='train'&&(model.kind!=='none'||template.includes('{weights}')||template.includes('{checkpoint}')))||(mode==='evaluate'&&(model.kind!=='weights'||recipe.steps.some(step=>step.stage==='train')))||(mode==='resume'&&model.kind!=='checkpoint'))experimentError('EXPERIMENT_MODE_INVALID',409);
   if(mode!=='evaluate'&&!recipe.steps.some(step=>step.stage==='train'))experimentError('EXPERIMENT_MODE_INVALID',409);
   if(mode==='evaluate'&&!recipe.steps.some(step=>step.stage==='evaluate'))experimentError('EXPERIMENT_MODE_INVALID',409);
-  const modelPath=model.kind==='none'?undefined:input.model_sources[binding.dataset_name];
+  const modelPath=model.kind==='none'?undefined:model.kind==='weights'?(model.default_path?(model.default_path.startsWith('/')?model.default_path:posix.join(input.directory,model.default_path)):undefined):input.model_sources[binding.dataset_name];
   if(model.kind!=='none'&&!modelPath)experimentError('EXPERIMENT_MODEL_REQUIRED',409);
-  if(model.kind==='weights'&&!template.includes('{weights}')||model.kind==='checkpoint'&&!template.includes('{checkpoint}'))experimentError('EXPERIMENT_MODEL_UNUSED',409);
+  if(model.kind==='weights'&&model.loading!=='fixed'&&!template.includes('{weights}')||model.kind==='checkpoint'&&!template.includes('{checkpoint}'))experimentError('EXPERIMENT_MODEL_UNUSED',409);
   for(const step of [...recipe.steps,...(recipe.resume?.steps??[])]){
    // Never substitute paths into shell/eval strings. Existing repository scripts remain supported.
    const executable=posix.basename(step.argv[0]),python=/^python[0-9.]*$/.test(executable)||step.argv[0]==='{python}',shell=/^(bash|sh|dash|zsh)$/.test(executable);

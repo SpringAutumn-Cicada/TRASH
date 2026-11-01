@@ -16,7 +16,7 @@ export const environmentErrors:Record<string,string>={
  ENVIRONMENT_NO_READABLE_INPUT:"没有找到可用于分析的文本文件，请检查代码和文件格式。",ENVIRONMENT_INVALID_REPORT:"Agent 输出不符合报告格式，请重新分析。",ENVIRONMENT_INVALID_EVIDENCE:"报告引用了无效文件或行号，本次报告未保存，请重新分析。",
  ENVIRONMENT_ANALYSIS_FAILED:"分析未完成，可能是 CLI 输出格式、输入采集或本机文件读写异常，请检查后重试。",ENVIRONMENT_REPORT_NOT_FOUND:"报告不存在，请刷新列表。",
  ENVIRONMENT_PYTHON_NOT_FOUND:"未发现可用于检查的 Python 3.8+，可在高级选项中填写自定义解释器路径。",ENVIRONMENT_PYTHON_DISCOVERY_FAILED:"自动识别解释器失败，请确认 SSH 仍连接，或手动填写解释器路径。",ENVIRONMENT_PYTHON_DISCOVERY_TIMEOUT:"识别解释器超时，请重新连接主机后再试。",
- ENVIRONMENT_HOST_PROBE_FAILED:"无法通过所选 Python 读取主机环境，请确认解释器存在、Python 版本支持 importlib.metadata（3.8+）及 SSH 仍连接。",ENVIRONMENT_PYTHON_INVALID:"解释器名称或路径无效。",SSH_NOT_CONNECTED:"请先连接所选 AutoDL 主机。",ENVIRONMENT_TASK_NOT_RUNNING:"任务已经结束，请刷新状态。",
+ ENVIRONMENT_ADAPTATION_UNSAFE:"补丁路径或导入代码来源不符合适配要求，已停止。",ENVIRONMENT_ADAPTATION_CODE_CHANGED:"适配期间文件已变化，请重新分析。",ENVIRONMENT_ADAPTATION_AMBIGUOUS:"补丁无法唯一匹配原文，已停止。",ENVIRONMENT_ADAPTATION_REVIEW_REQUIRED:"适配需要人工核对，已有备份与差异保留，请查看后恢复或重新分析。",ENVIRONMENT_SOURCE_NOT_READY:"请完成与当前代码一致的分析及本地适配后上传。",ENVIRONMENT_HOST_PROBE_FAILED:"无法通过所选 Python 读取主机环境，请确认解释器存在、Python 版本支持 importlib.metadata（3.8+）及 SSH 仍连接。",ENVIRONMENT_PYTHON_INVALID:"解释器名称或路径无效。",SSH_NOT_CONNECTED:"请先连接所选 AutoDL 主机。",ENVIRONMENT_TASK_NOT_RUNNING:"任务已经结束，请刷新状态。",
  REPRODUCTION_ARCHIVE_FAILED:"生成代码快照失败，请检查 Python 3、代码大小、符号链接与本机目录权限。",NOT_FOUND:"当前后端尚未加载部署环境分析接口，请重启 TRASH 后再试。"
 };
 const attributionNames={declared:"明确声明",inferred:"源码推断",unknown:"未知"};

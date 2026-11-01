@@ -111,3 +111,15 @@ resource 格式：`{device:"cpu"|"gpu"|"unknown",cpu_supported:"supported"|"unsu
 ## Skill 2.5.0：处理方式与权重模式
 
 execution 增加 processing_method:"batch"|"entity"|"unknown"，新报告必填，与 mode 独立。主方案按 batch/train、batch/evaluate、entity/train、entity/evaluate 组合分别生成；名称清晰表达两维，不因某组合不支持而编造入口。unknown 方案不可 ready，须说明归类依据不足；processing_method 的依据和处理单位解释写在 execution 的 evidence 与方案 scope 中。mode:resume 历史协议继续兼容，新的继续训练入口作为已启动训练的恢复操作保留，不展示为第三个权重模式。各模式的参数、模型输入、评价粒度和指标分别依据源码生成，不通过删除训练步骤猜测评估命令。
+
+
+## Skill 2.6.0：适配报告
+
+schema_version:2 新增 adaptation，新的分析必须包含：
+`{status:"ready"|"patch"|"blocked",summary:"适配说明",blockers:[],patches:[{path:"input文件路径",sha256:"input文件原SHA256",before:"唯一匹配的原始连续文本",after:"替换后文本",reason:"为何这样改",evidence:[{path,line_start,line_end}]}]}`。
+
+每个补丁作用于已采集的现有文本文件，不能创建/删除文件或替换整个目录；before 在原文中应唯一，避免多个补丁相互重叠。只做数据根/权重加载/输出缓存的必要配置改动，不触及算法和超参数。导入包可能包含唯一外层目录，patch.path 仍必须使用 input.json 的真实完整路径，运行工作目录仍按实际展开后的代码根描述。将新 import 与路径替换作为明确原文补丁，保留缩进和换行，不填伪代码。
+
+status:patch 必须有非空补丁，标清仍待复核；ready/blocked 的 patches 必须为空，ready 的 blockers 为空。不能适配或缺少关键源码时 blocked。某处理/权重组合原本不受源码支持无需强造补丁，在对应方案和 unresolved 说明；adaptation.blockers 仅记录当前可支持路径仍需解决的真实适配阻塞。
+
+model_input 增加 loading:"fixed"|"argument"。已有权重默认路径必须从源码确认，固定路径能在部署后的目录正确加载时 loading:fixed，不要求出现 {weights}。需要参数时 loading:argument，argv/config 使用 {weights}，但该值由平台自动按 default_path 解析，不由用户挑选。路径相对已展开代码根，子工作目录下原相对路径须正确换算；未知路径留空并将该方案 blocked。读取默认权重不改写原权重。重新训练输出的新模型与缓存均写到本次输出根。

@@ -51,7 +51,7 @@ with zipfile.ZipFile(archive) as source:
         except (UnicodeDecodeError, ValueError):
             skipped.append({'path': item.filename, 'reason': 'binary_or_non_utf8'})
             continue
-        text = re.sub(r"(?i)((?:password|passwd|api[_-]?key|secret|token)[\"']?\s*[=:]\s*)[^\n,;]+", r'\1[REDACTED]', text)
+        text = re.sub(r"(?i)(?<![\w])((?:password|passwd|api[_-]?key|secret|access_token|refresh_token|auth_token|token)[\"']?\s*[=:]\s*)([\"'])([^\"'\n]*)([\"'])", lambda m: m.group(1) + m.group(2) + '[REDACTED]' + m.group(4) if m.group(2) == m.group(4) else m.group(0), text)
         text = re.sub(r'\bsk-[A-Za-z0-9_-]+', '[REDACTED]', text)
         text = re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----', lambda match: '[REDACTED PRIVATE KEY]' + '\n' * match.group(0).count('\n'), text)
         files.append({'path': item.filename, 'text': text, 'line_count': len(text.split('\n')), 'sha256': hashlib.sha256(data).hexdigest()})

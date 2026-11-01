@@ -20,7 +20,7 @@ export const analysisExecutionSchema=z.object({
  processing_method:processingMethodSchema.optional(),mode:executionModeSchema.optional(),resource:executionResourceSchema.optional(),
  dataset_runs:z.array(z.object({dataset_name:z.string().min(1).max(500),status:z.enum(['ready','blocked']),blockers:z.array(note).max(80),dataset_subdirectory:executionRelativePathSchema,required_paths:z.array(executionRelativePathSchema).max(100),
  mappings:z.array(z.object({path:executionRelativePathSchema.refine(value=>Boolean(value)&&!value.split('/').some(part=>['.venv','venv','.trash-venv-checkpoint.json'].includes(part))),subpath:executionRelativePathSchema}).strict()).max(30),
- model_outputs:z.array(modelOutputSchema).max(20).optional(),model_input:z.object({kind:z.enum(['none','weights','checkpoint']),default_path:z.string().max(2048).refine(value=>!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..')),compatibility:note,...attributed}).strict().optional(),
+ model_outputs:z.array(modelOutputSchema).max(20).optional(),model_input:z.object({loading:z.enum(['argument','fixed']).optional(),kind:z.enum(['none','weights','checkpoint']),default_path:z.string().max(2048).refine(value=>!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..')),compatibility:note,...attributed}).strict().optional(),
  steps:z.array(executionStepSchema).max(60),resume:executionResumeSchema.optional(),config:z.record(z.unknown()),evaluation_protocol:note,result:resultCollectionSchema,...attributed
  }).strict()).max(80),...attributed
 }).strict();
