@@ -39,7 +39,7 @@ function parseStatusLabel(status: Source["parse_status"]): string {
 }
 
 
-export function LiteraturePage({projectId, action, focusId, onChanged}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void}) {
+export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void}) {
   const [detail, setDetail] = useState<ProjectDetail>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -157,11 +157,11 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
   return <section className="literature-page">
-    <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing || Boolean(deleting)} onChanged={onChanged}/>
+    {!searchOnly && <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing || Boolean(deleting)} onChanged={onChanged}/>}
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
-        <div className="literature-grid">
-          <section className="literature-main">
+        <div className="literature-grid literature-module-content">
+          <section className="literature-main" hidden={searchOnly}>
             <div className="section-heading"><div><h2>项目文献</h2><p>已导入的文献记录和来源文件</p></div><label className="primary-button upload-button"><FileUp size={15} />{importing ? "正在导入…" : "导入文件"}<input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={(event) => { void uploadFiles(event.target.files); event.currentTarget.value = ""; }} /></label></div>
             <form className="url-import" onSubmit={(event) => void importUrl(event)}><Link size={15} className="link-icon" /><input type="url" required value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="导入公开网页地址"/><button className="secondary-button" disabled={importing}>{importing ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}添加网页</button></form>
             {detail.sources.length === 0 ? <div className="source-empty"><FileUp size={21}/><span>尚未导入文献</span></div> : <div className="source-table">
@@ -173,11 +173,12 @@ export function LiteraturePage({projectId, action, focusId, onChanged}: {project
               {selectedSource.source.abstract && <p className="source-abstract">{selectedSource.source.abstract}</p>}
               {selectedSource.segments.length ? <div className="segment-list">{selectedSource.segments.map((segment, index) => <article key={`${segment.locator.kind}-${index}`}><span>{locatorLabel(segment.locator)}</span><p>{segment.text}</p></article>)}</div> : <div className="metadata-note">{selectedSource.source.parse_status === "no_text" ? "未能从该来源提取文本。" : "该记录仅包含元数据。"}</div>}
             </section>}
-            <section className="search-section"><div className="section-heading compact"><div><h2>检索项目资料</h2><p>结果会标明原文来源位置</p></div></div><form className="search-form" onSubmit={(event) => void runSearch(event)}><Search size={16}/><input value={query} onChange={(event) => setQuery(event.target.value)} minLength={2} placeholder="检索摘要和已导入正文"/><button className="secondary-button" disabled={searching || query.trim().length < 2}>{searching ? <LoaderCircle size={14} className="spin"/> : <Search size={14}/>}检索</button></form>
-              <div className="passage-results">{passages.map((passage, index) => <article className="passage" key={`${passage.source.source_id}-${index}`}><div className="passage-meta"><button onClick={() => void openSource(passage.source)}>{passage.source.title}</button><span>{locatorLabel(passage.locator)}</span></div><p>{passage.text}</p></article>)}{passages.length === 0 && query.length > 1 && <div className="search-empty">没有匹配的段落。仅含元数据且没有摘要的记录无法检索正文。</div>}</div>
-            </section>
+
           </section>
-          <aside className="literature-tools">
+          <aside className="literature-tools" hidden={!searchOnly}>
+            <section className="search-section"><div className="section-heading compact"><div><h2>检索项目资料</h2><p>结果会标明原文来源位置</p></div></div><form className="search-form" onSubmit={(event) => void runSearch(event)}><Search size={16}/><input value={query} onChange={(event) => setQuery(event.target.value)} minLength={2} placeholder="检索摘要和已导入正文"/><button className="secondary-button" disabled={searching || query.trim().length < 2}>{searching ? <LoaderCircle size={14} className="spin"/> : <Search size={14}/>}检索</button></form>
+              <div className="passage-results">{passages.map((passage, index) => <article className="passage" key={`${passage.source.source_id}-${index}`}><div className="passage-meta"><button onClick={() => onOpenSource ? onOpenSource(passage.source) : void openSource(passage.source)}>{passage.source.title}</button><span>{locatorLabel(passage.locator)}</span></div><p>{passage.text}</p></article>)}{passages.length === 0 && query.length > 1 && <div className="search-empty">没有匹配的段落。仅含元数据且没有摘要的记录无法检索正文。</div>}</div>
+            </section>
             <section className="tool-section"><div className="tool-heading"><div><span className="tool-icon openalex-icon">O</span><div><h2>OpenAlex</h2><p>公开学术文献检索</p></div></div></div><form className="provider-search" onSubmit={(event) => void runProviderSearch(event)}><label htmlFor="openalex-query">搜索学术文献</label><div><input id="openalex-query" value={providerQuery} onChange={(event) => setProviderQuery(event.target.value)} minLength={2} placeholder="标题、作者或关键词"/><button className="icon-button search-submit" aria-label="搜索 OpenAlex" title="搜索 OpenAlex" disabled={providerSearching || providerQuery.trim().length < 2}>{providerSearching ? <LoaderCircle size={16} className="spin"/> : <Search size={16}/>}</button></div></form>
               {providerResults.length > 0 && <><div className="provider-results-heading"><span>{providerResults.length} 条结果</span><button className="text-button" disabled={!selectedResults.size || importing} onClick={() => void importSearchResults()}><Plus size={13}/>{importing ? "正在导入…" : `导入所选（${selectedResults.size}）`}</button></div><div className="provider-results">{providerResults.map((result) => <label className="provider-result" key={result.provider_ref}><input type="checkbox" checked={selectedResults.has(result.provider_ref)} onChange={() => toggleResult(result.provider_ref)}/><span><strong>{result.title}</strong><small>{result.authors.slice(0, 3).join(", ") || "作者信息缺失"}{result.year ? ` · ${result.year}` : ""}</small></span></label>)}</div></>}
             </section>

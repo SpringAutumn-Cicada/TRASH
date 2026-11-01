@@ -16,3 +16,9 @@
 .workspace-autodl-connect{display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:none;font-size:12px;white-space:nowrap}
 @media(max-width:600px){.workspace-autodl-connect{padding:8px;font-size:11px}.workspace-autodl-connect svg{width:14px;height:14px}}
 .workspace-autodl-control{display:flex;align-items:center;gap:12px;flex:none;min-width:0}.workspace-autodl-status{display:inline-flex;align-items:center;gap:7px;min-width:0;max-width:210px;font-size:11px;color:var(--muted);white-space:nowrap}.workspace-autodl-status>span{overflow:hidden;text-overflow:ellipsis}.workspace-autodl-status>i{width:7px;height:7px;border-radius:50%;background:#98a2b3;flex:none}.workspace-autodl-status.connected{color:var(--green)}.workspace-autodl-status.connected>i{background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent)}.workspace-autodl-status.unknown>i{background:#d7922c}@media(max-width:899px){.workspace-autodl-control{gap:8px}.workspace-autodl-status{max-width:120px}}@media(max-width:600px){.workspace-autodl-control{gap:6px}.workspace-autodl-status{font-size:10px;max-width:80px}.workspace-autodl-status>i{width:6px;height:6px}}
+
+/* 文献四模块沿用数据页的模块导航。 */
+.literature-workspace .literature-module-content{display:block}
+.literature-workspace .literature-tools{border:0;padding:0;max-width:none}
+.literature-workspace .literature-module-content>[hidden]{display:none}
+.literature-workspace .search-section{margin-top:0;margin-bottom:24px}

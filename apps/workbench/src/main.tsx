@@ -3,7 +3,7 @@ import { DataPage } from "./data.js";
 import { AutoDlConnectionStatus } from "./autodl-connection-status.js";
 import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Database, Server, ArrowLeft, ChartColumn, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
@@ -39,6 +39,33 @@ function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projec
   if(!sources)return <div className="page-loading">正在加载项目资料…</div>;
   const section={cards:"literature-cards",wiki:"wiki-pages",results:"experiment-results",tasks:"knowledge-tasks"} as const;
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
+}
+const literatureModules = [
+  { id: "literature", label: "文献", icon: BookOpen },
+  { id: "search", label: "搜索文献", icon: Search },
+  { id: "cards", label: "卡片", icon: Layers },
+  { id: "wiki", label: "Wiki", icon: NotebookText }
+] as const;
+function LiteratureModules({projectId,page,action,focusId,status,onNavigate,onChanged}:{projectId:string;page:"literature"|"cards"|"wiki";action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void;onChanged:()=>void}) {
+  const id=useId();
+  const selected=page==="literature"?(action==="search"?"search":"literature"):page;
+  const select=(module:typeof literatureModules[number]['id'])=>onNavigate(module==="search"?"literature":module,module==="search"?{action:"search"}:undefined);
+  return <section className="data-page literature-workspace">
+    <div className="data-heading"><span className="data-symbol"><BookOpen size={25}/></span><div><h2>文献</h2><p>管理文献、搜索资料、整理卡片与研究 Wiki。</p></div></div>
+    <nav className="data-module-tabs" role="tablist" aria-label="文献子模块">{literatureModules.map((item,index)=><button key={item.id} type="button" role="tab" id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel`} aria-selected={selected===item.id} tabIndex={selected===item.id?0:-1} className={selected===item.id?'active':''} onClick={()=>select(item.id)} onKeyDown={event=>{
+      let next:number;
+      if(event.key==='ArrowRight')next=(index+1)%literatureModules.length;
+      else if(event.key==='ArrowLeft')next=(index+literatureModules.length-1)%literatureModules.length;
+      else if(event.key==='Home')next=0;
+      else if(event.key==='End')next=literatureModules.length-1;
+      else return;
+      event.preventDefault();const target=literatureModules[next];select(target.id);
+      document.getElementById(`${id}-tab-${target.id}`)?.focus();
+    }}><item.icon size={16}/>{item.label}</button>)}</nav>
+    <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${selected}`} tabIndex={0}>
+      {page==="literature"?<LiteraturePage projectId={projectId} action={action} focusId={focusId} onChanged={onChanged} searchOnly={selected==="search"} onOpenSource={source=>onNavigate("literature",{focus:source.source_id})}/>:<KnowledgePage projectId={projectId} page={page} action={action} focusId={focusId} status={status} onNavigate={onNavigate}/>}
+    </div>
+  </section>;
 }
 function App() {
   const {path,navigate,register,canLeave,leaveDialog}=useWorkspaceNavigation();
@@ -125,7 +152,7 @@ function App() {
       {inside&&project?<>
         <button type="button" className="sidebar-back" title="返回项目列表" aria-label="返回项目列表" onClick={()=>{setSidebarLayer("projects");setNewMenu(false);requestAnimationFrame(()=>sidebarRef.current?.querySelector<HTMLElement>('.sidebar-search input,.sidebar-create button')?.focus());}}><ArrowLeft size={16}/><span>返回项目列表</span></button>
         <div className="sidebar-current-project" title={project.title}><span className="sidebar-current-symbol" aria-hidden="true">{project.title.slice(0,1)}</span><div><small>当前项目</small><strong>{project.title}</strong></div></div>
-        <nav className="sidebar-page-list" aria-label="项目功能">{projectPages.map(item=>{const Icon=pageIcons[item.id];return <button type="button" key={item.id} className={`sidebar-page-link ${page===item.id?"active":""}`} aria-current={page===item.id?"page":undefined} aria-label={item.label} title={item.label} onClick={()=>goPage(item.id)}><Icon size={18}/><span>{item.label}</span></button>;})}</nav>
+        <nav className="sidebar-page-list" aria-label="项目功能">{projectPages.filter(item=>item.id!=="cards"&&item.id!=="wiki").map(item=>{const Icon=pageIcons[item.id];return <button type="button" key={item.id} className={`sidebar-page-link ${(page===item.id||(item.id==="literature"&&(page==="cards"||page==="wiki")))?"active":""}`} aria-current={(page===item.id||(item.id==="literature"&&(page==="cards"||page==="wiki")))?"page":undefined} aria-label={item.label} title={item.label} onClick={()=>goPage(item.id)}><Icon size={18}/><span>{item.label}</span></button>;})}</nav>
       </>:<>
         <div className="sidebar-create"><button className="primary-button" aria-label="新建项目" title="新建项目" onClick={openCreate}><Plus size={16}/><span>新建项目</span></button>{!compact&&<button className="secondary-button" aria-label="更多项目操作" aria-expanded={newMenu} onClick={()=>{if(!newMenu&&!canLeave(()=>setNewMenu(true)))return;setNewMenu(!newMenu);}}><ChevronDown size={15}/></button>}</div>
         {newMenu&&!compact&&<div className="sidebar-secondary"><RestoreKnowledge onRestored={(restored)=>{void refresh().then(()=>{if(restored)navigate(projectPath(restored.project_id,"overview"),false,true);});setNewMenu(false);}}/></div>}
@@ -144,7 +171,7 @@ function App() {
       <main className="workspace-content">
         {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+":"+path}>
-          {page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"?<LiteraturePage projectId={project.project_id} action={route.action} focusId={route.focusId} onChanged={()=>void refresh()}/>:page==="experiments"||page==="reproductions"||page==="autodl"?<ExperimentsPage projectId={project.project_id} reproductionOnly={page==="reproductions"} autoDlOnly={page==="autodl"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onResult={id=>goPage("results",{focus:id})}/>:page==="data"?<DataPage projectId={project.project_id} onNavigate={goPage} action={route.action} focusId={route.focusId} status={route.status}/>:page==="paper"?<section aria-label="论文"><h2>论文</h2></section>:page==="chat"?<ProjectChat projectId={project.project_id}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
+          {page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"||page==="reproductions"||page==="autodl"?<ExperimentsPage projectId={project.project_id} reproductionOnly={page==="reproductions"} autoDlOnly={page==="autodl"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onResult={id=>goPage("results",{focus:id})}/>:page==="data"?<DataPage projectId={project.project_id} onNavigate={goPage} action={route.action} focusId={route.focusId} status={route.status}/>:page==="paper"?<section aria-label="论文"><h2>论文</h2></section>:page==="chat"?<ProjectChat projectId={project.project_id}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
