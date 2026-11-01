@@ -89,8 +89,21 @@ export async function chooseLocalFile(input:unknown,signal?:AbortSignal){
   if(process.platform==='linux'){const {release}=await import('node:os');windows=/microsoft/i.test(release())||Boolean(process.env.WSL_DISTRO_NAME);}
   if(windows){
    // Fixed script, no user input interpolation; Base64 avoids terminal code-page damage to Chinese paths.
-   const script="Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = '选择数据集文件'; $d.Multiselect = $false; $d.CheckFileExists = $true; $owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.StartPosition = 'CenterScreen'; $owner.Width = 1; $owner.Height = 1; $owner.Show(); $owner.Activate(); if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($d.FileName))) }; $d.Dispose(); $owner.Dispose()";
-   const output=await execute(process.platform==='win32'?'powershell.exe':'powershell.exe',['-NoProfile','-STA','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{encoding:'utf8',timeout:120000,maxBuffer:65536,windowsHide:true,signal});
+   const script=String.raw`$ErrorActionPreference = 'Stop';
+Set-Location $env:USERPROFILE;
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class TrashPickerDpi { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value); [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }';
+try { if (-not [TrashPickerDpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4))) { [void][TrashPickerDpi]::SetProcessDPIAware() } } catch { try { [void][TrashPickerDpi]::SetProcessDPIAware() } catch {} };
+Add-Type -AssemblyName System.Windows.Forms;
+[System.Windows.Forms.Application]::EnableVisualStyles();
+$d = New-Object System.Windows.Forms.OpenFileDialog;
+$d.Title = '选择数据集文件'; $d.Multiselect = $false; $d.CheckFileExists = $true; $d.AutoUpgradeEnabled = $true;
+$d.InitialDirectory = $env:USERPROFILE;
+$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.StartPosition = 'CenterScreen'; $owner.Width = 1; $owner.Height = 1;
+try { $owner.Show(); $owner.Activate(); if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($d.FileName))) } } finally { $d.Dispose(); $owner.Dispose() }`;
+   // A Windows-mounted working directory avoids starting the dialog in a WSL UNC folder.
+   let pickerCwd:string|undefined;
+   if(process.platform==='linux'){try{if((await stat('/mnt/c/Windows/System32')).isDirectory())pickerCwd='/mnt/c/Windows/System32';}catch{/* Custom mounts still use USERPROFILE inside the fixed script. */}}
+   const output=await execute('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-STA','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{cwd:pickerCwd,encoding:'utf8',timeout:120000,maxBuffer:65536,windowsHide:true,signal});
    const encoded=output.stdout.trim();if(!encoded)return {cancelled:true};return normalizeLocalFile(Buffer.from(encoded,'base64').toString('utf8'));
   }
   try{const output=await execute('zenity',['--file-selection','--title=选择数据集文件'],{encoding:'utf8',timeout:120000,maxBuffer:65536,signal});const selected=output.stdout.trim();return selected?normalizeLocalFile(selected):{cancelled:true};}
