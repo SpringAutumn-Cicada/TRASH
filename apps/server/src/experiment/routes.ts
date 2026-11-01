@@ -257,7 +257,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===3&&parts[2]==='delete-files'&&method==='POST'){const input=z.object({confirm:z.literal(true),path:z.string().min(1)}).strict().parse(await readJson(request));send(response,200,await deleteDatasetFiles(service,projectId,parts[1],input.path));return true;}
     if(parts.length===2&&["PUT","DELETE"].includes(method)){
       const dataset=service.data.datasets(projectId).find(item=>item.dataset_id===parts[1])??experimentError("DATASET_NOT_FOUND",404);
-      if(dataset.transfer_status==="uploading")experimentError("DATASET_BUSY",409);
+      if(dataset.transfer_status==="uploading"||dataset.verification_progress?.status==="running")experimentError("DATASET_BUSY",409);
       if(service.data.runs(projectId).some(run=>service.data.active(run)&&run.plan.datasets.some(item=>item.dataset_id===dataset.dataset_id)))experimentError("EXPERIMENT_ACTIVE",409);
       if(method==="DELETE"){service.store.db.prepare("DELETE FROM experiment_datasets WHERE project_id=? AND dataset_id=?").run(projectId,dataset.dataset_id);send(response,200,{deleted:true});}
       else{const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const updated={...value,dataset_id:dataset.dataset_id,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(updated);send(response,200,{dataset:updated});}return true;
@@ -265,7 +265,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
 
     if(parts.length===1&&method==="GET"){send(response,200,{datasets:service.data.datasets(projectId)});return true;}
     if(parts.length===1&&method==="POST"){const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const dataset={...value,dataset_id:`dataset_${randomUUID()}`,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(dataset);send(response,201,{dataset});return true;}
-    if(parts[2]==="check"&&method==="POST"){send(response,200,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
+    if(parts[2]==="check"&&method==="POST"){send(response,202,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
   }
   if(parts[0]==="experiment-plans"){
     if(parts.length===1&&method==="GET"){send(response,200,{plans:service.data.plans(projectId)});return true;}

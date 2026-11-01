@@ -48,19 +48,13 @@ export class ExperimentService {
   }
   async checkDataset(projectId:string,id:string):Promise<DatasetRef>{
     const dataset=this.data.datasets(projectId).find(d=>d.dataset_id===id)??experimentError("DATASET_NOT_FOUND",404);
-    const remote=await this.ssh.connect(this.data.profile(projectId,dataset.profile_id));
-    try{
-      await remote.exec(["python3","-c","import os,sys; assert os.path.exists(sys.argv[1]),'DATASET_NOT_FOUND'",dataset.path]);
-      const script=`import os,sys,json,hashlib\np=sys.argv[1];assert os.path.exists(p),'DATASET_NOT_FOUND'\nresult={'size_bytes':os.path.getsize(p) if os.path.isfile(p) else None}\nif len(sys.argv)>2 and sys.argv[2]:\n h=hashlib.sha256()\n with open(p,'rb') as f:\n  for b in iter(lambda:f.read(1048576),b''):h.update(b)\n result['sha256']=h.hexdigest()\nprint(json.dumps(result))`;
-      // Never walk a large directory; a supplied manifest is checked as a regular file.
-      const target=dataset.checksum_manifest??dataset.path;
-      const info=JSON.parse(await remote.exec(["python3","-c",script,target,dataset.sha256?"hash":""],undefined,60000));
-      const verified=Boolean(dataset.sha256&&dataset.sha256===info.sha256);
-      if(dataset.sha256&&!verified)experimentError("DATASET_HASH_MISMATCH",409);
-      const updated={...dataset,...(info.size_bytes!=null&&!dataset.checksum_manifest?{size_bytes:info.size_bytes}:{}),verification_status:verified?"verified" as const:"unverified" as const,...(verified?{verified_at:new Date().toISOString()}:{})};
-      this.data.saveDataset(updated);return updated;
-    }finally{remote.close();}
+    if(this.datasetUploads.busy(projectId)||dataset.transfer_status==='uploading'||['failed','cancelled','interrupted'].includes(dataset.transfer_status??''))experimentError('DATASET_BUSY',409);
+    const remote=this.terminals.connection(projectId,dataset.profile_id);
+    const pending=this.datasetUploads.verify(projectId,id,remote);
+    void pending.catch(()=>{});
+    return this.data.datasets(projectId).find(item=>item.dataset_id===id)!;
   }
+
   createPlan(projectId:string,input:unknown,id?:string,baseVersion=0):ExperimentPlanVersion{
     const content=experimentPlanInputSchema.parse(input),profile=this.data.profile(projectId,content.profile_id);
     const reproduction=content.code_source==="reproduction"?this.reproductions.snapshotInfo(projectId,content.snapshot_id!):undefined;
