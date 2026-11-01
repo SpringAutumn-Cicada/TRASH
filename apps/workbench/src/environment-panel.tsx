@@ -9,7 +9,7 @@ import { copyText } from "./clipboard.js";
 import { useUnsavedChanges } from "./navigation.js";
 
 export const environmentErrors:Record<string,string>={
- DEPLOYMENT_REPAIR_REQUIRES_FAILED:"仅支持修复已停止的失败部署，请先刷新远端状态。",DEPLOYMENT_DIRECTORY_INVALID:"请选择有效的远端代码目录，不能使用根目录或包含上级跳转。",DEPLOYMENT_REPORT_BLOCKED:"此报告为旧格式，请重新分析后再部署。",DEPLOYMENT_REPORT_STALE:"代码已变化，请重新分析部署环境。",DEPLOYMENT_UPLOAD_REQUIRED:"请先将此代码上传到所选主机。",DEPLOYMENT_UPLOAD_STALE:"上传快照与分析代码不一致，请重新上传并分析。",DEPLOYMENT_BUSY:"该主机已有部署任务。",DEPLOYMENT_NOT_FOUND:"部署记录不存在，请刷新列表。",DEPLOYMENT_STATE_UNKNOWN:"此前部署状态未知，请先人工检查远端安装进程和 .venv，不会自动重试。",
+ DEPLOYMENT_REPAIR_REQUIRES_FAILED:"仅支持修复已停止的失败部署，请先刷新远端状态。",DEPLOYMENT_DIRECTORY_INVALID:"请选择有效的远端代码目录，不能使用根目录或包含上级跳转。",DEPLOYMENT_REPORT_BLOCKED:"此报告为旧格式，请重新分析后再部署。",DEPLOYMENT_REPORT_STALE:"代码已变化，请重新分析部署环境。",DEPLOYMENT_UPLOAD_REQUIRED:"请先将此代码上传到所选主机。",DEPLOYMENT_UPLOAD_STALE:"上传快照与分析代码不一致，请重新上传并分析。",DEPLOYMENT_BUSY:"当前项目仍有部署、失败分析或修复任务，请等待结束或先取消。",DEPLOYMENT_NOT_FOUND:"部署记录不存在，请刷新列表。",DEPLOYMENT_STATE_UNKNOWN:"此前部署状态未知，请先人工检查远端安装进程和 .venv，不会自动重试。",
  ENVIRONMENT_ANALYSIS_BUSY:"当前项目已有环境分析任务，请等待或取消后重试。",REPRODUCTION_BUSY:"当前项目正在生成快照、上传或检查环境，请稍后再试。",
  ENVIRONMENT_CODEX_UNAVAILABLE:"未找到本机 Codex CLI，请在运行 TRASH 的 WSL 中确认安装和登录状态。",ENVIRONMENT_LOCAL_PYTHON_MISSING:"本机没有可用的 Python 3，无法采集代码输入。",
  ENVIRONMENT_PROCESS_FAILED:"分析进程执行失败，请检查本机 Codex CLI 登录、模型可用性和运行权限。",ENVIRONMENT_ANALYSIS_TIMEOUT:"分析超过十分钟，已停止，请手动重试。",

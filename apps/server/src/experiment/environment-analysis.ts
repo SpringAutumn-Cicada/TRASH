@@ -18,6 +18,7 @@ interface Active {task:EnvironmentAnalysisTask;child?:ChildProcess;timedOut?:boo
 const pending=(task:EnvironmentAnalysisTask)=>task.status==="preparing"||task.status==="analyzing";
 const fingerprint=(snapshot:ReproductionSnapshot)=>createHash("sha256").update(JSON.stringify([...snapshot.files].sort((a,b)=>a.path.localeCompare(b.path)))).digest("hex");
 export class EnvironmentAnalysisService {
+ private freshnessChecks=new Map<string,Promise<{stale:boolean;current_fingerprint:string;checked_at:string}>>();
  private running=new Map<string,Active>();private closed=false;
  constructor(private store:TrashStore,private reproductions:ReproductionService){
   for(const project of store.listProjects()){
@@ -103,5 +104,10 @@ export class EnvironmentAnalysisService {
   const report=this.report(project,code,reportId),remote=terminals.connection(project,profile),release=this.reproductions.acquire(project);
   try{const result=await compareEnvironment(remote,report,profile,python);this.atomic(join(this.root(project,code),"comparisons",`${result.id}.json`),result);return result;}finally{release();}
  }
- async freshness(project:string,code:string,reportId:string){const report=this.report(project,code,reportId),release=this.reproductions.acquire(project);let snapshot:ReproductionSnapshot|undefined;try{snapshot=await this.reproductions.snapshot(project,code,true);const current=fingerprint(snapshot);return {stale:current!==report.code_fingerprint,current_fingerprint:current,checked_at:new Date().toISOString()};}finally{try{if(snapshot)await rm(join(this.store.root,"projects",project,"reproductions","snapshots",snapshot.snapshot_id),{recursive:true,force:true});}finally{release();}}}
+ async freshness(project:string,code:string,reportId:string){
+  this.report(project,code,reportId);const key=JSON.stringify([project,code,reportId]),existing=this.freshnessChecks.get(key);if(existing)return existing;
+  const check=this.scanFreshness(project,code,reportId);this.freshnessChecks.set(key,check);
+  try{return await check;}finally{if(this.freshnessChecks.get(key)===check)this.freshnessChecks.delete(key);}
+ }
+ private async scanFreshness(project:string,code:string,reportId:string){const report=this.report(project,code,reportId),release=this.reproductions.acquire(project);let snapshot:ReproductionSnapshot|undefined;try{snapshot=await this.reproductions.snapshot(project,code,true);const current=fingerprint(snapshot);return {stale:current!==report.code_fingerprint,current_fingerprint:current,checked_at:new Date().toISOString()};}finally{try{if(snapshot)await rm(join(this.store.root,"projects",project,"reproductions","snapshots",snapshot.snapshot_id),{recursive:true,force:true});}finally{release();}}}
 }

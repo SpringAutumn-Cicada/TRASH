@@ -81,6 +81,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         const input=z.object({profile_id:z.string(),python:z.string().min(1).max(4096),directory:z.string().trim().min(1).max(4096).optional(),resume_id:z.string().regex(/^deploy_[a-f0-9-]+$/).optional(),repair:z.boolean().default(false),confirm:z.literal(true)}).strict().parse(await readJson(request));
         service.data.profile(projectId,input.profile_id);
         const report=service.environmentAnalysis.report(projectId,parts[1],parts[4]);
+        service.deployments.assertAvailable(projectId);
         if((await service.environmentAnalysis.freshness(projectId,parts[1],report.id)).stale)experimentError("DEPLOYMENT_REPORT_STALE",409);
         const code=service.reproductions.get(projectId,parts[1]),upload=code.uploads?.filter(item=>item.profile_id===input.profile_id).at(-1);
         const directory=input.directory??upload?.path;

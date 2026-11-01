@@ -33,7 +33,8 @@ export class EnvironmentDeploymentService {
   renameSync(join(root,id+'.json'),join(archive,id+'-'+randomUUID()+'.json'));
  }
  isLocal(id:string){return this.active.has(id);}
- busyProject(project:string){return this.list(project).some(live);}
+ busyProject(project:string){return [...this.active.values()].some(item=>item.task.project_id===project)||this.list(project).some(live);}
+ assertAvailable(project:string){if([...this.active.values()].some(item=>item.task.project_id===project))experimentError('DEPLOYMENT_BUSY',409);}
  private get(project:string,code:string,id:string){return this.active.get(id)?.task??this.list(project).find(task=>task.id===id&&task.code_id===code)??experimentError('DEPLOYMENT_NOT_FOUND',404);}
  private stop(child?:ChildProcess){if(!child)return;try{if(process.platform!=='win32'&&child.pid)process.kill(-child.pid,'SIGTERM');else child.kill('SIGTERM');}catch{/* Already stopped. */}const timer=setTimeout(()=>{if(child.exitCode!==null||child.signalCode!==null)return;try{if(process.platform!=='win32'&&child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch{/* Already stopped. */}},3000);timer.unref();}
  close(){this.closed=true;for(const item of this.active.values()){this.stop(item.child);item.task.status=item.task.remote_job?'unknown':'failed';item.task.message='服务已停止；重新连接主机后刷新状态，不会自动重试。';this.save(item.task);}}
@@ -72,10 +73,11 @@ export class EnvironmentDeploymentService {
   if(!python.startsWith('/')||Array.from(python).some(c=>c.charCodeAt(0)<32))experimentError('ENVIRONMENT_PYTHON_INVALID',400);
   if([...this.active.values()].some(item=>item.task.profile_id===profile))experimentError('DEPLOYMENT_BUSY',409);
   const release=this.codes.acquire(report.project_id);
+  try{
   const records=this.list(report.project_id);
   const requested=resumeId?records.find(task=>task.id===resumeId&&task.code_id===report.reproduction_id&&task.report_id===report.id&&task.profile_id===profile&&task.directory===directory&&task.python===python&&['failed','cancelled'].includes(task.status)):undefined;
-  if(repair&&(!requested||requested.status!=='failed')){release();experimentError('DEPLOYMENT_REPAIR_REQUIRES_FAILED',409);}
-  if(resumeId&&!requested){release();experimentError('DEPLOYMENT_NOT_FOUND',409);}
+  if(repair&&(!requested||requested.status!=='failed')){experimentError('DEPLOYMENT_REPAIR_REQUIRES_FAILED',409);}
+  if(resumeId&&!requested){experimentError('DEPLOYMENT_NOT_FOUND',409);}
   const validPlan=(task:DeploymentTask)=>{try{const parsed=planSchema.safeParse(JSON.parse(readFileSync(join(this.root(task.project_id),task.id,'plan.json'),'utf8')));return parsed.success&&parsed.data.blocked.length===0&&parsed.data.installs.length>0;}catch{return false;}};
   const workspace=this.workspaces?.get(report.project_id,profile);
   const originalDirectory=workspace?.source_root&&workspace.source_profile_id&&directory.startsWith(workspace.root+'/')?posix.join(workspace.source_root,posix.relative(workspace.root,directory)):undefined;
@@ -83,8 +85,9 @@ export class EnvironmentDeploymentService {
   const inherited=workspace?.source_profile_id&&originalDirectory?records.find(task=>matches(task)&&task.profile_id===workspace.source_profile_id&&task.directory===originalDirectory):undefined;
   const previous=requested?(validPlan(requested)?requested:inherited):records.find(task=>matches(task)&&task.profile_id===profile&&task.directory===directory)??inherited;
   const task:DeploymentTask={id:requested?.id??'deploy_'+randomUUID(),project_id:report.project_id,code_id:report.reproduction_id,report_id:report.id,profile_id:profile,directory,python,status:'planning',stage:'planning',created_at:requested?.created_at??new Date().toISOString(),message:repair?'Agent 正在分析失败日志并修复安装方案':previous?'正在载入原安装计划，准备继续断点':'本机 Agent 正在重新整理隔离安装计划',...(previous&&!repair?{resumed_from:previous.id}:{}),...(requested?.repair?{repair:requested.repair}:{}),...(requested?.repair_plan_backups?{repair_plan_backups:requested.repair_plan_backups}:{})};
-  const item:Active={task,cancel:false,automaticRepairUsed:repair,...(repair&&requested?{repairSource:requested}:{})};this.active.set(task.id,item);try{this.save(task);}catch(error){this.active.delete(task.id);release();throw error;}
+  const item:Active={task,cancel:false,automaticRepairUsed:repair,...(repair&&requested?{repairSource:requested}:{})};this.active.set(task.id,item);try{this.save(task);}catch(error){this.active.delete(task.id);throw error;}
   void this.run(item,report,remote).finally(()=>{this.active.delete(task.id);release();}).catch(()=>{});return task;
+  }catch(error){release();throw error;}
  }
  private plan(item:Active,root:string,output:string,prompt:string){
   return new Promise<void>((resolve,reject)=>{
