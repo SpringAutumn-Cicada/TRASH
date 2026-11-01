@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, createReadStream, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { createWriteStream, createReadStream, mkdirSync, writeFileSync, readFileSync, existsSync, type Stats } from "node:fs";
 import { mkdtemp, rm, stat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix, isAbsolute } from "node:path";
@@ -48,7 +48,7 @@ export class DatasetUploadService {
   if(this.transfers.has(requestId)||this.busy(project))experimentError('DATASET_BUSY',409);
   if(!filename||filename==='.'||filename==='..'||filename.includes('/')||filename.includes('\\')||Array.from(filename).some(c=>c.charCodeAt(0)<32)||Buffer.byteLength(filename)>255)experimentError('UPLOAD_PATH_INVALID',400);
   if(extract&&!filename.toLowerCase().endsWith('.zip'))experimentError('DATASET_ARCHIVE_INVALID',400);
-  let localFile:string|undefined,localInfo:Awaited<ReturnType<typeof stat>>|undefined;
+  let localFile:string|undefined,localInfo:Stats|undefined;
   if(localPath){if(!isAbsolute(localPath)||localPath.includes('\0'))experimentError('LOCAL_FILE_INVALID',400);try{localFile=await realpath(localPath);localInfo=await stat(localFile);}catch{experimentError('LOCAL_FILE_NOT_FOUND',404);}if(!localInfo!.isFile()||localInfo!.size===0)experimentError('LOCAL_FILE_INVALID',400);if(localInfo!.size>MAX_DATASET_BYTES)experimentError('REQUEST_TOO_LARGE',413);}
   if(this.transfers.has(requestId)||this.busy(project))experimentError('DATASET_BUSY',409);
   const declared=Number(request.headers['content-length']);if(Number.isFinite(declared)&&declared>MAX_DATASET_BYTES)experimentError('REQUEST_TOO_LARGE',413);
