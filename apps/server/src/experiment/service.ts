@@ -23,7 +23,7 @@ export class ExperimentService {
     this.timer=setInterval(()=>{void this.tick();},5000);this.timer.unref();
   }
   close():void{this.closed=true;clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
-  busyProject(projectId:string):boolean{return this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
+  busyProject(projectId:string):boolean{return this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
   private hostKey(profile:SshProfile):string{return `${profile.host.toLowerCase()}:${profile.port}:${profile.username}`;}
   private mark(run:ExperimentRun,state:ExperimentRunState,error?:string):void{
     if(this.closed)return;

@@ -40,7 +40,18 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         const code=service.reproductions.get(projectId,parts[1]),upload=code.uploads?.filter(item=>item.profile_id===profileId).at(-1);
         response.setHeader("cache-control","no-store");send(response,200,{directory:upload?.path??"",source:upload?"latest-upload":"none"});return true;
       }
-      if(parts.length===4&&parts[3]==="deployments"&&method==="GET"){send(response,200,{deployments:service.deployments.list(projectId).filter(task=>task.code_id===parts[1])});return true;}
+      if(parts.length===6&&parts[3]==="deployments"&&["cancel","refresh"].includes(parts[5])&&method==="POST"){
+        z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+        const task=service.deployments.list(projectId).find(item=>item.id===parts[4]&&item.code_id===parts[1])??experimentError("DEPLOYMENT_NOT_FOUND",404);
+        const remote=task.remote_job?service.terminals.connection(projectId,task.profile_id):undefined;
+        if(parts[5]==="cancel")send(response,200,{deployment:await service.deployments.cancel(projectId,parts[1],task.id,remote)});
+        else{if(!remote)experimentError("DEPLOYMENT_STATE_UNKNOWN",409);send(response,200,{deployment:await service.deployments.refresh(projectId,parts[1],task.id,remote)});}
+        return true;
+      }
+      if(parts.length===4&&parts[3]==="deployments"&&method==="GET"){
+        for(const task of service.deployments.list(projectId).filter(task=>task.code_id===parts[1]&&task.remote_job&&["installing","cancelling","unknown"].includes(task.status)&&!service.deployments.isLocal(task.id))){try{await service.deployments.refresh(projectId,parts[1],task.id,service.terminals.connection(projectId,task.profile_id));}catch{/* Keep unknown status until the original host is connected. */}}
+        response.setHeader("cache-control","no-store");send(response,200,{deployments:service.deployments.list(projectId).filter(task=>task.code_id===parts[1])});return true;
+      }
       if(parts.length===6&&parts[3]==="reports"&&parts[5]==="deploy"&&method==="POST"){
         const input=z.object({profile_id:z.string(),python:z.string().min(1).max(4096),directory:z.string().trim().min(1).max(4096).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));
         service.data.profile(projectId,input.profile_id);

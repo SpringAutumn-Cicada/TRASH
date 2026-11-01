@@ -1,0 +1,23 @@
+import React from "react";
+import { Check, LoaderCircle, Pause, RefreshCw, Server, Square } from "lucide-react";
+export interface DeploymentView {id:string;profile_id:string;status:string;message:string;directory:string;venv?:string;warnings?:string[];stage?:string;completed_units?:number;total_units?:number;current?:string;log_tail?:string;resumed?:boolean;resumed_from?:string}
+const names:Record<string,string>={planning:"Agent 整理方案",installing:"正在部署",cancelling:"正在取消",completed:"部署完成",cancelled:"已暂停，可继续",failed:"部署失败，可重试",unknown:"连接中断，待确认"};
+export function DeploymentProgress({task,working,connected,onCancel,onRefresh}:{task:DeploymentView;working:boolean;connected:boolean;onCancel:()=>void;onRefresh:()=>void}){
+ const terminal=["completed","cancelled","failed"].includes(task.status),running=["planning","installing","cancelling"].includes(task.status);
+ const percent=task.status==="completed"?100:task.total_units?Math.min(99,Math.floor((task.completed_units??0)/task.total_units*100)):undefined;
+ const stages=[{id:"planning",label:"Agent 方案"},{id:"preflight",label:"代码核对"},{id:"venv",label:"虚拟环境"},{id:"packages",label:"依赖安装"},{id:"checking",label:"完成检查"}];
+ const active=task.status==="completed"?stages.length:stages.findIndex(item=>item.id===(task.stage??"planning"));
+ return <article className={`deployment-progress-card deployment-${task.status}`}>
+  <header><span className="deployment-progress-icon">{task.status==="completed"?<Check size={21}/>:task.status==="cancelled"?<Pause size={21}/>:<Server size={21}/>}</span><div><strong>{names[task.status]??task.status}</strong><span>{task.resumed||task.resumed_from?"延续已有环境与安装断点":"独立 venv 部署"}</span></div><b>{percent===undefined?(running?"规划中":"—"):`${percent}%`}</b></header>
+  <ol className="deployment-stage-list">{stages.map((item,index)=><li key={item.id} className={index<active?"done":index===active?"active":""}><span>{index<active?<Check size={11}/>:index+1}</span>{item.label}</li>)}</ol>
+  <div className={`deployment-progress-track ${percent===undefined&&running?"is-indeterminate":""}`} role="progressbar" aria-label="部署步骤进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={task.message}><span style={{width:percent===undefined?"30%":`${percent}%`}}/></div>
+  <p role="status">{task.message}</p><code>{task.venv??task.directory}</code>
+  {task.total_units&&<small>已完成 {task.completed_units??0} / {task.total_units} 个阶段单元；百分比按已完成步骤计算，不代表下载字节进度。</small>}
+  <div className="deployment-progress-actions">{running&&<button type="button" className="secondary-button" disabled={working||task.status==="cancelling"||Boolean(task.stage&&task.stage!=="planning"&&!connected)} onClick={onCancel}>{working||task.status==="cancelling"?<LoaderCircle size={13} className="spin"/>:<Square size={13}/>}取消部署</button>}{(task.status==="unknown"||task.status==="cancelling")&&<button type="button" className="secondary-button" disabled={working||!connected} onClick={onRefresh}><RefreshCw size={13}/>刷新远端状态</button>}</div>
+  {(task.status==="cancelled"||task.status==="failed")&&<p className="deployment-resume-hint">保留已安装依赖。保持同一报告、主机、目录和解释器，再次点击“一键部署”继续。未完成的安装组会重新尝试，已满足的包由 pip 复用。</p>}
+  {task.status==="unknown"&&<p>重新连接原主机并刷新状态，确认原进程停止后才能继续，避免重复安装。</p>}
+  {task.log_tail&&<details><summary>安装日志（最近内容）</summary><pre>{task.log_tail}</pre></details>}
+  {task.warnings?.length? <details><summary>运行前提醒 · {task.warnings.length}</summary>{task.warnings.map((warning,index)=><p key={index}>{warning}</p>)}</details>:null}
+  {terminal&&task.status!=="completed"&&<small>没有宣称部署成功；环境将保留供继续或排查。</small>}
+ </article>;
+}

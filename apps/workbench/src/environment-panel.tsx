@@ -1,3 +1,4 @@
+import { DeploymentProgress, type DeploymentView } from "./deployment-progress.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { AlertCircle, Check, ChevronDown, Copy, FolderOpen, Cpu, FileSearch, LoaderCircle, RefreshCw, Square } from "lucide-react";
@@ -8,7 +9,7 @@ import { copyText } from "./clipboard.js";
 import { useUnsavedChanges } from "./navigation.js";
 
 export const environmentErrors:Record<string,string>={
- DEPLOYMENT_DIRECTORY_INVALID:"请选择有效的远端代码目录，不能使用根目录或包含上级跳转。",DEPLOYMENT_REPORT_BLOCKED:"此报告为旧格式，请重新分析后再部署。",DEPLOYMENT_REPORT_STALE:"代码已变化，请重新分析部署环境。",DEPLOYMENT_UPLOAD_REQUIRED:"请先将此代码上传到所选主机。",DEPLOYMENT_UPLOAD_STALE:"上传快照与分析代码不一致，请重新上传并分析。",DEPLOYMENT_BUSY:"该主机已有部署任务。",DEPLOYMENT_STATE_UNKNOWN:"此前部署状态未知，请先人工检查远端安装进程和 .venv，不会自动重试。",
+ DEPLOYMENT_DIRECTORY_INVALID:"请选择有效的远端代码目录，不能使用根目录或包含上级跳转。",DEPLOYMENT_REPORT_BLOCKED:"此报告为旧格式，请重新分析后再部署。",DEPLOYMENT_REPORT_STALE:"代码已变化，请重新分析部署环境。",DEPLOYMENT_UPLOAD_REQUIRED:"请先将此代码上传到所选主机。",DEPLOYMENT_UPLOAD_STALE:"上传快照与分析代码不一致，请重新上传并分析。",DEPLOYMENT_BUSY:"该主机已有部署任务。",DEPLOYMENT_NOT_FOUND:"部署记录不存在，请刷新列表。",DEPLOYMENT_STATE_UNKNOWN:"此前部署状态未知，请先人工检查远端安装进程和 .venv，不会自动重试。",
  ENVIRONMENT_ANALYSIS_BUSY:"当前项目已有环境分析任务，请等待或取消后重试。",REPRODUCTION_BUSY:"当前项目正在生成快照、上传或检查环境，请稍后再试。",
  ENVIRONMENT_CODEX_UNAVAILABLE:"未找到本机 Codex CLI，请在运行 TRASH 的 WSL 中确认安装和登录状态。",ENVIRONMENT_LOCAL_PYTHON_MISSING:"本机没有可用的 Python 3，无法采集代码输入。",
  ENVIRONMENT_PROCESS_FAILED:"分析进程执行失败，请检查本机 Codex CLI 登录、模型可用性和运行权限。",ENVIRONMENT_ANALYSIS_TIMEOUT:"分析超过十分钟，已停止，请手动重试。",
@@ -29,8 +30,9 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
  const [error,setError]=useState(""),[loading,setLoading]=useState(true),[checking,setChecking]=useState(false),[canceling,setCanceling]=useState(false),[freshness,setFreshness]=useState<"checking"|"current"|"stale"|"unknown">("unknown");
  const [host,setHost]=useState(profileId),[python,setPython]=useState(""),[comparisons,setComparisons]=useState<HostEnvironmentComparison[]>([]),[comparisonId,setComparisonId]=useState("");
  const [interpreters,setInterpreters]=useState<{path:string;version:string}[]>([]),[detecting,setDetecting]=useState(false),[discoveryError,setDiscoveryError]=useState(""),[detectRevision,setDetectRevision]=useState(0);
- const [deployments,setDeployments]=useState<{id:string;status:string;message:string;directory:string;venv?:string;warnings?:string[]}[]>([]),[deploying,setDeploying]=useState(false),[deploymentRefresh,setDeploymentRefresh]=useState(0);
+ const [deployments,setDeployments]=useState<DeploymentView[]>([]),[deploying,setDeploying]=useState(false),[deploymentRefresh,setDeploymentRefresh]=useState(0);
  const [deployDirectory,setDeployDirectory]=useState(""),[defaultDirectory,setDefaultDirectory]=useState(""),[directoryLoading,setDirectoryLoading]=useState(false),[deploymentPicker,setDeploymentPicker]=useState(false);
+ const [deploymentWorking,setDeploymentWorking]=useState("");
  const [deploymentConfirm,setDeploymentConfirm]=useState(false),[deploymentError,setDeploymentError]=useState("");
  const deploymentModal=useRef<HTMLDivElement>(null);
  useEffect(()=>{
@@ -69,7 +71,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
  },[base,host,hostConnected,detectRevision]);
  useEffect(()=>{
   const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
-  const load=async()=>{try{const data=await request<{deployments:typeof deployments}>("/deployments",undefined,controller.signal);if(controller.signal.aborted)return;setDeployments(data.deployments);if(data.deployments.some(item=>item.status==="planning"||item.status==="installing"))timer=setTimeout(()=>void load(),1500);}catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"读取部署记录失败");}};
+  const load=async()=>{try{const data=await request<{deployments:typeof deployments}>("/deployments",undefined,controller.signal);if(controller.signal.aborted)return;setDeployments(data.deployments);if(data.deployments.some(item=>item.status==="planning"||item.status==="installing"||item.status==="cancelling"))timer=setTimeout(()=>void load(),1500);}catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"读取部署记录失败");}};
   void load();return()=>{controller.abort();clearTimeout(timer);};
  },[base,deploymentRefresh]);
  useEffect(()=>{
@@ -79,13 +81,17 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
   void request<{directory:string}>(`/deployment-directory?profile_id=${encodeURIComponent(host)}`,undefined,controller.signal).then(data=>{if(!controller.signal.aborted){setDefaultDirectory(data.directory);setDeployDirectory(data.directory);}}).catch(cause=>{if(!controller.signal.aborted)setDeploymentError(cause instanceof Error?cause.message:"读取默认目录失败");}).finally(()=>{if(!controller.signal.aborted)setDirectoryLoading(false);});
   return()=>controller.abort();
  },[base,host,reportId]);
- const deploymentActive=deployments.some(item=>item.status==="planning"||item.status==="installing");
+ const deploymentActive=deployments.some(item=>item.status==="planning"||item.status==="installing"||item.status==="cancelling");
  const deploy=async()=>{
   if(!report||deploying||deploymentActive||!hostConnected||!python||!deployDirectory.trim())return;
   setDeploying(true);setError("");setDeploymentError("");try{const data=await request<{deployment:typeof deployments[number]}>(`/reports/${report.id}/deploy`,{profile_id:host,python,directory:deployDirectory.trim(),confirm:true});setDeployments(items=>[data.deployment,...items.filter(item=>item.id!==data.deployment.id)]);setDeploymentConfirm(false);setDeploymentRefresh(value=>value+1);}catch(cause){const message=cause instanceof Error?cause.message:"部署启动失败";setDeploymentError(message);}finally{setDeploying(false);}
  };
  const cancel=async()=>{if(!active||canceling)return;setCanceling(true);setError("");try{await request(`/tasks/${active.id}/cancel`,{confirm:true});setReload(value=>value+1);}catch(cause){setError(cause instanceof Error?cause.message:"取消失败。");}finally{setCanceling(false);}};
  const compare=async()=>{if(checking||detecting||!python.trim()||!report||!hostConnected)return;setChecking(true);setError("");try{const data=await request<{comparison:HostEnvironmentComparison}>(`/reports/${report.id}/compare`,{profile_id:host,python,confirm:true});setComparisons(current=>[data.comparison,...current]);setComparisonId(data.comparison.id);}catch(cause){setError(cause instanceof Error?cause.message:"主机检查失败。");}finally{setChecking(false);}};
+ const deploymentCommand=async(task:DeploymentView,action:"cancel"|"refresh")=>{
+  if(deploymentWorking)return;setDeploymentWorking(task.id);setDeploymentError("");
+  try{const data=await request<{deployment:DeploymentView}>(`/deployments/${task.id}/${action}`,{confirm:true});setDeployments(items=>items.map(item=>item.id===task.id?data.deployment:item));setDeploymentRefresh(value=>value+1);}catch(cause){setDeploymentError(cause instanceof Error?cause.message:"部署操作失败");}finally{setDeploymentWorking("");}
+ };
  const deploymentUnavailable=[
   directoryLoading?"正在读取默认目录":!deployDirectory.trim()?"请先选择远端代码目录":"",
   !hostConnected?"请先连接目标主机":"",detecting?"正在识别 Python":!python?"请选择可用 Python 解释器":"",
@@ -121,8 +127,8 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
   {deploymentConfirm&&report&&<ModalLayer><div className="modal-backdrop"><div ref={deploymentModal} className="modal environment-deployment-confirm" role="dialog" aria-modal="true" aria-labelledby="environment-deploy-title" aria-busy={deploying} onKeyDown={event=>{
    if(event.key==="Escape"){event.preventDefault();event.stopPropagation();if(!deploying)setDeploymentConfirm(false);}
    if(event.key==="Tab"){const buttons=Array.from(deploymentModal.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')??[]);const first=buttons[0],last=buttons[buttons.length-1];if(!first){event.preventDefault();return;}if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}
-  }}><h2 id="environment-deploy-title">确认部署 venv 环境</h2><p>将在下方指定的远端代码目录中创建 .venv，并联网安装依赖；不覆盖已有环境。</p><dl><dt>目标主机</dt><dd>{profiles.find(item=>item.profile_id===host)?.name??host}</dd><dt>Python 解释器</dt><dd>{python}</dd><dt>远端部署目录</dt><dd>{deployDirectory}</dd><dt>虚拟环境位置</dt><dd>{deployDirectory.trim().replace(/\/+$/,"")}/.venv</dd><dt>部署报告</dt><dd>{report.id}</dd></dl>{deploymentError&&<ErrorNotice  className="notice error-notice">{deploymentError}</ErrorNotice>}{deploying&&<p role="status"><LoaderCircle size={14} className="spin"/>正在核对代码快照并提交部署任务…</p>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={deploying} onClick={()=>setDeploymentConfirm(false)}>取消</button><button type="button" className="primary-button" disabled={deploying||deploymentActive||!hostConnected||!python} onClick={()=>void deploy()}>{deploying?"正在提交…":"确认部署"}</button></div></div></div></ModalLayer>}
-  {deployments.length>0&&<details className="environment-section" open><summary>部署记录</summary>{deployments.map(item=><article key={item.id}><strong>{({planning:"Agent 规划中",installing:"远端安装中",completed:"部署完成",failed:"部署失败",unknown:"远端状态待确认"} as Record<string,string>)[item.status]??item.status}</strong><p>{item.message}</p><code>{item.venv??item.directory}</code>{item.warnings?.map((warning,index)=><p key={index}>运行前提醒：{warning}</p>)}</article>)}</details>}
+  }}><h2 id="environment-deploy-title">确认部署 venv 环境</h2><p>将在下方目录创建或继续本平台同一计划的 .venv；保留已安装依赖，仅在身份校验通过后恢复断点。</p><dl><dt>目标主机</dt><dd>{profiles.find(item=>item.profile_id===host)?.name??host}</dd><dt>Python 解释器</dt><dd>{python}</dd><dt>远端部署目录</dt><dd>{deployDirectory}</dd><dt>虚拟环境位置</dt><dd>{deployDirectory.trim().replace(/\/+$/,"")}/.venv</dd><dt>部署报告</dt><dd>{report.id}</dd></dl>{deploymentError&&<ErrorNotice  className="notice error-notice">{deploymentError}</ErrorNotice>}{deploying&&<p role="status"><LoaderCircle size={14} className="spin"/>正在核对代码快照并提交部署任务…</p>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={deploying} onClick={()=>setDeploymentConfirm(false)}>取消</button><button type="button" className="primary-button" disabled={deploying||deploymentActive||!hostConnected||!python} onClick={()=>void deploy()}>{deploying?"正在提交…":"确认部署"}</button></div></div></div></ModalLayer>}
+  {deployments.length>0&&<div className="deployment-records"><h4>部署进度与记录</h4>{deployments.map(task=><DeploymentProgress key={task.id} task={task} working={deploymentWorking===task.id} connected={connectedProfiles.includes(task.profile_id)} onCancel={()=>void deploymentCommand(task,"cancel")} onRefresh={()=>void deploymentCommand(task,"refresh")}/>)}</div>}
   {comparisons.length>0&&<label>对照历史<select value={comparison?.id??""} disabled={checking} onChange={event=>setComparisonId(event.target.value)}>{comparisons.map(item=><option key={item.id} value={item.id}>{profiles.find(profile=>profile.profile_id===item.profile_id)?.name??item.profile_id} · {new Date(item.created_at).toLocaleString("zh-CN")}</option>)}</select></label>}
   {comparison&&<><p>解释器：{comparison.python} · {new Date(comparison.created_at).toLocaleString("zh-CN")}</p><div className="environment-comparisons">{comparison.items.map((item,index)=><article key={index}><div><strong>{item.name}</strong><span className={`environment-comparison-status ${item.status}`}>{item.status==="satisfied"?"满足":item.status==="unsatisfied"?"不满足":"待确认"}</span></div><p>要求：{item.expected}</p><p>检测：{item.actual}</p><small>{item.reason}</small></article>)}</div><details className="environment-section"><summary>主机实际环境（驱动 / Toolkit / 框架 CUDA）</summary><pre>{JSON.stringify(comparison.environment,null,2)}</pre></details></>}
   </section></>}
