@@ -9,6 +9,20 @@ import { experimentError } from "@trash/storage";
 import { createRemoteDirectory, remoteDirectories } from "./remote-directories.js";
 import { SshService, type RemoteConnection } from "./ssh.js";
 
+// Run inside the interactive shell after its startup files; SSH AcceptEnv is not required.
+// Prefer a language-neutral UTF-8 locale, then any installed UTF-8 locale.
+const initializeUtf8Locale = [
+  'trash_terminal_utf8="";',
+  'for trash_terminal_locale in $(locale -a 2>/dev/null); do',
+  'case "$trash_terminal_locale" in',
+  'C.utf8|C.UTF-8|C.UTF8) trash_terminal_utf8="$trash_terminal_locale"; break;;',
+  '*.[uU][tT][fF]-8|*.[uU][tT][fF]8) if [ -z "$trash_terminal_utf8" ]; then trash_terminal_utf8="$trash_terminal_locale"; fi;;',
+  'esac; done;',
+  'if [ -n "$trash_terminal_utf8" ]; then export LANG="$trash_terminal_utf8" LC_ALL="$trash_terminal_utf8";',
+  'else printf "\\n[TRASH] No installed UTF-8 locale found; terminal locale unchanged.\\n"; fi;',
+  'unset trash_terminal_utf8 trash_terminal_locale',
+].join(' ') + '\n';
+
 interface Output { seq: number; data: string; size: number }
 interface Session {
   id: string; token: string; project: string; profile: SshProfile; remote: RemoteConnection; channel: ClientChannel;
@@ -76,6 +90,7 @@ export class TerminalService {
       channel.on("close", () => this.disconnect(session, "远端终端已退出。"));
       remote.client.once("close", session.onRemoteClose);
       if (this.closed) { this.disconnect(session); experimentError("SERVER_STOPPING", 409); }
+      channel.write(initializeUtf8Locale);
       return { id: session.id, token: session.token, profile_id: profile.profile_id, name: profile.name, host: profile.host, port: profile.port, username: profile.username };
     } catch (error) { if (!source) remote?.close(); if (error instanceof Error && error.message === "SSH_TERMINAL_FAILED") experimentError("SSH_TERMINAL_FAILED", 422); throw error; }
     finally { this.opening.delete(project); this.openingProfiles.delete(profile.profile_id); }
