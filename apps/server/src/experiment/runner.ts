@@ -1,5 +1,5 @@
 // Uploaded as a versioned source file. No Python or remote command is executed during development.
-export const RUNNER_VERSION = "3";
+export const RUNNER_VERSION = "4";
 export const REMOTE_RUNNER = String.raw`import sys, os, json, time, hashlib, subprocess, signal, threading, pathlib, fcntl, shlex, platform
 ROOT = pathlib.Path(sys.argv[2]).resolve()
 ACTION = sys.argv[1]
@@ -152,7 +152,7 @@ if (ROOT / 'status.json').exists():
     if old.get('state') in ['completed','failed','cancelled']: sys.exit(0)
 (ROOT / 'logs').mkdir(exist_ok=True)
 (ROOT / 'outputs').mkdir(exist_ok=True)
-status('waiting', runner_version='3')
+status('waiting', runner_version='4')
 host_lock = pathlib.Path('/tmp/trash-experiment-' + str(os.getuid()) + '.lock').open('a')
 while True:
     try:
@@ -162,7 +162,7 @@ while True:
         if (ROOT / 'cancel.json').exists():
             status('cancelled', exit_code=None)
             sys.exit(0)
-        status('waiting', runner_version='3')
+        status('waiting', runner_version='4')
         time.sleep(2)
 process = None
 links=[]
@@ -221,13 +221,14 @@ try:
         candidate=(data/name).resolve()
         if not candidate.is_relative_to(data) or not candidate.exists(): raise RuntimeError('DATASET_REQUIRED_PATH_MISSING: '+name)
     def expand(value):
-        replacements={'{dataset}':str(data) if data else '', '{output}':str(ROOT/'outputs'),'{config}':str(ROOT/'config.json'),'{code}':str(code),'{python}':M['python'],'{checkpoint}':M.get('checkpoint_source','')}
+        replacements={'{device}':'cpu' if M['gpu']=='cpu' else 'cuda','{gpu_count}':str(0 if M['gpu']=='cpu' else len(M['gpu'].split(','))),'{dataset}':str(data) if data else '', '{output}':str(ROOT/'outputs'),'{config}':str(ROOT/'config.json'),'{code}':str(code),'{python}':M['python'],'{weights}':M.get('model_source','') if M.get('model_input_kind')=='weights' else '', '{checkpoint}':M.get('checkpoint_source') or (M.get('model_source','') if M.get('model_input_kind')=='checkpoint' else '')}
         if isinstance(value,str):
             import re
-            return re.sub(r'\{(?:dataset|output|config|code|python|checkpoint)\}',lambda match:replacements[match.group(0)],value)
+            return re.sub(r'\{(?:dataset|output|config|code|python|checkpoint|weights|device|gpu_count)\}',lambda match:replacements[match.group(0)],value)
         if isinstance(value,list): return [expand(item) for item in value]
         if isinstance(value,dict): return {key:expand(item) for key,item in value.items()}
         return value
+    if M.get('model_source') and not pathlib.Path(M['model_source']).is_file(): raise RuntimeError('MODEL_FILE_NOT_FOUND')
     if M.get('checkpoint_source') and not pathlib.Path(M['checkpoint_source']).is_file(): raise RuntimeError('CHECKPOINT_NOT_FOUND')
     spec=M.get('result_collection')
     if spec and spec['root']=='code' and spec['path']:
@@ -247,7 +248,7 @@ try:
     else: env['CUDA_VISIBLE_DEVICES'] = M['gpu']
     atomic('config.json', expand(M['config']))
     environment = json.loads((ROOT / 'environment.json').read_text()) if (ROOT / 'environment.json').exists() else {}
-    environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version='3', code_snapshot=M.get('code_snapshot')))
+    environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version='4', code_snapshot=M.get('code_snapshot')))
     atomic('environment.json', environment)
     steps=M.get('execution_steps') or [dict(stage='other',purpose='执行实验',working_directory='.',argv=M['command'],env={})]
     if M.get('preparation'):
@@ -279,7 +280,7 @@ try:
         threads=[threading.Thread(target=pump,args=(process.stdout,'stdout.log'),daemon=True),threading.Thread(target=pump,args=(process.stderr,'stderr.log'),daemon=True)]
         for thread in threads: thread.start()
         while process.poll() is None:
-            status('running',pid=process.pid,started_at=started,runner_version='3',log_rotation=True,**progress)
+            status('running',pid=process.pid,started_at=started,runner_version='4',log_rotation=True,**progress)
             cancel=ROOT/'cancel.json'
             if cancel.exists() and json.loads(cancel.read_text()).get('token')==TOKEN: reason='cancelled'
             if time.time()-started>M['timeout_seconds']: reason='timeout'

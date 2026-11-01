@@ -87,3 +87,22 @@ execution: {
 平台保留 `outputs/trash-collected-metrics.json` 作为归一化产物，result 不得把它当作原始来源。JSON 仅输出标准 confusion_matrix 时，result.metrics 可为空，由平台按真实计数派生指标；没有矩阵时至少声明一个实际可采集指标。除已有源码支持的 resume 步骤外，不使用 `{checkpoint}`。argv 的 Python 入口仅用 python/python3 或 `{python}`，不使用系统解释器绝对路径；原始报告命令仍可作为证据保留。
 
 execution 可增加 `resource:{device:"cpu"|"gpu"|"unknown",notes:"资源依据或不确定性",attribution,evidence}`，新分析应尽量提供。依据实际 CUDA 调用、设备参数和 README 判断；未确定填 unknown，不推测显存或耗时。平台对 cpu 自动选择 CPU，其他情况使用可调整的默认 GPU 编号，超时为平台选项。
+
+
+## Skill 2.4.0：运行模式、权重与资源
+
+execution 新分析必须包含 mode:"train"|"evaluate"|"resume" 与 resource。schema_version 仍为 2，历史报告缺少新增字段可读，但不能通过自动入口猜测运行模式。
+
+- train：从头初始化并训练，随后评估；model_input.kind 为 none，不引用 weights/checkpoint。若代码默认加载旧权重，必须用有依据的参数关闭加载，否则标 blocked。
+- evaluate：仅加载已有模型权重并评估；步骤可以有必要数据准备，但不能包含训练。model_input.kind 为 weights，步骤或 JSON 配置通过 `{weights}` 接收用户选择的文件。
+- resume：恢复源码支持的完整训练状态再训练并评估，model_input.kind 为 checkpoint，通过 `{checkpoint}` 接收所选检查点。普通 state_dict、预训练初始化或只加载模型不能作为完整断点恢复；未证实恢复入口时 blocked。
+
+每个 dataset_run 必须增加 model_input：`{kind:"none"|"weights"|"checkpoint",default_path:"",compatibility:"兼容要求及未知项",attribution,evidence}`。default_path 只保留源码明确的路径，可为代码根内相对路径或已声明绝对路径，未知留空；平台不会假定此文件存在。weights/checkpoint 的加载参数必须有依据；缺少文件本身可由运行前选择满足，不因此判定命令不可生成。none 的 default_path 留空。
+
+可增加 model_outputs 数组，每项 `{path:"outputs/有依据的模型文件",kind:"weights"|"checkpoint",compatibility:"要求",attribution,evidence}`。path 相对独立运行目录，不能虚构文件名或把动态通配符当实际文件。明确源码写入并可重定向到 `{output}` 时才能列出；模型文件记录远端路径，不要求回传大文件。不能确定时为空并在待确认事项说明。
+
+resource 格式：`{device:"cpu"|"gpu"|"unknown",cpu_supported:"supported"|"unsupported"|"unknown",multi_gpu:false,notes:"资源依据与限制",attribution,evidence}`。CPU 支持根据实际设备分支/硬编码 CUDA 判断；多 GPU 必须有启动与设备映射依据，仅出现多个 CUDA 设备或 torch 导入不构成依据。平台多选设备后会设置 CUDA_VISIBLE_DEVICES，代码应使用对应的进程内逻辑编号；无法适配逻辑编号时标 blocked。不填写真实主机 GPU 编号、空闲显存或臆测显存需求。
+
+把同一数据集集合在不同模式下分别生成 run_plan，名称清晰，如“从头训练并评估”“已有权重评估”。每个方案仍只列自己适用的数据集，不要求把全项目所有数据集强行加入每个方案。不支持的模式可列 blocked 方案或在 unresolved 解释。
+
+资源参数化可使用 `{device}`（CPU 时 cpu，GPU 时 cuda）与 `{gpu_count}`（所选 GPU 数量，CPU 为 0），仅在源码参数确实接受这些值时使用，不创造参数。CUDA_VISIBLE_DEVICES 会重新编号，单卡代码使用进程内 cuda:0；不要将物理 GPU 索引写死到 argv。多 GPU 启动的进程数须由 `{gpu_count}` 或源码实际自动发现设备数决定；无法与用户选择数量匹配时不要声明 multi_gpu:true。复杂框架的非文件模型目录输入暂不支持，需明确标 blocked/待适配，不把目录当单个权重文件。

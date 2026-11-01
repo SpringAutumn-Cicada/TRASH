@@ -11,10 +11,15 @@ export const resultCollectionSchema=z.object({
  notes:note,...attributed
 }).strict();
 export const executionResumeSchema=z.object({checkpoint_path:executionRelativePathSchema.refine(value=>Boolean(value)),steps:z.array(executionStepSchema).min(1).max(60),...attributed}).strict();
+export const executionResourceSchema=z.object({device:z.enum(['cpu','gpu','unknown']),notes:note,cpu_supported:z.enum(['supported','unsupported','unknown']).optional(),multi_gpu:z.boolean().optional(),...attributed}).strict();
+export type ExecutionResource=z.infer<typeof executionResourceSchema>;
+export const executionModeSchema=z.enum(['train','evaluate','resume']);
+export const modelOutputSchema=z.object({path:executionRelativePathSchema.refine(value=>Boolean(value)),kind:z.enum(['weights','checkpoint']),compatibility:note,...attributed}).strict();
 export const analysisExecutionSchema=z.object({
- resource:z.object({device:z.enum(['cpu','gpu','unknown']),notes:note,...attributed}).strict().optional(),
+ mode:executionModeSchema.optional(),resource:executionResourceSchema.optional(),
  dataset_runs:z.array(z.object({dataset_name:z.string().min(1).max(500),status:z.enum(['ready','blocked']),blockers:z.array(note).max(80),dataset_subdirectory:executionRelativePathSchema,required_paths:z.array(executionRelativePathSchema).max(100),
  mappings:z.array(z.object({path:executionRelativePathSchema.refine(value=>Boolean(value)&&!value.split('/').some(part=>['.venv','venv','.trash-venv-checkpoint.json'].includes(part))),subpath:executionRelativePathSchema}).strict()).max(30),
+ model_outputs:z.array(modelOutputSchema).max(20).optional(),model_input:z.object({kind:z.enum(['none','weights','checkpoint']),default_path:z.string().max(2048).refine(value=>!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..')),compatibility:note,...attributed}).strict().optional(),
  steps:z.array(executionStepSchema).max(60),resume:executionResumeSchema.optional(),config:z.record(z.unknown()),evaluation_protocol:note,result:resultCollectionSchema,...attributed
  }).strict()).max(80),...attributed
 }).strict();
@@ -24,3 +29,7 @@ export type DatasetExecution=AnalysisExecution['dataset_runs'][number];
 export type ExecutionStep=z.infer<typeof executionStepSchema>;
 export type ResultCollection=z.infer<typeof resultCollectionSchema>;
 export type ExperimentBindings=z.infer<typeof experimentBindingsSchema>;
+
+export interface HostComputeResources {checked_at:string;gpu_status:'available'|'unavailable'|'failed';message:string;gpus:{index:string;uuid:string;name:string;memory_total_mib:number|null;memory_free_mib:number|null}[]}
+
+export interface ModelFileCandidate {path:string;kind:'weights'|'checkpoint';dataset_name:string;run_id:string;created_at:string;compatibility:string}

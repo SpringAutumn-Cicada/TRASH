@@ -1,3 +1,4 @@
+import { discoverComputeResources, assertComputeSelection } from './compute-resources.js';
 import { ExperimentFailureAnalysis } from './experiment-failure-analysis.js';
 import { DatasetUploadSessions } from "./dataset-upload-sessions.js";
 import { ReproductionQueueService } from "./reproduction-queue.js";
@@ -81,6 +82,7 @@ export class ExperimentService {
     const remote=await this.ssh.connect(profile);
     try{
       const environment=JSON.parse(await remote.exec([plan.content.python,"-c",DIAGNOSTICS,profile.remote_root]));
+      if(plan.content.execution_mode)assertComputeSelection(await discoverComputeResources(remote),plan.content.gpu,plan.content.resource_policy);
       if(environment.platform!=="Linux"||!environment.python_ok||(!plan.reproduction&&!environment.tools.git)||!environment.tools.tmux||!environment.tools.bash)experimentError("REMOTE_ENVIRONMENT_INCOMPLETE",422);
       if(environment.root!==profile.remote_root)experimentError("REMOTE_ROOT_SYMLINK",422);
       if(environment.disk_free<512*1024*1024)experimentError("REMOTE_DISK_INSUFFICIENT",422);
@@ -226,7 +228,7 @@ export class ExperimentService {
     this.store.db.transaction(()=>{
       const knowledge=new KnowledgeStore(this.store.db);const existing=knowledge.list(run.project_id,"experiment-result").find(v=>"external_run_id" in v.content&&v.content.external_run_id===run.run_id);
       if(existing){run.result_id=existing.object_id;run.metrics_status="已登记结果";this.data.saveRun(run);return;}
-      const result=knowledge.write(run.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:run.plan.content.title,method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(", "),dataset_version:run.plan.datasets.map(d=>d.version).join(", "),evaluation_protocol:run.plan.content.evaluation_protocol,config:run.plan.content.config,environment,...(run.started_at?{run_at:run.started_at}:{}),seed:run.plan.content.seed,...(!run.plan.reproduction?{git_commit:run.plan.content.commit_sha}:{}),plan_version:`${run.plan.plan_id}:${run.plan.version}`,external_run_id:run.run_id,metrics,...evaluationExtras,attachments:run.artifacts.map(a=>({name:a.path,uri:a.artifact_id?`/api/v1/projects/${run.project_id}/experiment-artifacts/${run.run_id}/${a.artifact_id}`:`ssh://${run.plan.profile.host}:${run.plan.profile.port}${run.remote_dir}/${a.path}`,sha256:a.sha256})),notes:"由远程实验收集，待研究者审阅"}},"agent");run.result_id=result.object_id;run.metrics_status="已登记待审结果";this.data.saveRun(run);
+      const result=knowledge.write(run.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:run.plan.content.title,method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(", "),dataset_version:run.plan.datasets.map(d=>d.version).join(", "),evaluation_protocol:run.plan.content.evaluation_protocol,config:{...run.plan.content.config,...(run.plan.content.execution_mode?{_trash_execution:{mode:run.plan.content.execution_mode,model_source:run.plan.content.model_source,model_input_kind:run.plan.content.model_input_kind}}:{})},environment,...(run.started_at?{run_at:run.started_at}:{}),seed:run.plan.content.seed,...(!run.plan.reproduction?{git_commit:run.plan.content.commit_sha}:{}),plan_version:`${run.plan.plan_id}:${run.plan.version}`,external_run_id:run.run_id,metrics,...evaluationExtras,attachments:run.artifacts.map(a=>({name:a.path,uri:a.artifact_id?`/api/v1/projects/${run.project_id}/experiment-artifacts/${run.run_id}/${a.artifact_id}`:`ssh://${run.plan.profile.host}:${run.plan.profile.port}${run.remote_dir}/${a.path}`,sha256:a.sha256})),notes:"由远程实验收集，待研究者审阅"}},"agent");run.result_id=result.object_id;run.metrics_status="已登记待审结果";this.data.saveRun(run);
     })();
   }
 }

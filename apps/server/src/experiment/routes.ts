@@ -1,4 +1,6 @@
-import { loadExperimentBindings, saveExperimentBindings, prepareAutomaticExperiment, createAutomaticExperiment } from './automatic-experiment.js';
+import { discoverComputeResources } from './compute-resources.js';
+import { remoteDirectories } from './remote-directories.js';
+import { loadExperimentBindings, saveExperimentBindings, prepareAutomaticExperiment, createAutomaticExperiment, modelFileCandidates } from './automatic-experiment.js';
 import { deleteDatasetFiles } from "./delete-dataset.js";
 import { recognizeWorkspace, adoptWorkspace } from "./workspace-migration.js";
 import { directoryLabel, ensureRemoteDirectory } from "./workspace.js";
@@ -17,11 +19,17 @@ import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
+  if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='model-candidates'&&method==='GET'){send(response,200,{models:modelFileCandidates(service,projectId,parts[1],z.string().min(1).parse(url.searchParams.get('profile_id')))});return true;}
   if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='experiment-bindings'){
     if(method==='GET'){send(response,200,{settings:loadExperimentBindings(service,projectId,parts[1],z.string().min(1).parse(url.searchParams.get('report_id')),z.string().min(1).parse(url.searchParams.get('profile_id')))});return true;}
     if(method==='POST'){send(response,200,{settings:saveExperimentBindings(service,projectId,parts[1],await readJson(request))});return true;}
   }
+  if(parts[0]==='ssh-profiles'&&parts[1]&&parts.length===3){
+    if(parts[2]==='compute-resources'&&method==='GET'){send(response,200,{resources:await discoverComputeResources(service.terminals.connection(projectId,parts[1]))});return true;}
+    if(parts[2]==='model-files'&&method==='GET'){send(response,200,await remoteDirectories(service.terminals.connection(projectId,parts[1]),url.searchParams.get('path')??'/',true));return true;}
+  }
   if(parts[0]==='reproduction-queues'){
+
     if(parts.length===2&&parts[1]==='prepare-auto'&&method==='POST'){const result=await prepareAutomaticExperiment(service,projectId,await readJson(request));send(response,200,{ready:result.ready,checks:result.checks});return true;}
     if(parts.length===2&&parts[1]==='start-auto'&&method==='POST'){send(response,201,{queue:await createAutomaticExperiment(service,projectId,await readJson(request))});return true;}
 

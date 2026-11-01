@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { executionStepSchema, resultCollectionSchema, executionRelativePathSchema, executionResumeSchema } from "./execution.js";
+import { executionStepSchema, resultCollectionSchema, executionRelativePathSchema, executionResumeSchema, executionModeSchema, modelOutputSchema, executionResourceSchema } from "./execution.js";
 const text = z.string().trim().min(1).max(500);
 export const commitShaSchema = z.string().regex(/^[a-f0-9]{40}([a-f0-9]{24})?$/);
 export const remotePathSchema = z.string().min(2).max(2048).refine(p => p.startsWith("/") && !p.split("/").includes("..") && !Array.from(p).some(c => c.charCodeAt(0) < 32), "必须为无上级跳转的绝对路径");
@@ -17,6 +17,9 @@ export const experimentPlanInputSchema = z.object({
   deployed_directory:remotePathSchema.optional(),
   data_mappings:z.array(z.object({path:outputPathSchema,dataset_id:text,subpath:executionRelativePathSchema.optional()}).strict()).max(30).optional(),
   report_id:text.optional(),
+  resource_policy:executionResourceSchema.optional(),
+  source_dataset_name:z.string().max(500).optional(),model_outputs:z.array(modelOutputSchema).max(20).optional(),
+  execution_mode:executionModeSchema.optional(),model_source:remotePathSchema.optional(),model_input_kind:z.enum(["none","weights","checkpoint"]).optional(),
   execution_resume:executionResumeSchema.optional(),checkpoint_source:remotePathSchema.optional(),
   execution_steps:z.array(executionStepSchema).min(1).max(60).optional(),result_collection:resultCollectionSchema.optional(),dataset_subdirectory:executionRelativePathSchema.optional(),required_dataset_paths:z.array(executionRelativePathSchema).max(100).optional(),
   commit_sha: z.union([commitShaSchema,z.literal("")]).default(""), profile_id: text, dataset_ids: z.array(text).max(50), python: remotePathSchema,
