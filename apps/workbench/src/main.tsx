@@ -1,7 +1,9 @@
+import { AutoDlConnectionStatus } from "./autodl-connection-status.js";
+import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, ChartColumn, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Server, ArrowLeft, ChartColumn, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { KnowledgePanel, RestoreKnowledge } from "./knowledge.js";
@@ -39,6 +41,7 @@ function App() {
   const {path,navigate,register,canLeave}=useWorkspaceNavigation();
   const route=parseProjectRoute(path);
   const [projects,setProjects]=useState<ResearchProject[]>([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [notice,setNotice]=useState("");
+  const [autoDlOpen,setAutoDlOpen]=useState(false);
   const [query,setQuery]=useState("");const [createOpen,setCreateOpen]=useState(false);const [deleteTarget,setDeleteTarget]=useState<ResearchProject>();
   const [sidebarLayer,setSidebarLayer]=useState<"projects"|"project">(()=>route?"project":"projects");
   const [hidden,setHidden]=useState(()=>readPreference("trash-sidebar-hidden")==="true");
@@ -109,6 +112,8 @@ function App() {
   const showSidebar=!narrow||drawer;
   const inside=sidebarLayer==="project"&&Boolean(project);
   const filtered=projects.filter(item=>`${item.title}\n${item.research_question}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  useEffect(()=>{setAutoDlOpen(false);},[route?.projectId]);
+  useEffect(()=>{const open=(event:Event)=>{if((event as CustomEvent<{projectId:string}>).detail?.projectId===project?.project_id)setAutoDlOpen(true);};window.addEventListener("trash-autodl-open",open);return()=>window.removeEventListener("trash-autodl-open",open);},[project?.project_id]);
   return <DirtyContext.Provider value={register}><div className={`workspace-shell ${compact?"with-rail":visible?"with-sidebar":"without-sidebar"}`}>
     {narrow&&drawer&&<button className="workspace-shade" aria-label="关闭项目导航" onClick={closeDrawer}/>}
     {showSidebar&&<aside id="project-navigation" ref={sidebarRef} className={`project-sidebar ${narrow?"drawer":""} ${compact?"compact":""}`} role={narrow?"dialog":undefined} aria-modal={narrow?true:undefined} aria-label="项目导航">
@@ -129,6 +134,7 @@ function App() {
     <div className="workspace-main">
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
         <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{project?.research_question??"整理文献、记录思路，逐步推进研究。"}</p></div>
+        {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>setAutoDlOpen(true)}><Server size={16}/><span>AutoDL 连接</span></button></div>}
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
       <main className="workspace-content">
@@ -138,6 +144,7 @@ function App() {
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
+    {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} onClose={()=>setAutoDlOpen(false)}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;
