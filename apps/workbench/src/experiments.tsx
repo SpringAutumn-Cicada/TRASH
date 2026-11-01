@@ -67,13 +67,17 @@ export function ExperimentsPage({projectId,focusId,onResult,reproductionOnly=fal
   const repositoryDetails=async()=>{const data=await request<NonNullable<typeof repoInfo>>(base,"/repository/status");if(alive.current)setRepoInfo(data);};
   const connectTerminal=async(sourceProfile=profileId,source?:TerminalSession,stayOnPage=false)=>{
     if(terminalConnecting.current)return;
-    if(!source&&terminalSessions.some(session=>!session.ended&&session.profile_id===sourceProfile)){if(!stayOnPage&&autoDlOnly)setTab("workspace");return;}
-    if(!source&&terminalSessions.some(session=>!session.ended)){setError("当前工作区已连接其他主机，请先关闭现有终端再切换主机。");return;}
-    if(terminalSessions.length>=3){setError("最多打开 3 个终端分屏，请先关闭不用的窗口。");return;}
     terminalConnecting.current=true;
     setConnecting(true);setError("");setNotice(source?"正在现有 SSH 连接中打开 Shell…":"正在建立 SSH 终端连接，不执行环境诊断…");
-    try{const result=source?await (async()=>{const response=await fetch(`${base}/terminals/${source.id}/split`,{method:"POST",headers:{"content-type":"application/json","x-terminal-token":source.token},body:JSON.stringify({confirm:true})});const value=await response.json();if(!response.ok)throw new Error(failures[value.error]??"无法在当前 SSH 连接中打开 Shell，请检查连接状态。");return value as {terminal:TerminalSession};})():await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current,result.terminal]);if(!stayOnPage&&autoDlOnly)setTab("workspace");setNotice("");}}
-    catch(cause){if(alive.current){setNotice("");setError(cause instanceof Error?cause.message:"终端连接失败。");}}
+    try{const current=await request<{terminals:TerminalSession[]}>(base,"/terminals");
+      if(!alive.current)return;
+      setTerminalSessions(current.terminals);
+      if(!source&&current.terminals.some(session=>session.profile_id===sourceProfile)){if(!stayOnPage&&autoDlOnly)setTab("workspace");setNotice("已复用现有 SSH 连接。");return;}
+      if(!source&&current.terminals.length)throw new Error("当前项目已连接其他主机，请在 AutoDL 连接中断开后切换。");
+      if(current.terminals.length>=3)throw new Error("最多打开 3 个终端分屏，请先关闭不用的窗口。");
+      if(source&&!current.terminals.some(session=>session.id===source.id))throw new Error("原终端已结束，请重新连接主机。");
+      const result=source?await (async()=>{const response=await fetch(`${base}/terminals/${source.id}/split`,{method:"POST",headers:{"content-type":"application/json","x-terminal-token":source.token},body:JSON.stringify({confirm:true})});const value=await response.json();if(!response.ok)throw new Error(failures[value.error]??"无法在当前 SSH 连接中打开 Shell，请检查连接状态。");return value as {terminal:TerminalSession};})():await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current.filter(item=>item.id!==result.terminal.id),result.terminal]);window.dispatchEvent(new CustomEvent("trash-autodl-changed",{detail:{projectId}}));if(!stayOnPage&&autoDlOnly)setTab("workspace");setNotice("");}}
+    catch(cause){if(alive.current){setNotice("");setError(cause instanceof Error?cause.message:"终端连接失败。");if(!source)window.dispatchEvent(new CustomEvent("trash-autodl-open",{detail:{projectId,profileId:sourceProfile}}));}}
     finally{terminalConnecting.current=false;if(alive.current)setConnecting(false);}
   };
   const disconnectTerminals=async()=>{

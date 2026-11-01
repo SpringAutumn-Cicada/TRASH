@@ -45,6 +45,7 @@ function App() {
   const route=parseProjectRoute(path);
   const [projects,setProjects]=useState<ResearchProject[]>([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [notice,setNotice]=useState("");
   const [autoDlOpen,setAutoDlOpen]=useState(false);
+  const [autoDlProfile,setAutoDlProfile]=useState<string>();
   const [query,setQuery]=useState("");const [createOpen,setCreateOpen]=useState(false);const [deleteTarget,setDeleteTarget]=useState<ResearchProject>();
   const [sidebarLayer,setSidebarLayer]=useState<"projects"|"project">(()=>route?"project":"projects");
   const [hidden,setHidden]=useState(()=>readPreference("trash-sidebar-hidden")==="true");
@@ -116,7 +117,7 @@ function App() {
   const inside=sidebarLayer==="project"&&Boolean(project);
   const filtered=projects.filter(item=>`${item.title}\n${item.research_question}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   useEffect(()=>{setAutoDlOpen(false);},[route?.projectId]);
-  useEffect(()=>{const open=(event:Event)=>{if((event as CustomEvent<{projectId:string}>).detail?.projectId===project?.project_id)setAutoDlOpen(true);};window.addEventListener("trash-autodl-open",open);return()=>window.removeEventListener("trash-autodl-open",open);},[project?.project_id]);
+  useEffect(()=>{const open=(event:Event)=>{const detail=(event as CustomEvent<{projectId:string;profileId?:string}>).detail;if(detail?.projectId===project?.project_id){setAutoDlProfile(detail.profileId);setAutoDlOpen(true);}};window.addEventListener("trash-autodl-open",open);return()=>window.removeEventListener("trash-autodl-open",open);},[project?.project_id]);
   return <DirtyContext.Provider value={register}><div className={`workspace-shell ${compact?"with-rail":visible?"with-sidebar":"without-sidebar"}`}>
     {narrow&&drawer&&<button className="workspace-shade" aria-label="关闭项目导航" onClick={closeDrawer}/>}
     {showSidebar&&<aside id="project-navigation" ref={sidebarRef} className={`project-sidebar ${narrow?"drawer":""} ${compact?"compact":""}`} role={narrow?"dialog":undefined} aria-modal={narrow?true:undefined} aria-label="项目导航">
@@ -137,7 +138,7 @@ function App() {
     <div className="workspace-main">
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
         <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{project?.research_question??"整理文献、记录思路，逐步推进研究。"}</p></div>
-        {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>setAutoDlOpen(true)}><Server size={16}/><span>AutoDL 连接</span></button></div>}
+        {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>{setAutoDlProfile(undefined);setAutoDlOpen(true);}}><Server size={16}/><span>AutoDL 连接</span></button></div>}
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
       <main className="workspace-content">
@@ -149,7 +150,7 @@ function App() {
     </div>
     <BackgroundDatasetTransfers/>
     {leaveDialog}
-    {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} onClose={()=>setAutoDlOpen(false)}/>}
+    {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} initialProfileId={autoDlProfile} onClose={()=>setAutoDlOpen(false)}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;
