@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -36,6 +36,27 @@ test("Python runner fixes commit, records metrics, rejects damaged bundles and h
     const artifacts = JSON.parse(execute(good, "collect")) as { path: string; sha256: string }[];
     assert.ok(artifacts.some(a => a.path === "outputs/metrics.json" && a.sha256.length === 64));
     const before = readFileSync(join(good, "status.json"), "utf8"); execute(good); assert.equal(readFileSync(join(good, "status.json"), "utf8"), before);
+    // Automatic execution preserves dataset paths, applies temporary links and collects real log values.
+    const automatic=fixture("automatic",["python","unused.py"]),deployed=join(root,"deployed"),dataset=join(root,"dataset '{output}'");
+    mkdirSync(deployed);mkdirSync(dataset);writeFileSync(join(dataset,"input.txt"),"fixture data");
+    const prepare="import os,pathlib\np=pathlib.Path(os.environ['TRASH_DATASET_DIR']);assert (p/'input.txt').read_text()=='fixture data'\nassert pathlib.Path('data/input.txt').read_text()=='fixture data'\npathlib.Path(os.environ['TRASH_OUTPUT_DIR'],'prepared.txt').write_text(str(p))\n";
+    const evaluate="import os,pathlib\nassert pathlib.Path(os.environ['TRASH_OUTPUT_DIR'],'prepared.txt').is_file()\nprint('Test F1: 81.2',flush=True)\n";
+    writeFileSync(join(deployed,'prepare.py'),prepare);writeFileSync(join(deployed,'evaluate.py'),evaluate);
+    const manifest=JSON.parse(readFileSync(join(automatic,'manifest.json'),'utf8'));
+    const automaticManifest={...manifest,deployed_directory:deployed,code_source:'reproduction',datasets:[{dataset_id:'fixture-data',path:dataset}],data_mappings:[{path:'data',dataset_id:'fixture-data',subpath:''}],required_dataset_paths:['input.txt'],code_snapshot:{files:[{path:'prepare.py',sha256:createHash('sha256').update(prepare).digest('hex')},{path:'evaluate.py',sha256:createHash('sha256').update(evaluate).digest('hex')}]},execution_steps:[{stage:'preprocess',purpose:'prepare fixture',working_directory:'.',argv:['python','prepare.py'],env:{}},{stage:'evaluate',purpose:'evaluate fixture',working_directory:'.',argv:['python','evaluate.py'],env:{}}],result_collection:{mode:'log',root:'run',path:'logs/stdout.log',metrics:[{name:'F1 score',unit:'ratio',key:'',label:'Test F1:',scale:0.01}],notes:'fixture'},metrics_path:'outputs/trash-collected-metrics.json'};
+    writeFileSync(join(automatic,'manifest.json'),JSON.stringify(automaticManifest));execute(automatic);
+    assert.equal(state(automatic).state,'completed');assert.equal(state(automatic).step_index,2);
+    assert.equal(readFileSync(join(automatic,'outputs/prepared.txt'),'utf8'),dataset);
+    assert.equal(existsSync(join(deployed,'data')),false);assert.equal(lstatSync(dataset).isDirectory(),true);
+    const automaticMetrics=JSON.parse(readFileSync(join(automatic,'outputs/trash-collected-metrics.json'),'utf8'));
+    assert.ok(Math.abs(automaticMetrics.metrics[0].value-0.812)<1e-12);
+    assert.equal(JSON.parse(readFileSync(join(automatic,'collection.json'),'utf8')).state,'collected');
+    // A failed extraction cannot reuse a previous successful normalized result.
+    automaticManifest.result_collection.metrics[0].label='Missing metric:';
+    writeFileSync(join(automatic,'manifest.json'),JSON.stringify(automaticManifest));execute(automatic,'collect');
+    assert.equal(existsSync(join(automatic,'outputs/trash-collected-metrics.json')),false);
+    assert.equal(JSON.parse(readFileSync(join(automatic,'collection.json'),'utf8')).state,'failed');
+    assert.equal(readFileSync(join(dataset,'input.txt'),'utf8'),'fixture data');
     const damaged = fixture("damaged", ["python", "run.py"]); writeFileSync(join(damaged, "code.bundle"), "damaged"); execute(damaged);
     assert.equal(state(damaged).reason, "BUNDLE_HASH_MISMATCH");
     const timeout = fixture("timeout", ["python", "-c", "import time; time.sleep(30)"], 1); execute(timeout);

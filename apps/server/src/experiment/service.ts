@@ -1,3 +1,4 @@
+import { ExperimentFailureAnalysis } from './experiment-failure-analysis.js';
 import { DatasetUploadSessions } from "./dataset-upload-sessions.js";
 import { ReproductionQueueService } from "./reproduction-queue.js";
 import { DatasetUploadService } from "./dataset-upload.js";
@@ -7,7 +8,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { z } from "zod";
 import { ExperimentStore, KnowledgeStore, experimentError, type TrashStore } from "@trash/storage";
-import { experimentPlanInputSchema, experimentResultSchema, metricSchema, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
+import { experimentPlanInputSchema, experimentResultSchema, metricSchema, evaluationMetrics, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
 import { RepositoryService } from "./repository.js";
 import { SshService, RemoteConnection, redact } from "./ssh.js";
 import { DIAGNOSTICS, REMOTE_RUNNER, RUNNER_VERSION } from "./runner.js";
@@ -20,18 +21,20 @@ const artifactListSchema=z.array(z.object({path:z.string(),size_bytes:z.number()
 const remoteStatusSchema=z.object({run_id:z.string(),token:z.string(),state:z.string(),at:z.number(),exit_code:z.number().int().nullable().optional(),reason:z.string().nullable().optional(),started_at:z.number().optional(),finished_at:z.number().optional()}).passthrough();
 export class ExperimentService {
   readonly datasetUploads:DatasetUploadService;readonly workspaces:WorkspaceService;readonly deployments:EnvironmentDeploymentService;readonly environmentAnalysis:EnvironmentAnalysisService;readonly reproductions:ReproductionService;readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;readonly terminals:TerminalService;
+  readonly failureAnalyses:ExperimentFailureAnalysis;
   readonly datasetUploadSessions:DatasetUploadSessions;
   readonly reproductionQueues:ReproductionQueueService;
   private inFlight=new Set<string>();private closed=false;private timer:ReturnType<typeof setInterval>;
   constructor(readonly store:TrashStore){
     this.workspaces=new WorkspaceService(store);this.reproductions=new ReproductionService(store);this.data=new ExperimentStore(store.db);this.datasetUploads=new DatasetUploadService(this.data,store.listProjects().map(item=>item.project_id),store.root);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);this.environmentAnalysis=new EnvironmentAnalysisService(store,this.reproductions);this.deployments=new EnvironmentDeploymentService(store,this.reproductions,this.workspaces);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
+    this.failureAnalyses=new ExperimentFailureAnalysis(this);
     this.datasetUploadSessions=new DatasetUploadSessions(this);
     this.reproductionQueues=new ReproductionQueueService(this);
     this.timer=setInterval(()=>{void this.tick();},5000);this.timer.unref();
   }
-  close():void{this.closed=true;this.reproductionQueues.close();this.datasetUploads.close();clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
-  busyProject(projectId:string):boolean{return this.datasetUploadSessions.busy(projectId)||this.reproductionQueues.list(projectId).some(queue=>queue.status==='running'||queue.status==='paused')||this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
+  close():void{this.closed=true;this.failureAnalyses.close();this.reproductionQueues.close();this.datasetUploads.close();clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
+  busyProject(projectId:string):boolean{return this.failureAnalyses.busy(projectId)||this.datasetUploadSessions.busy(projectId)||this.reproductionQueues.list(projectId).some(queue=>queue.status==='running'||queue.status==='paused')||this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
   private hostKey(profile:SshProfile):string{return `${profile.host.toLowerCase()}:${profile.port}:${profile.username}`;}
   private mark(run:ExperimentRun,state:ExperimentRunState,error?:string):void{
     if(this.closed)return;
@@ -140,7 +143,7 @@ export class ExperimentService {
       this.mark(run,"running");launchAttempted=true;
       await remote.exec([run.plan.content.python,posix.join(run.remote_dir,"runner","runner.py"),"launch",run.remote_dir]);
     }catch(error){if(!this.closed)this.mark(run,launchAttempted?"unknown_remote_state":"failed",redact(error instanceof Error?error.message:"实验启动失败"));}
-    finally{remote?.close();await bundle?.cleanup();}
+    finally{remote?.close();await bundle?.cleanup();if(!this.closed&&run.plan.content.execution_steps&&this.data.run(run.project_id,run.run_id).status==='failed')this.failureAnalyses.start(run.project_id,run.run_id);}
   }
   async poll(run:ExperimentRun):Promise<void>{
     if(this.closed)return;let remote:RemoteConnection|undefined;
@@ -162,8 +165,9 @@ export class ExperimentService {
       if(terminal.includes(status.state)){
         this.mark(run,"collecting");await this.collect(run,remote);
         // Remote completion is authoritative, including a natural completion racing cancellation.
-        run.status=status.state as ExperimentRunState;run.error=status.reason??undefined;this.data.saveRun(run);
+        run.status=status.state as ExperimentRunState;run.failure_analysis=this.data.run(run.project_id,run.run_id).failure_analysis;run.error=status.reason??undefined;this.data.saveRun(run);
         this.data.event(run.run_id,run.status,run.collection_status??"运行结束");
+        if(run.plan.content.execution_steps&&(run.status==='failed'||(run.status==='completed'&&!run.result_id&&run.plan.content.result_collection?.mode!=='none')))this.failureAnalyses.start(run.project_id,run.run_id);
       }else this.mark(run,current.status==="cancel_requested"?"cancel_requested":"running");
     }catch(error){if(!this.closed)this.mark(run,"disconnected",redact(error instanceof Error?error.message:"远程状态无法确认"));}finally{remote?.close();}
   }
@@ -186,7 +190,7 @@ export class ExperimentService {
       return {text:redact(bytes.toString()),offset:start+bytes.length,rotated:info.rotated||start!==offset};
     }finally{remote.close();}
   }
-  async collectAgain(projectId:string,id:string):Promise<ExperimentRun>{const run=this.data.run(projectId,id);if(this.data.active(run))experimentError("EXPERIMENT_ACTIVE",409);const remote=await this.ssh.connect(run.plan.profile);try{await this.collect(run,remote);this.data.saveRun(run);return run;}finally{remote.close();}}
+  async collectAgain(projectId:string,id:string):Promise<ExperimentRun>{const run=this.data.run(projectId,id);if(this.data.active(run))experimentError("EXPERIMENT_ACTIVE",409);const remote=await this.ssh.connect(run.plan.profile);try{await this.collect(run,remote);run.failure_analysis=this.data.run(projectId,id).failure_analysis;this.data.saveRun(run);return run;}finally{remote.close();}}
   private async collect(run:ExperimentRun,remote:RemoteConnection):Promise<void>{
     const output=await remote.exec([run.plan.content.python,posix.join(run.remote_dir,"runner","runner.py"),"collect",run.remote_dir]);const items=artifactListSchema.parse(JSON.parse(output));let total=0;const previous=new Map(run.artifacts.map(a=>[a.path,a]));const collected:ExperimentRun["artifacts"]=[];
     for(const item of items){
@@ -201,16 +205,18 @@ export class ExperimentService {
     }
     run.artifacts=collected;
     run.collection_status=run.artifacts.some(a=>!a.downloaded)?"部分大文件仅保留远端引用":"产物已收集";
+    if(run.plan.content.result_collection?.mode==='none'){run.metrics_status='方案未识别可靠指标，仅保存日志与产物，结果待补充';return;}
     if(run.preparation){run.metrics_status="环境准备不产生实验结果";return;}
     const metricFile=run.artifacts.find(a=>(a.path===(run.plan.content.metrics_path.toLowerCase().endsWith('.csv')?'outputs/collected-metrics.json':run.plan.content.metrics_path))&&a.downloaded&&a.artifact_id);
-    if(!metricFile){run.metrics_status="执行结束，结果待补充：指标文件缺失或未下载";return;}
+    if(!metricFile){run.metrics_status="执行结束，结果待补充：指标文件缺失或未下载";const source=run.artifacts.find(item=>item.path==='collection.json'&&item.artifact_id);if(source?.artifact_id){try{const info=JSON.parse(Buffer.from(this.store.readArtifact(run.project_id,source.artifact_id)!).toString());if(info.reason)run.metrics_status='指标采集未完成：'+redact(String(info.reason));}catch{/* Keep the missing-source explanation. */}}return;}
     let metrics:z.infer<typeof metricSchema>[];let evaluationExtras:Record<string,unknown>={};
     try{
       const bytes=this.store.readArtifact(run.project_id,metricFile.artifact_id!)!;const payload=z.object({metrics:z.array(metricSchema).default([]),confusion_matrix:z.unknown().optional(),evaluation:z.unknown().optional()}).strict().parse(JSON.parse(Buffer.from(bytes).toString()));
       const normalized=experimentResultSchema.parse({schema_version:1,title:'collected',method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(', '),metrics:payload.metrics,...(payload.confusion_matrix?{confusion_matrix:payload.confusion_matrix}:{}),...(payload.evaluation?{evaluation:payload.evaluation}:{})});metrics=normalized.metrics;
       evaluationExtras={...(normalized.confusion_matrix?{confusion_matrix:normalized.confusion_matrix}:{}),...(normalized.evaluation?{evaluation:normalized.evaluation}:{})};
-      for(const expected of run.plan.content.expected_metrics)if(metrics.filter(m=>m.name===expected.name&&m.unit===expected.unit).length!==1)throw new Error("指标缺失或单位不符");
-      if(metrics.some(m=>!run.plan.content.expected_metrics.some(e=>e.name===m.name&&e.unit===m.unit)))throw new Error("包含未声明指标");
+      const expected=run.plan.content.expected_metrics.map(item=>({...item,unit:evaluationMetrics.some(spec=>spec.name===item.name)&&item.unit==='%'?(item.name==='MCC'?'':'ratio'):item.name==='MCC'&&item.unit==='ratio'?'':item.unit}));
+      for(const item of expected)if(metrics.filter(m=>m.source!=='confusion_matrix'&&m.name===item.name&&m.unit===item.unit).length!==1&&metrics.filter(m=>m.source==='confusion_matrix'&&m.name===item.name&&m.unit===item.unit).length!==1)throw new Error("指标缺失或单位不符");
+      if(metrics.some(m=>m.source!=='confusion_matrix'&&!expected.some(e=>e.name===m.name&&e.unit===m.unit)))throw new Error("包含未声明指标");
     }catch{run.metrics_status="指标无效，需人工核对";return;}
     if(run.exit_code!==0){run.metrics_status="进程未成功，不自动登记有效结果";return;}
     const environmentFile=run.artifacts.find(a=>a.path==="environment.json"&&a.artifact_id);

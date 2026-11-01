@@ -128,3 +128,7 @@ pnpm dev
 报告下方可选择已连接 AutoDL 主机和 Python 解释器进行只读对照；不自动连接、安装依赖或运行论文模块。CUDA/驱动与复杂版本条件保持待确认。本机需要 Python 3 和已登录的 Codex CLI；可用 `TRASH_CODEX_COMMAND` 指定 CLI。新接口需要重启后端加载。
 
 所有自研 Skill 位于项目 `.agents/skills/`，目录和 `name` 必须以 `trash_` 开头，不修改全局配置。实现与尚未执行的验收清单见 [环境分析交付记录](docs/61-environment-analysis-delivery.md)。
+
+### 从分析报告运行复现实验
+
+“分析源代码”使用项目 Skill 2.3.0 识别各数据集的路径、运行阶段与结果采集规则。“跑实验”可逐项绑定平台数据集，确认方案后串行执行，显示真实阶段进度并将有效指标收集到“数据 → 实验数据”。旧报告可继续查看，自动配置需要重新分析。实现尚未运行验证，使用方式与验收范围见 [自动复现实验交付记录](docs/124-automatic-reproduction-experiments.md)。

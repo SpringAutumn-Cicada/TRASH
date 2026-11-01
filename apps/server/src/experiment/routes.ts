@@ -1,3 +1,4 @@
+import { loadExperimentBindings, saveExperimentBindings, prepareAutomaticExperiment, createAutomaticExperiment } from './automatic-experiment.js';
 import { deleteDatasetFiles } from "./delete-dataset.js";
 import { recognizeWorkspace, adoptWorkspace } from "./workspace-migration.js";
 import { directoryLabel, ensureRemoteDirectory } from "./workspace.js";
@@ -16,7 +17,14 @@ import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
+  if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='experiment-bindings'){
+    if(method==='GET'){send(response,200,{settings:loadExperimentBindings(service,projectId,parts[1],z.string().min(1).parse(url.searchParams.get('report_id')),z.string().min(1).parse(url.searchParams.get('profile_id')))});return true;}
+    if(method==='POST'){send(response,200,{settings:saveExperimentBindings(service,projectId,parts[1],await readJson(request))});return true;}
+  }
   if(parts[0]==='reproduction-queues'){
+    if(parts.length===2&&parts[1]==='prepare-auto'&&method==='POST'){const result=await prepareAutomaticExperiment(service,projectId,await readJson(request));send(response,200,{ready:result.ready,checks:result.checks});return true;}
+    if(parts.length===2&&parts[1]==='start-auto'&&method==='POST'){send(response,201,{queue:await createAutomaticExperiment(service,projectId,await readJson(request))});return true;}
+
     if(parts.length===2&&parts[1]==='mapping-preview'&&method==='POST'){
       const input=z.object({profile_id:z.string(),directory:z.string().startsWith('/'),path:z.string().min(1),dataset_ids:z.array(z.string()).min(1).max(50)}).strict().parse(await readJson(request));
       if(input.path.startsWith('/')||input.path.split('/').some(part=>!part||part==='..'||part==='.'||part==='.venv'||part==='.git')||/[\x00-\x1f]/.test(input.path+input.directory))experimentError('INVALID_REQUEST',400);
@@ -27,7 +35,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     }
     if(parts.length===1&&method==='GET'){send(response,200,{queues:service.reproductionQueues.list(projectId)});return true;}
     if(parts.length===1&&method==='POST'){send(response,201,{queue:await service.reproductionQueues.create(projectId,await readJson(request))});return true;}
-    if(parts.length===3&&method==='POST'&&['resume','skip','cancel'].includes(parts[2])){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{queue:await service.reproductionQueues.action(projectId,parts[1],parts[2] as 'resume'|'skip'|'cancel')});return true;}
+    if(parts.length===3&&method==='POST'&&['resume','resume-checkpoint','skip','cancel'].includes(parts[2])){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{queue:await service.reproductionQueues.action(projectId,parts[1],parts[2] as 'resume'|'resume-checkpoint'|'skip'|'cancel')});return true;}
   }
   if(parts[0]==="remote-workspace"){
     const profileId=z.string().min(1).parse(url.searchParams.get("profile_id"));service.data.profile(projectId,profileId);
@@ -283,6 +291,8 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts[1]){
       const run=service.data.run(projectId,parts[1]);
       if(parts.length===2&&method==="GET"){send(response,200,{run:publicRun(run),events:service.data.events(projectId,run.run_id)});return true;}
+      if(parts[2]==='analyze-failure'&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,{run:publicRun(service.failureAnalyses.start(projectId,run.run_id,true))});return true;}
+      if(parts[2]==='cancel-failure-analysis'&&method==='POST'){send(response,200,{run:publicRun(service.failureAnalyses.cancel(projectId,run.run_id))});return true;}
       if(parts[2]==="logs"&&method==="GET"){send(response,200,await service.logs(projectId,run.run_id,url.searchParams.get("stream")??"stdout",z.coerce.number().int().min(0).parse(url.searchParams.get("offset")??0)));return true;}
       if(parts[2]==="cancel"&&method==="POST"){send(response,200,{run:publicRun(await service.cancel(projectId,run.run_id))});return true;}
       if(parts[2]==="reconnect"&&method==="POST"){send(response,200,{run:publicRun(await service.reconnect(projectId,run.run_id))});return true;}
