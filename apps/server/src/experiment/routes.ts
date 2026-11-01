@@ -71,7 +71,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
         return true;
       }
       if(parts.length===4&&parts[3]==="deployments"&&method==="GET"){
-        for(const task of service.deployments.list(projectId).filter(task=>task.code_id===parts[1]&&task.remote_job&&["installing","cancelling","unknown"].includes(task.status)&&!service.deployments.isLocal(task.id))){try{await service.deployments.refresh(projectId,parts[1],task.id,service.terminals.connection(projectId,task.profile_id));}catch{/* Keep unknown status until the original host is connected. */}}
+        for(const task of service.deployments.list(projectId).filter(task=>task.code_id===parts[1]&&task.remote_job&&(["installing","cancelling","unknown"].includes(task.status)||(task.status==="failed"&&!task.failure_analysis))&&!service.deployments.isLocal(task.id))){try{await service.deployments.refresh(projectId,parts[1],task.id,service.terminals.connection(projectId,task.profile_id));}catch{/* Keep unknown status until the original host is connected. */}}
         response.setHeader("cache-control","no-store");send(response,200,{deployments:service.deployments.list(projectId).filter(task=>task.code_id===parts[1])});return true;
       }
       if(parts.length===6&&parts[3]==="reports"&&parts[5]==="deploy"&&method==="POST"){

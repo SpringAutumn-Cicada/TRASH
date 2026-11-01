@@ -71,7 +71,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
  },[base,host,hostConnected,detectRevision]);
  useEffect(()=>{
   const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
-  const load=async()=>{try{const data=await request<{deployments:typeof deployments}>("/deployments",undefined,controller.signal);if(controller.signal.aborted)return;setDeployments(data.deployments);if(data.deployments.some(item=>item.status==="planning"||item.status==="installing"||item.status==="cancelling"))timer=setTimeout(()=>void load(),1500);}catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"读取部署记录失败");}};
+  const load=async()=>{try{const data=await request<{deployments:typeof deployments}>("/deployments",undefined,controller.signal);if(controller.signal.aborted)return;setDeployments(data.deployments);if(data.deployments.some(item=>item.status==="planning"||item.status==="installing"||item.status==="cancelling"||item.failure_analysis?.status==="analyzing"||(item.status==="failed"&&!item.failure_analysis)))timer=setTimeout(()=>void load(),1500);}catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"读取部署记录失败");}};
   void load();return()=>{controller.abort();clearTimeout(timer);};
  },[base,deploymentRefresh]);
  useEffect(()=>{
@@ -81,7 +81,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
   void request<{directory:string}>(`/deployment-directory?profile_id=${encodeURIComponent(host)}`,undefined,controller.signal).then(data=>{if(!controller.signal.aborted){setDefaultDirectory(data.directory);setDeployDirectory(data.directory);}}).catch(cause=>{if(!controller.signal.aborted)setDeploymentError(cause instanceof Error?cause.message:"读取默认目录失败");}).finally(()=>{if(!controller.signal.aborted)setDirectoryLoading(false);});
   return()=>controller.abort();
  },[base,host,reportId]);
- const deploymentActive=deployments.some(item=>item.status==="planning"||item.status==="installing"||item.status==="cancelling");
+ const deploymentActive=deployments.some(item=>item.status==="planning"||item.status==="installing"||item.status==="cancelling"||item.failure_analysis?.status==="analyzing");
  const deploy=async()=>{
   if(!report||deploying||deploymentActive||!hostConnected||!python||!deployDirectory.trim())return;
   setDeploying(true);setError("");setDeploymentError("");try{const data=await request<{deployment:typeof deployments[number]}>(`/reports/${report.id}/deploy`,{profile_id:host,python,directory:deployDirectory.trim(),confirm:true});setDeployments(items=>[data.deployment,...items.filter(item=>item.id!==data.deployment.id)]);setDeploymentConfirm(false);setDeploymentRefresh(value=>value+1);}catch(cause){const message=cause instanceof Error?cause.message:"部署启动失败";setDeploymentError(message);}finally{setDeploying(false);}
