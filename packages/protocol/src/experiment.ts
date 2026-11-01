@@ -42,4 +42,4 @@ export interface RemoteWorkspace {project_id:string;profile_id:string;root:strin
 
 export interface WorkspaceRecognition {root:string;profile_id:string;source_profile_id?:string;source_root?:string;recognized:boolean;directories:{name:string;path:string;exists:boolean}[];resources:{kind:"dataset"|"reproduction"|"experiment";id:string;name:string;path:string;matched:boolean;baseline_generated?:boolean;reason:string}[]}
 
-export interface PackageInstallProgress {phase:"resolving"|"downloading"|"cached"|"building"|"installing"|"installed";package?:string;filename?:string;downloaded_bytes?:number;total_bytes?:number;speed_bytes_per_second?:number;eta_seconds?:number;approximate?:boolean;detail?:string;updated_at?:number}
+export interface PackageInstallProgress {phase:"resolving"|"downloading"|"cached"|"satisfied"|"building"|"installing"|"installed"|"failed";package?:string;filename?:string;downloaded_bytes?:number;total_bytes?:number;speed_bytes_per_second?:number;eta_seconds?:number;approximate?:boolean;detail?:string;updated_at?:number}

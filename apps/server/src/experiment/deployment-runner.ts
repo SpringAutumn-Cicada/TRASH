@@ -49,11 +49,13 @@ def parse_package_line(text):
   info={'phase':'cached' if cached else 'downloading','package':info.get('package',''),'filename':filename[:400]};state['package_progress']=info
   total=re.search(r'\((\d+(?:\.\d+)?)\s*([kMGT]?i?B)\)',text,re.I)
   if total:info['total_bytes']=amount(total[1],total[2])
+ elif text.startswith('ERROR:'):
+  info={'phase':'failed','detail':text[:1000]};state['package_progress']=info
  elif text.startswith('Installing collected packages:'):info={'phase':'installing'};state['package_progress']=info
  elif 'Building wheel for ' in text:info={'phase':'building','package':text.split('Building wheel for ',1)[1].split(' ',1)[0][:300]};state['package_progress']=info
  elif 'Preparing metadata' in text or 'Installing build dependencies' in text:info={'phase':'building'};state['package_progress']=info
  elif text.startswith('Successfully installed '):info={'phase':'installed'};state['package_progress']=info
- elif text.startswith('Requirement already satisfied:'):info={'phase':'cached','package':text.split(':',1)[1].strip().split(' ',1)[0][:300]};state['package_progress']=info
+ elif text.startswith('Requirement already satisfied:'):info={'phase':'satisfied','package':text.split(':',1)[1].strip().split(' ',1)[0][:300]};state['package_progress']=info
  progress=re.search(r'(\d+(?:\.\d+)?)\s*([kMGT]?i?B)?\s*/\s*(\d+(?:\.\d+)?)\s*([kMGT]?i?B)\b',text,re.I)
  if progress:
   info['phase']='downloading';info['downloaded_bytes']=amount(progress[1],progress[2] or progress[4]);info['total_bytes']=amount(progress[3],progress[4]);info['approximate']=True
@@ -164,17 +166,45 @@ try:
    if match and re.search(r'[<>=!~]',match[2]):constraints.append(match[1]+match[2])
  constraints_file=job/'constraints.txt'
  if constraints:constraints_file.write_text('\n'.join(sorted(set(constraints)))+'\n')
+ installed_probe="""import sys,json,importlib.metadata as metadata
+try:
+ from pip._vendor.packaging.requirements import Requirement
+except ImportError:
+ try:from packaging.requirements import Requirement
+ except ImportError:Requirement=None
+result={'satisfied':[],'pending':[]}
+for spec in json.load(sys.stdin):
+ try:
+  if Requirement is None:raise ValueError('no requirement parser')
+  requirement=Requirement(spec)
+  if requirement.url or requirement.extras:raise ValueError('requires pip resolution')
+  if requirement.marker and not requirement.marker.evaluate():
+   result['satisfied'].append({'spec':spec,'version':'当前环境不适用'});continue
+  version=metadata.version(requirement.name)
+  if requirement.specifier and not requirement.specifier.contains(version,prereleases=True):raise ValueError('version mismatch')
+  result['satisfied'].append({'spec':spec,'version':version})
+ except Exception:result['pending'].append(spec)
+print(json.dumps(result))"""
  for index,group in enumerate(p['plan']['installs']):
   if index<saved.get('completed_groups',0):continue
   update(stage='packages',completed_units=index+2,current='安装 '+', '.join(group['packages'])[:500],group_index=index+1)
-  state['package_progress']={'phase':'resolving','detail':'解析依赖与检查缓存','updated_at':time.time()}
+  probe=json.loads(subprocess.check_output([python,'-I','-c',installed_probe],input=json.dumps(group['packages']).encode(),cwd=root,env=env,timeout=30))
+  cancelled();pending=probe['pending'];satisfied=probe['satisfied']
+  if satisfied:
+   detail='跳过已满足依赖：'+', '.join(item['spec']+'（'+item['version']+'）' for item in satisfied)
+   state['package_progress']={'phase':'satisfied','detail':detail[:1000],'updated_at':time.time()}
+   with (job/'install.log').open('ab') as log:log.write((detail+'\n').encode('utf8'))
+   update(current=detail[:500])
+  if pending:state['package_progress']={'phase':'resolving','detail':'仅安装尚未满足的依赖；已满足 '+str(len(satisfied))+' 项','updated_at':time.time()}
   args=[python,'-I','-m','pip','--isolated','install','--disable-pip-version-check','--progress-bar','on']
   if constraints:args+=['--constraint',str(constraints_file)]
   if group['index_url']:args+=['--index-url',group['index_url']]
   for address in group.get('extra_index_urls',[]):args+=['--extra-index-url',address]
   for address in group.get('find_links',[]):args+=['--find-links',address]
-  command(args+group['packages'],track=True)
-  state['package_progress']={'phase':'installed','detail':'当前安装组已完成','updated_at':time.time()}
+  if pending:
+   update(current='安装尚未满足的依赖：'+', '.join(pending)[:450])
+   command(args+pending,track=True)
+   state['package_progress']={'phase':'installed','detail':'当前安装组已完成；跳过已满足依赖 '+str(len(satisfied))+' 项','updated_at':time.time()}
   saved['completed_groups']=index+1;saved['inventory']=inventory();atomic(checkpoint,saved)
   update(completed_units=index+3)
  update(stage='checking',completed_units=state['total_units']-1,current='检查依赖一致性')
@@ -182,7 +212,10 @@ try:
  saved['inventory']=inventory();atomic(checkpoint,saved)
  update(status='completed',stage='completed',completed_units=state['total_units'],current='依赖安装及 pip check 已完成，尚未执行论文实验',venv=str(target))
 except InterruptedError as error: update(status='cancelled',current=str(error))
-except BaseException as error: update(status='failed',current=str(error)+'（Python '+sys.version.split()[0]+' · '+sys.executable+'）')
+except BaseException as error:
+ info=state.get('package_progress',{})
+ if info.get('phase')!='failed':state['package_progress']={'phase':'failed','detail':str(error)[:1000],'updated_at':time.time()}
+ update(status='failed',current=str(error)+'（Python '+sys.version.split()[0]+' · '+sys.executable+'）')
 finally:
  if lock:lock.close()
 print(json.dumps(state))`;
