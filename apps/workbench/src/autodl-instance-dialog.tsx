@@ -1,11 +1,11 @@
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ModalLayer } from "./modal-layer.js";
-import { LoaderCircle, Server, X } from "lucide-react";
+import { LoaderCircle, Server, Trash2, X } from "lucide-react";
 import type { SshProfile } from "@trash/protocol";
 import { useUnsavedChanges } from "./navigation.js";
 
-export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onClose, onSaved }: { projectId: string; mode: "add" | "edit"; profiles: SshProfile[]; initialId: string; onClose: () => void; onSaved: (profile: SshProfile) => void }) {
+export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onClose, onSaved, onDelete }: { projectId: string; mode: "add" | "edit"; profiles: SshProfile[]; initialId: string; onClose: () => void; onSaved: (profile: SshProfile) => void; onDelete: (profile: SshProfile) => void }) {
   const [selectedId, setSelectedId] = useState(initialId || profiles[0]?.profile_id || "");
   const selected = profiles.find(profile => profile.profile_id === selectedId);
   const commandOf = (profile?: SshProfile) => profile ? `ssh -p ${profile.port} ${profile.username}@${profile.host.includes(":") ? `[${profile.host}]` : profile.host}` : "";
@@ -55,6 +55,6 @@ export function AutoDlInstanceDialog({ projectId, mode, profiles, initialId, onC
     {mode === "edit" && selected && selected.auth !== "password" && <p className="autodl-dialog-hint">当前使用私钥或 SSH Agent；填写新密码将切换为密码认证，留空保留原认证方式。</p>}
     <p className="autodl-dialog-hint">主机名仅用于平台显示。原密码以遮罩回填，可直接修改；密码在本机加密保存，重启平台后仍可使用。更换连接后需核对指纹并填写对应密码。</p>
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
-    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || loadingPassword || !command.trim() || (mode === "add" ? !password : !selectedId)}>{busy && <LoaderCircle size={14} className="spin"/>}{busy ? "正在保存…" : "保存实例"}</button></div>
+    <div className="modal-actions autodl-instance-actions">{mode === "edit" && selected && <button type="button" className="secondary-button autodl-delete-instance" disabled={busy} onClick={()=>onDelete(selected)}><Trash2 size={14}/>删除实例</button>}<button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || loadingPassword || !command.trim() || (mode === "add" ? !password : !selectedId)}>{busy && <LoaderCircle size={14} className="spin"/>}{busy ? "正在保存…" : "保存实例"}</button></div>
   </form></div></ModalLayer>;
 }
