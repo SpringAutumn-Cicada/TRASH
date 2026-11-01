@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";

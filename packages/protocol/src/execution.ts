@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Reject control characters in execution paths. */
 import { z } from 'zod';
 const evidence=z.array(z.object({path:z.string().min(1).max(2048),line_start:z.number().int().positive(),line_end:z.number().int().positive()}).strict()).max(30);
 const attributed={attribution:z.enum(['declared','inferred','unknown']),evidence};

@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { mkdirSync, existsSync, readdirSync, readFileSync, writeFileSync, renameSync, createWriteStream, createReadStream } from 'node:fs';
 import { truncate, rm } from 'node:fs/promises';
 import { join } from 'node:path';

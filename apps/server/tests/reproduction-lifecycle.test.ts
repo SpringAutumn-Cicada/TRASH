@@ -82,9 +82,9 @@ test("environment task records valid reports, stale code, invalid output, cancel
  const f=fixture(),previous=process.env.TRASH_CODEX_COMMAND;
  const cli=join(f.root,"fixture-cli"),mode=join(f.root,"mode");
  const unknown={value:"未知",attribution:"unknown",evidence:[]};
- const content={schema_version:2,summary:"fixture",requirements:[],commands:[],resources:[],issues:[],limitations:["fixture only"],image_selection:{framework:unknown,framework_version:unknown,python:unknown,cuda:unknown},agent_deployment:{status:"blocked",venv_path:".venv",prerequisites:[],blockers:["fixture only"],steps:[{purpose:"确认解释器",command:'test -n "$TRASH_PYTHON"',attribution:"unknown",evidence:[]}]}};
+ const content={schema_version:2,adaptation:{status:"ready",summary:"fixture",blockers:[],patches:[]},code_information:{datasets:[],run_plans:[],unresolved:[]},summary:"fixture",requirements:[],commands:[],resources:[],issues:[],limitations:["fixture only"],image_selection:{framework:unknown,framework_version:unknown,python:unknown,cuda:unknown},agent_deployment:{status:"blocked",venv_path:".venv",prerequisites:[],blockers:["fixture only"],steps:[{purpose:"确认解释器",command:'test -n "$TRASH_PYTHON"',attribution:"unknown",evidence:[]}]}};
  writeFileSync(mode,"valid");
- writeFileSync(cli,`#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('fixture 1');process.exit(0);}const mode=fs.readFileSync(${JSON.stringify(mode)},'utf8');if(mode==='wait'){setInterval(()=>{},1000);}else{fs.writeFileSync(args[args.indexOf('-o')+1],mode==='invalid'?'broken-json':JSON.stringify(${JSON.stringify(content)}));}\n`,{mode:0o700});
+ writeFileSync(cli,`#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('fixture 1');process.exit(0);}const mode=fs.readFileSync(${JSON.stringify(mode)},'utf8');if(mode==='wait'){setInterval(()=>{},1000);}else{console.log(JSON.stringify({type:'thread.started',thread_id:'00000000-0000-4000-8000-000000000001'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:mode==='invalid'?'broken-json':JSON.stringify((()=>{const result=${JSON.stringify(content)};if(mode==='patch'){const packet=JSON.parse(fs.readFileSync('input.json','utf8'));const file=packet.files.find(f=>f.path==='train.py');if(file.text==='print(2)\\n')result.adaptation={status:'patch',summary:'fixture path change',blockers:[],patches:[{path:file.path,sha256:file.sha256,before:file.text,after:'print(3)\\n',reason:'fixture adaptation',evidence:[{path:file.path,line_start:1,line_end:1}]}]};}return result;})())}}));}\n`,{mode:0o700});
  process.env.TRASH_CODEX_COMMAND=cli;
  let service=new EnvironmentAnalysisService(f.store,f.reproductions);
  try {
@@ -102,6 +102,13 @@ test("environment task records valid reports, stale code, invalid output, cancel
   writeFileSync(mode,"wait");const cancelled=service.start(f.project,code.id);
   for(let i=0;i<200&&cancelled.status!=="analyzing";i++)await delay(20);
   assert.equal(cancelled.status,"analyzing");service.cancel(f.project,code.id,cancelled.id);await settle(service,f.project,code.id);assert.equal(cancelled.status,"cancelled");
+  writeFileSync(mode,"patch");const adapted=service.start(f.project,code.id);await settle(service,f.project,code.id);
+  assert.equal(adapted.status,"completed");assert.equal(adapted.adaptation?.status,"applied");
+  assert.equal(readFileSync(join(code.path,"train.py"),"utf8"),"print(3)\n");
+  assert.equal(service.adaptationChanges(f.project,code.id,adapted.id).length,1);
+  assert.equal((await service.freshness(f.project,code.id,adapted.id)).stale,false);
+  service.restoreAdaptation(f.project,code.id,adapted.id);assert.equal(readFileSync(join(code.path,"train.py"),"utf8"),"print(2)\n");
+  writeFileSync(mode,"wait");
   const interrupted=service.start(f.project,code.id);service.close();await settle(service,f.project,code.id);
   const taskPath=join(f.store.root,"projects",f.project,"environment-analysis",code.id,interrupted.id,"task.json");
   writeFileSync(taskPath,JSON.stringify({...interrupted,status:"analyzing"}));

@@ -6,7 +6,7 @@ import { KnowledgePanel } from "./knowledge.js";
 import { ErrorNotice } from "./error-notice.js";
 import { workspaceRequest } from "./remote-workspace.js";
 
-type Result=KnowledgeVersion&{content:Extract<KnowledgeVersion['content'],{schema_version:1}>};
+type Result=Omit<KnowledgeVersion,'content'>&{content:Extract<KnowledgeVersion['content'],{dataset:string}>};
 const emptySources:Source[]=[];
 const statuses:Record<string,string>={draft:'草稿',pending:'待审',accepted:'已采纳',rejected:'已拒绝'};
 const scopeKey=(record:Result)=>JSON.stringify([record.content.method,record.content.dataset,record.content.dataset_version,record.content.task,record.content.split,record.content.evaluation_protocol,record.content.evaluation?[record.content.evaluation.granularity,record.content.evaluation.positive_class,record.content.evaluation.threshold,record.content.evaluation.averaging]:null,record.content.confusion_matrix?[record.content.confusion_matrix.negative_label,record.content.confusion_matrix.positive_label]:null]);

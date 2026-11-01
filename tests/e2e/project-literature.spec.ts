@@ -16,10 +16,22 @@ test("项目功能导航不误报未保存，实验五页签可用，删除无�
   const dialogs: string[] = [];
   page.on("dialog", async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
   const navigation = page.getByRole("navigation", { name: "项目功能" });
-  for (const name of ["卡片", "Wiki", "实验结果", "任务", "实验"]) {
+  for (const name of ["卡片", "Wiki", "数据", "实验"]) {
     await navigation.getByRole("button", { name, exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/projects/[^/]+/${({ 卡片: "cards", Wiki: "wiki", 实验结果: "results", 任务: "tasks", 实验: "experiments" })[name]}$`));
+    await expect(page).toHaveURL(new RegExp(`/projects/[^/]+/${({ 卡片: "cards", Wiki: "wiki", 数据: "data", 实验: "experiments" })[name]}$`));
   }
+  await navigation.getByRole('button',{name:'数据',exact:true}).click();
+  await page.getByRole('tab',{name:'实验数据',exact:true}).click();
+  await page.getByRole('button',{name:'新建实验记录',exact:true}).first().click();
+  const editor=page.locator('.knowledge-editor').first();
+  await editor.getByRole('button',{name:'高级 JSON',exact:true}).click();
+  const json=editor.getByLabel('结构化内容 JSON');
+  const content=JSON.parse(await json.inputValue());content.title='未保存的实验记录';await json.fill(JSON.stringify(content));
+  await editor.getByRole('button',{name:'关闭',exact:true}).click();
+  const discard=page.getByRole('dialog',{name:'放弃未保存的修改？'});
+  await expect(discard).toBeVisible();await discard.getByRole('button',{name:'放弃修改并继续',exact:true}).click();
+  await expect(editor).toHaveCount(0);
+  await navigation.getByRole('button',{name:'实验',exact:true}).click();
   const experimentNavigation = page.getByRole("navigation", { name: "实验功能" });
   for (const name of ["实验概览", "实验代码", "实验计划", "运行", "产物"]) {
     await experimentNavigation.getByRole("button", { name, exact: true }).click();
@@ -32,7 +44,7 @@ test("项目功能导航不误报未保存，实验五页签可用，删除无�
   await expect(page.locator("#root")).toHaveAttribute("inert", "");
   await directory.getByRole("button", { name: "关闭目录选择" }).click();
   await navigation.getByRole("button", { name: "文献复现", exact: true }).click();
-  await page.getByRole("button", { name: "添加复现代码", exact: true }).first().click();
+  await page.getByRole("button", { name: "导入源代码", exact: true }).first().click();
   const reproduction = page.getByRole("dialog", { name: "添加复现代码" });
   await expect(reproduction).toBeVisible();
   await expect(page.locator("#root")).toHaveAttribute("inert", "");
@@ -151,7 +163,8 @@ test("文献复现可导入多份 ZIP、切换预览并确认移除", async ({pa
   await page.goto(`/projects/${project.project_id}/reproductions`);
   const archive=execFileSync("python3",["-c","import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,'w') as z:z.writestr('README.md','fixture preview')\nsys.stdout.buffer.write(b.getvalue())"]);
   for(const name of ["论文甲","论文乙"]){
-    await page.getByRole("button",{name:"添加复现代码",exact:true}).first().click();
+    await page.getByRole("button",{name:"源代码",exact:true}).first().click();
+    const importButton=page.getByRole("button",{name:"导入源代码",exact:true});if(!(await page.getByRole("dialog",{name:"添加复现代码"}).isVisible()))await importButton.first().click();
     const dialog=page.getByRole("dialog",{name:"添加复现代码"});
     await dialog.getByLabel("选择复现代码 ZIP 文件").setInputFiles({name:`${name}.zip`,mimeType:"application/zip",buffer:archive});
     await dialog.getByRole("button",{name:"保存",exact:true}).click();
@@ -162,8 +175,32 @@ test("文献复现可导入多份 ZIP、切换预览并确认移除", async ({pa
   await expect(list.getByRole("button")).toHaveCount(2);
   await list.getByRole("button",{name:/论文甲/}).click();
   await expect(page.getByRole("heading",{name:"论文甲",exact:true})).toBeVisible();
+  const report={id:'env_fixture',created_at:new Date().toISOString(),skill_version:'2.6.0',code_fingerprint:'a'.repeat(64),content:{schema_version:2,adaptation:{status:'ready'},code_information:{datasets:[],run_plans:[{name:'fixture',execution:{mode:'train',processing_method:'batch',dataset_runs:[]}}]}}};
+  await page.route('**/reproductions/*/environment',route=>route.fulfill({json:{tasks:[],reports:[report]}}));
+  await page.getByRole('button',{name:'跑实验',exact:true}).click();
+  await page.getByRole('combobox',{name:/^处理方式/}).selectOption('entity');
+  await page.getByRole('combobox',{name:/^权重模式/}).selectOption('evaluate');
+  await page.reload();
+  await page.getByRole('button',{name:'跑实验',exact:true}).click();
+  await expect(page.getByRole('combobox',{name:/^处理方式/})).toHaveValue('entity');
+  await expect(page.getByRole('combobox',{name:/^权重模式/})).toHaveValue('evaluate');
+  await page.getByRole("button",{name:"浏览代码",exact:true}).click();
   await page.getByRole("button",{name:/README.md/}).click();
   await expect(page.getByText("fixture preview",{exact:true})).toBeVisible();
+  await page.route('**/ssh-profiles',route=>route.fulfill({json:{profiles:[{profile_id:'host',name:'本地测试主机',host:'fixture.invalid',port:22,username:'root',auth:'password'}]}}));
+  await page.route('**/remote-workspace?*',route=>route.fulfill({json:{workspace:{root:'/root/project'}}}));
+  await page.route('**/freshness',route=>route.fulfill({json:{stale:false}}));
+  await page.route('**/api/v1/projects/*/reproductions',async route=>{const response=await route.fetch();const body=await response.json();if(body.codes)for(const code of body.codes)code.uploads=[{profile_id:'host',path:'/root/project/reproductions/'+code.name,sha256:'b'.repeat(64),at:new Date().toISOString()}];await route.fulfill({json:body});});
+  await page.reload();
+  await page.getByRole('button',{name:'源代码',exact:true}).last().click();
+  await expect(page.getByRole('button',{name:'开始分析',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'上传到 AutoDL',exact:true}).click();
+  const upload=page.getByRole('dialog',{name:'上传到 AutoDL',exact:true});
+  await expect(upload.getByText('最近一次上传记录',{exact:true})).toBeVisible();
+  await expect(upload.getByRole('button',{name:'重新上传',exact:true})).toBeVisible();
+  await upload.getByText('查看 SHA-256',{exact:true}).click();
+  await expect(upload.getByText('b'.repeat(64),{exact:true})).toBeVisible();
+  await upload.getByRole('button',{name:'关闭上传弹窗',exact:true}).click();
   await page.getByRole("button",{name:"移除复现代码记录"}).click();
   const confirmation=page.getByRole("dialog",{name:"移除复现代码",exact:true});
   await expect(confirmation).toBeVisible();

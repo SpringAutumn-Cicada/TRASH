@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { randomUUID } from 'node:crypto';

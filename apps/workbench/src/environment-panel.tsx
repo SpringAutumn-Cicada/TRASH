@@ -40,7 +40,7 @@ export function EnvironmentPanel({projectId,codeId,profiles,connectedProfiles,pr
   return()=>{if(previous instanceof HTMLElement&&previous.isConnected)previous.focus();};
  },[deploymentConfirm]);
  const hostConnected=connectedProfiles.includes(host);
- const [reload,setReload]=useState(0),[copied,setCopied]=useState("");
+ const [reload]=useState(0),[copied,setCopied]=useState("");
  useUnsavedChanges(checking||deploying);
  const active=tasks.find(task=>task.status==="preparing"||task.status==="analyzing"),report=reports.find(item=>item.id===reportId),comparison=comparisons.find(item=>item.id===comparisonId)??comparisons[0];
  const request=async<T,>(path:string,body?:unknown,signal?:AbortSignal):Promise<T>=>{const response=await fetch(base+path,{method:body===undefined?"GET":"POST",signal,cache:"no-store",...(body===undefined?{}:{headers:{"content-type":"application/json"},body:JSON.stringify(body)})});const value=await response.json();if(!response.ok)throw new Error(environmentErrors[value.error]??`操作失败（${value.error??response.status}）`);return value;};

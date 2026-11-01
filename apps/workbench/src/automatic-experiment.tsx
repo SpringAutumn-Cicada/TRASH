@@ -1,6 +1,6 @@
 import { DirectoryRepairPanel } from './directory-repair.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, CheckCircle2, Database, FolderOpen, LoaderCircle, Play, Save, Settings2 } from 'lucide-react';
+import { ArrowUp, CheckCircle2, FolderOpen, LoaderCircle, Play, Save, Settings2 } from 'lucide-react';
 import type { CodeEnvironmentReport, DatasetRef, ExperimentBindings, ReproductionCode, SshProfile } from '@trash/protocol';
 import { readPreference, writePreference } from './navigation.js';
 import { ErrorNotice } from './error-notice.js';

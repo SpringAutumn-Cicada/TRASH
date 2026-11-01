@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { posix } from 'node:path';
 import { experimentError } from '@trash/storage';
 import type { ExperimentService } from './service.js';

@@ -7,7 +7,7 @@ import type { DatasetRef, RemoteWorkspace, SshProfile, ProjectPage } from "@tras
 import { ModalLayer } from "./modal-layer.js";
 import { RemoteDirectoryPicker } from "./remote-directory-picker.js";
 import { ErrorNotice } from "./error-notice.js";
-import { workspaceRequest, workspaceErrors } from "./remote-workspace.js";
+import { workspaceRequest } from "./remote-workspace.js";
 import { copyText } from "./clipboard.js";
 import { useUnsavedChanges } from "./navigation.js";
 import "./data.css";

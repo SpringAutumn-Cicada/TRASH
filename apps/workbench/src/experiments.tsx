@@ -5,7 +5,7 @@ import "./data.css";
 import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
-import { Download, FolderOpen, LoaderCircle, Columns2, Pencil, Play, Plus, RefreshCw } from "lucide-react";
+import { Download, FolderOpen, Columns2, Pencil, Play, Plus, RefreshCw } from "lucide-react";
 import type { ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { useUnsavedChanges } from "./navigation.js";
 import "./experiments.css";
@@ -34,6 +34,7 @@ export function ExperimentsPage({projectId,focusId,onResult,reproductionOnly=fal
   const [terminalSessions,setTerminalSessions]=useState<TerminalSession[]>([]);
   const terminalConnecting=useRef(false);
   const [connecting,setConnecting]=useState(false);
+  const [diagnostic,setDiagnostic]=useState("");
   const [deleteInstance,setDeleteInstance]=useState<SshProfile>();
   const [instanceDialog,setInstanceDialog]=useState<"add"|"edit">();
   const [tab,setTab]=useState<Tab>(autoDlOnly?"hosts":focusId?"runs":"overview"),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
