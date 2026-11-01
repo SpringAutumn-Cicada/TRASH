@@ -40,7 +40,7 @@ function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projec
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
 }
 function App() {
-  const {path,navigate,register,canLeave}=useWorkspaceNavigation();
+  const {path,navigate,register,canLeave,leaveDialog}=useWorkspaceNavigation();
   const route=parseProjectRoute(path);
   const [projects,setProjects]=useState<ResearchProject[]>([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [notice,setNotice]=useState("");
   const [autoDlOpen,setAutoDlOpen]=useState(false);
@@ -92,7 +92,7 @@ function App() {
     if(navigate(nextPath)){setSidebarLayer("project");void refresh();setProjectMenu(false);setNewMenu(false);if(narrow)closeDrawer();}
   };
   const goPage=(next:ProjectPage,options?:NavigateOptions)=>{if(project)go(project.project_id,next,options);};
-  const openCreate=()=>{if(!canLeave())return;setCreateOpen(true);setNewMenu(false);if(narrow)setDrawer(false);};
+  const openCreate=()=>{const proceed=()=>{setCreateOpen(true);setNewMenu(false);if(narrow)setDrawer(false);};if(canLeave(proceed))proceed();};
   const created=(value:ResearchProject)=>{
     setCreateOpen(false);setProjects(old=>[value,...old.filter(item=>item.project_id!==value.project_id)]);setLoaded(true);navigate(projectPath(value.project_id,"overview"),false,true);void refresh();
   };
@@ -125,7 +125,7 @@ function App() {
         <div className="sidebar-current-project" title={project.title}><span className="sidebar-current-symbol" aria-hidden="true">{project.title.slice(0,1)}</span><div><small>当前项目</small><strong>{project.title}</strong></div></div>
         <nav className="sidebar-page-list" aria-label="项目功能">{projectPages.map(item=>{const Icon=pageIcons[item.id];return <button type="button" key={item.id} className={`sidebar-page-link ${page===item.id?"active":""}`} aria-current={page===item.id?"page":undefined} aria-label={item.label} title={item.label} onClick={()=>goPage(item.id)}><Icon size={18}/><span>{item.label}</span></button>;})}</nav>
       </>:<>
-        <div className="sidebar-create"><button className="primary-button" aria-label="新建项目" title="新建项目" onClick={openCreate}><Plus size={16}/><span>新建项目</span></button>{!compact&&<button className="secondary-button" aria-label="更多项目操作" aria-expanded={newMenu} onClick={()=>{if(!newMenu&&!canLeave())return;setNewMenu(!newMenu);}}><ChevronDown size={15}/></button>}</div>
+        <div className="sidebar-create"><button className="primary-button" aria-label="新建项目" title="新建项目" onClick={openCreate}><Plus size={16}/><span>新建项目</span></button>{!compact&&<button className="secondary-button" aria-label="更多项目操作" aria-expanded={newMenu} onClick={()=>{if(!newMenu&&!canLeave(()=>setNewMenu(true)))return;setNewMenu(!newMenu);}}><ChevronDown size={15}/></button>}</div>
         {newMenu&&!compact&&<div className="sidebar-secondary"><RestoreKnowledge onRestored={(restored)=>{void refresh().then(()=>{if(restored)navigate(projectPath(restored.project_id,"overview"),false,true);});setNewMenu(false);}}/></div>}
         {!compact&&<label className="sidebar-search"><Search size={15}/><input aria-label="搜索项目" placeholder="搜索项目…" value={query} onChange={event=>setQuery(event.target.value)}/></label>}
         <div className="sidebar-list-heading"><span>研究项目</span><span>{projects.length}</span><button className="icon-button" title="刷新项目" aria-label="刷新项目" disabled={loading} onClick={()=>void refresh()}><RefreshCw size={13} className={loading?"spin":""}/></button></div>
@@ -146,6 +146,7 @@ function App() {
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
+    {leaveDialog}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} onClose={()=>setAutoDlOpen(false)}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}

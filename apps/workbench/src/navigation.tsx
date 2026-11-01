@@ -1,3 +1,4 @@
+import { DiscardChangesDialog } from "./discard-changes-dialog.js";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from "react";
 import type { ProjectPage } from "@trash/protocol";
 
@@ -41,20 +42,21 @@ export function useWorkspaceNavigation() {
   const current = useRef(path), index = useRef(0), undoing = useRef(false);
   const dirty = useRef(new Set<string>());
   const register = useCallback((id: string, changed: boolean) => { if (changed) dirty.current.add(id); else dirty.current.delete(id); }, []);
-  const canLeave = useCallback(() => !dirty.current.size || window.confirm("有尚未保存的内容，确定放弃修改并离开吗？"), []);
+  const [pendingLeave,setPendingLeave]=useState<(()=>void)|null>(null);
+  const canLeave = useCallback((continuation?:()=>void) => {if(!dirty.current.size)return true;setPendingLeave(()=>continuation??(()=>{}));return false;}, []);
   const navigate = useCallback((next: string, replace = false, force = false): boolean => {
     if (next === current.current) return true;
-    if (!force && !canLeave()) return false;
-    if (!replace) index.current += 1;
-    window.history[replace ? "replaceState" : "pushState"]({ trashIndex: index.current }, "", next);
-    current.current = next; setPath(next); return true;
+    const commit=()=>{if(!replace)index.current+=1;window.history[replace?'replaceState':'pushState']({trashIndex:index.current},'',next);current.current=next;setPath(next);};
+    if(!force&&!canLeave(commit))return false;
+    commit();return true;
   }, [canLeave]);
   useEffect(() => {
     window.history.replaceState({ ...window.history.state, trashIndex: 0 }, "");
     const pop = (event: PopStateEvent) => {
       if (undoing.current) { undoing.current = false; return; }
       const target = typeof event.state?.trashIndex === "number" ? event.state.trashIndex : undefined;
-      if (!canLeave()) {
+      const destination=window.location.pathname+window.location.search;
+      if (!canLeave(()=>{if(target!==undefined&&target!==index.current)window.history.go(target-index.current);else{window.history.replaceState({trashIndex:index.current},'',destination);current.current=destination;setPath(destination);}})) {
         if (target !== undefined && target !== index.current) { undoing.current = true; window.history.go(index.current - target); }
         else window.history.replaceState({ trashIndex: index.current }, "", current.current);
         return;
@@ -66,5 +68,6 @@ export function useWorkspaceNavigation() {
     window.addEventListener("popstate", pop); window.addEventListener("beforeunload", beforeUnload);
     return () => { window.removeEventListener("popstate", pop); window.removeEventListener("beforeunload", beforeUnload); };
   }, [canLeave]);
-  return { path, navigate, register, canLeave };
+  const leaveDialog=pendingLeave?<DiscardChangesDialog onCancel={()=>setPendingLeave(null)} onConfirm={()=>{const proceed=pendingLeave;setPendingLeave(null);dirty.current.clear();proceed();}}/>:null;
+  return { path, navigate, register, canLeave, leaveDialog };
 }

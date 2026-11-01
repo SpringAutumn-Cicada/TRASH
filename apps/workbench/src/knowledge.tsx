@@ -1,3 +1,4 @@
+import { DiscardChangesDialog } from "./discard-changes-dialog.js";
 import { experimentResultSchema } from "@trash/protocol/browser";
 import { EvaluationEditor, formatEvaluationMetric } from "./evaluation.js";
 import { ErrorNotice } from "./error-notice.js";
@@ -37,6 +38,7 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
   const [error,setError]=useState("");const [busy,setBusy]=useState(false);const [query,setQuery]=useState("");const [status,setStatus]=useState(initialStatus??"");const [field,setField]=useState("method");const [fieldValue,setFieldValue]=useState("");const [sort,setSort]=useState("updated");const [page,setPage]=useState(1);const [total,setTotal]=useState(0);
   const [selected,setSelected]=useState<Set<string>>(new Set());const [sourceId,setSourceId]=useState(sources[0]?.source_id??"");
   useEffect(()=>{if(!sourceId&&sources[0])setSourceId(sources[0].source_id);},[sources,sourceId]);
+  const [pendingDiscard,setPendingDiscard]=useState<(()=>void)|null>(null);
   const [editing,setEditing]=useState<{id?:string;version:number;content:Record<string,unknown>} >();const [json,setJson]=useState("");const [jsonMode,setJsonMode]=useState(false);
   const [history,setHistory]=useState<KnowledgeVersion[]>([]);const [logs,setLogs]=useState("");const [metric,setMetric]=useState("");const [aggregate,setAggregate]=useState("");
   const [references,setReferences]=useState<KnowledgeVersion[]>([]);const [generation,setGeneration]=useState(false);const [generationTitle,setGenerationTitle]=useState("研究主题");const [instructions,setInstructions]=useState("");const [timeout,setTimeoutValue]=useState(900);
@@ -51,14 +53,15 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
   };
   useEffect(()=>{void run(refresh);},[section,page]);
   useEffect(()=>{if(section!=="knowledge-tasks")return;const timer=setInterval(()=>{void refresh().catch(()=>{});},3000);return()=>clearInterval(timer);},[section,projectId]);
-  const open=(record?:KnowledgeVersion)=>{
+  const open=(record?:KnowledgeVersion,discard=false)=>{
     if(section==="knowledge-tasks")return;
-    if(editing && (jsonMode?json:JSON.stringify(editing.content,null,2))!==editorBaseline && !window.confirm("放弃尚未保存的内容吗？"))return;
+    if(!discard&&editing&&(jsonMode?json:JSON.stringify(editing.content,null,2))!==editorBaseline){setPendingDiscard(()=>()=>open(record,true));return;}
     const content=record?.content??(section==="literature-cards"?cardTemplate(sources.find(s=>s.source_id===sourceId)??sources[0]):section==="wiki-pages"?{title:"新研究主题",tags:[],body:"## 研究认识\n\n## 不同观点\n\n## 待验证思路",dependencies:[]}:resultTemplate);
     setEditing({id:record?.object_id,version:record?.version??0,content:content as unknown as Record<string,unknown>});setJson(JSON.stringify(content,null,2));setEditorBaseline(JSON.stringify(content,null,2));setHistory([]);setJsonMode(false);
   };
   useEffect(()=>{if(createRequest&&section==='experiment-results')open();},[createRequest]);
   useEffect(()=>{if(editing){editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});editorRef.current?.querySelector<HTMLInputElement>('input')?.focus({preventScroll:true});}},[Boolean(editing),editing?.id,createRequest]);
+  const closeEditor=()=>{const close=()=>{setEditing(undefined);clearUnsaved();};if(editing&&(jsonMode?json:JSON.stringify(editing.content,null,2))!==editorBaseline)setPendingDiscard(()=>close);else close();};
   const update=(key:string,value:unknown)=>setEditing(old=>old?{...old,content:{...old.content,[key]:value}}:old);
   const save=()=>run(async()=>{
     if(!editing)return;let content=jsonMode?JSON.parse(json):editing.content;
@@ -107,8 +110,9 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
     </>}
     {section==="experiment-results"&&<div className="knowledge-toolbar"><input placeholder="要汇总的指标名称" value={metric} onChange={e=>setMetric(e.target.value)}/><button className="secondary-button" disabled={!selected.size||!metric||busy} onClick={()=>void run(async()=>setAggregate(JSON.stringify(await call(`${base}/experiment-results/aggregate`,{ids:[...selected],metric}),null,2)))}>汇总所选运行</button><pre>{aggregate}</pre><p>仅比较相同方法、配置、数据划分和评价条件；标准差采用样本标准差。</p></div>}
     {section==="knowledge-tasks"&&<div>{tasks.map(t=><article className="knowledge-task" key={t.task_id}><strong>{t.input.title}</strong><span>{statuses[t.status]??t.status}</span>{t.error&&<p>{t.error}</p>}{t.output_id&&<button className="secondary-button" onClick={()=>onNavigate((t.input as {kind?:string}).kind==="wiki-page"?"wiki":"cards",{focus:t.output_id})}>查看生成结果</button>}<button className="secondary-button" onClick={()=>void run(async()=>{const data=await call<{events:{at:string;message:string}[]}>(`${base}/knowledge-tasks/${t.task_id}`);setLogs(data.events.map(e=>`${e.at} ${e.message}`).join("\n"));})}>日志</button>{["queued","running"].includes(t.status)?<button className="secondary-button" onClick={()=>void run(async()=>{await call(`${base}/knowledge-tasks/${t.task_id}/cancel`,{});await refresh();})}>取消</button>:<button className="secondary-button" onClick={()=>void run(async()=>{await call(`${base}/knowledge-tasks/${t.task_id}/retry`,{});await refresh();})}>重新生成 / 重试</button>}</article>)}<pre className="knowledge-log">{logs}</pre></div>}
+    {pendingDiscard&&<DiscardChangesDialog onCancel={()=>setPendingDiscard(null)} onConfirm={()=>{const proceed=pendingDiscard;setPendingDiscard(null);clearUnsaved();proceed();}}/>}
     {editing&&<div ref={editorRef} className="knowledge-editor">
-      <div className="knowledge-toolbar"><h3>{editing.id?`修订 v${editing.version}`:"新建记录"}</h3><button className="secondary-button" onClick={()=>{if(jsonMode){try{setEditing({...editing,content:JSON.parse(json)});}catch{setError("JSON 格式无效");return;}}else setJson(JSON.stringify(editing.content,null,2));setJsonMode(!jsonMode);}}>{jsonMode?"切换表单":"高级 JSON"}</button><button className="secondary-button" onClick={()=>{if(!editing||(jsonMode?json:JSON.stringify(editing.content,null,2))===editorBaseline||window.confirm("放弃尚未保存的内容吗？"))setEditing(undefined);}}>关闭</button></div>
+      <div className="knowledge-toolbar"><h3>{editing.id?`修订 v${editing.version}`:"新建记录"}</h3><button className="secondary-button" onClick={()=>{if(jsonMode){try{setEditing({...editing,content:JSON.parse(json)});}catch{setError("JSON 格式无效");return;}}else setJson(JSON.stringify(editing.content,null,2));setJsonMode(!jsonMode);}}>{jsonMode?"切换表单":"高级 JSON"}</button><button className="secondary-button" onClick={closeEditor}>关闭</button></div>
       {jsonMode?<textarea className="json-editor" aria-label="结构化内容 JSON" value={json} onChange={e=>setJson(e.target.value)}/>:<>
         <label>标题<input value={String(editing.content.title??"")} onChange={e=>update("title",e.target.value)}/></label>
         {section==="wiki-pages"?<><label>Markdown 正文<textarea className="json-editor" value={String(editing.content.body??"")} onChange={e=>update("body",e.target.value)}/></label><Markdown body={String(editing.content.body??"")}/><button className="secondary-button" onClick={()=>void run(loadReferences)}>选择引用对象</button>{references.filter(r=>r.object_id!==editing.id).map(r=>{const deps=(editing.content.dependencies??[]) as {object_id:string;kind:KnowledgeKind;version:number}[];return <label key={r.object_id}><input type="checkbox" checked={deps.some(d=>d.object_id===r.object_id)} onChange={e=>update("dependencies",e.target.checked?[...deps,{kind:r.kind,object_id:r.object_id,version:r.version}]:deps.filter(d=>d.object_id!==r.object_id))}/>{r.title} v{r.version}</label>;})}</>:Object.entries(section==="literature-cards"?cardFields:experimentFields).map(([key,label])=><label key={key}>{label}<textarea rows={2} value={String(editing.content[key]??"")} onChange={e=>update(key,e.target.value)}/></label>)}
