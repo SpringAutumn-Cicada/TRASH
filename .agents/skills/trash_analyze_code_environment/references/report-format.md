@@ -106,3 +106,8 @@ resource 格式：`{device:"cpu"|"gpu"|"unknown",cpu_supported:"supported"|"unsu
 把同一数据集集合在不同模式下分别生成 run_plan，名称清晰，如“从头训练并评估”“已有权重评估”。每个方案仍只列自己适用的数据集，不要求把全项目所有数据集强行加入每个方案。不支持的模式可列 blocked 方案或在 unresolved 解释。
 
 资源参数化可使用 `{device}`（CPU 时 cpu，GPU 时 cuda）与 `{gpu_count}`（所选 GPU 数量，CPU 为 0），仅在源码参数确实接受这些值时使用，不创造参数。CUDA_VISIBLE_DEVICES 会重新编号，单卡代码使用进程内 cuda:0；不要将物理 GPU 索引写死到 argv。多 GPU 启动的进程数须由 `{gpu_count}` 或源码实际自动发现设备数决定；无法与用户选择数量匹配时不要声明 multi_gpu:true。复杂框架的非文件模型目录输入暂不支持，需明确标 blocked/待适配，不把目录当单个权重文件。
+
+
+## Skill 2.5.0：处理方式与权重模式
+
+execution 增加 processing_method:"batch"|"entity"|"unknown"，新报告必填，与 mode 独立。主方案按 batch/train、batch/evaluate、entity/train、entity/evaluate 组合分别生成；名称清晰表达两维，不因某组合不支持而编造入口。unknown 方案不可 ready，须说明归类依据不足；processing_method 的依据和处理单位解释写在 execution 的 evidence 与方案 scope 中。mode:resume 历史协议继续兼容，新的继续训练入口作为已启动训练的恢复操作保留，不展示为第三个权重模式。各模式的参数、模型输入、评价粒度和指标分别依据源码生成，不通过删除训练步骤猜测评估命令。

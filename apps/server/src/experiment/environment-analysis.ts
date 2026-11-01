@@ -96,7 +96,7 @@ export class EnvironmentAnalysisService {
    if(existsSync(contextPath))context=JSON.parse(readFileSync(contextPath,'utf8'));
    else{
     const skillHash=createHash('sha256');for(const file of ['SKILL.md','references/report-format.md','scripts/collect_inputs.py'])skillHash.update(file).update(readFileSync(join(skillDirectory,file)));
-    context={skill:readFileSync(join(skillDirectory,'SKILL.md'),'utf8'),format:readFileSync(join(skillDirectory,'references/report-format.md'),'utf8'),hash:skillHash.digest('hex'),version:'2.4.0'};
+    context={skill:readFileSync(join(skillDirectory,'SKILL.md'),'utf8'),format:readFileSync(join(skillDirectory,'references/report-format.md'),'utf8'),hash:skillHash.digest('hex'),version:'2.5.0'};
     mkdirSync(join(directory,'references'),{recursive:true});writeFileSync(join(directory,'SKILL.md'),context.skill);writeFileSync(join(directory,'references/report-format.md'),context.format);writeFileSync(join(directory,'collect_inputs.py'),readFileSync(join(skillDirectory,'scripts/collect_inputs.py')));this.atomic(contextPath,context);
    }
    const {skill,format}=context;
@@ -125,6 +125,8 @@ export class EnvironmentAnalysisService {
    if(new Set(names).size!==names.length)throw new Error("ENVIRONMENT_INVALID_REPORT");
    for(const plan of content.code_information.run_plans){
     if(!plan.execution||!plan.execution.mode||!plan.execution.resource||(plan.execution.resource.multi_gpu&&plan.execution.resource.attribution==='unknown'))throw new Error("ENVIRONMENT_INVALID_REPORT");
+    if(context.version==='2.5.0'&&!plan.execution.processing_method)throw new Error('ENVIRONMENT_INVALID_REPORT');
+    if(plan.execution.processing_method==='unknown'&&plan.execution.dataset_runs.some(run=>run.status==='ready'))throw new Error('ENVIRONMENT_INVALID_REPORT');
     const keys=plan.execution.dataset_runs.map(run=>run.dataset_name);
     if(new Set(keys).size!==keys.length||keys.some(name=>!names.includes(name)))throw new Error("ENVIRONMENT_INVALID_REPORT");
     for(const run of plan.execution.dataset_runs)if(run.status==='ready'&&(run.blockers.length||!run.steps.length||!run.evaluation_protocol.trim()||run.attribution==='unknown'||run.steps.some(step=>!step.purpose.trim()||step.attribution==='unknown')||(run.result.mode!=='none'&&(!run.result.path||(run.result.mode!=='json'&&!run.result.metrics.length)||run.result.attribution==='unknown'))))throw new Error("ENVIRONMENT_INVALID_REPORT");

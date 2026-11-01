@@ -13,10 +13,11 @@ export const resultCollectionSchema=z.object({
 export const executionResumeSchema=z.object({checkpoint_path:executionRelativePathSchema.refine(value=>Boolean(value)),steps:z.array(executionStepSchema).min(1).max(60),...attributed}).strict();
 export const executionResourceSchema=z.object({device:z.enum(['cpu','gpu','unknown']),notes:note,cpu_supported:z.enum(['supported','unsupported','unknown']).optional(),multi_gpu:z.boolean().optional(),...attributed}).strict();
 export type ExecutionResource=z.infer<typeof executionResourceSchema>;
+export const processingMethodSchema=z.enum(['batch','entity','unknown']);
 export const executionModeSchema=z.enum(['train','evaluate','resume']);
 export const modelOutputSchema=z.object({path:executionRelativePathSchema.refine(value=>Boolean(value)),kind:z.enum(['weights','checkpoint']),compatibility:note,...attributed}).strict();
 export const analysisExecutionSchema=z.object({
- mode:executionModeSchema.optional(),resource:executionResourceSchema.optional(),
+ processing_method:processingMethodSchema.optional(),mode:executionModeSchema.optional(),resource:executionResourceSchema.optional(),
  dataset_runs:z.array(z.object({dataset_name:z.string().min(1).max(500),status:z.enum(['ready','blocked']),blockers:z.array(note).max(80),dataset_subdirectory:executionRelativePathSchema,required_paths:z.array(executionRelativePathSchema).max(100),
  mappings:z.array(z.object({path:executionRelativePathSchema.refine(value=>Boolean(value)&&!value.split('/').some(part=>['.venv','venv','.trash-venv-checkpoint.json'].includes(part))),subpath:executionRelativePathSchema}).strict()).max(30),
  model_outputs:z.array(modelOutputSchema).max(20).optional(),model_input:z.object({kind:z.enum(['none','weights','checkpoint']),default_path:z.string().max(2048).refine(value=>!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..')),compatibility:note,...attributed}).strict().optional(),
