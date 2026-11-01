@@ -56,8 +56,7 @@ lock=None
 try:
  root=pathlib.Path(p['directory']).resolve(strict=True)
  assert root.is_dir(),'部署目录不存在'
- expected=tuple(map(int,p['plan']['python_version'].split('.')))
- assert sys.version_info[:len(expected)]==expected,'Python 版本与报告要求不一致'
+ update(current='使用远端 Python '+sys.version.split()[0]+' · '+sys.executable+'；报告版本仅供参考')
  env={k:v for k,v in os.environ.items() if not k.startswith('PIP_') and k not in ('PYTHONPATH','PYTHONHOME','VIRTUAL_ENV','CONDA_PREFIX')}
  env.update({'PIP_CONFIG_FILE':os.devnull,'PIP_REQUIRE_VIRTUALENV':'true','PYTHONNOUSERSITE':'1','PYTHONDONTWRITEBYTECODE':'1'})
  paths=[pathlib.PurePosixPath(item['path']) for item in p['files']]
@@ -110,7 +109,7 @@ try:
  saved['inventory']=inventory();atomic(checkpoint,saved)
  update(status='completed',stage='completed',completed_units=state['total_units'],current='依赖安装及 pip check 已完成，尚未执行论文实验',venv=str(target))
 except InterruptedError as error: update(status='cancelled',current=str(error))
-except BaseException as error: update(status='failed',current=str(error))
+except BaseException as error: update(status='failed',current=str(error)+'（Python '+sys.version.split()[0]+' · '+sys.executable+'）')
 finally:
  if lock:lock.close()
 print(json.dumps(state))`;
