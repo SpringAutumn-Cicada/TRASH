@@ -3,7 +3,7 @@ import type { ProjectPage } from "@trash/protocol";
 
 export const projectPages: { id: ProjectPage; label: string }[] = [
   { id: "overview", label: "概览" }, { id: "literature", label: "文献" }, { id: "cards", label: "卡片" },
-  { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "results", label: "实验结果" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }
+  { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }
 ];
 export const DirtyContext = createContext<(id: string, dirty: boolean) => void>(() => {});
 export function useUnsavedChanges(dirty: boolean): () => void {
@@ -22,12 +22,14 @@ export function parseProjectRoute(value: string): { projectId: string; page?: Pr
     const url = new URL(value, window.location.origin);
     const match = url.pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?\/?$/);
     if (!match) return undefined;
-    const page = projectPages.find(p => p.id === match[2])?.id;
+    const legacyResults=match[2]==="results";
+    const page:ProjectPage|undefined = legacyResults?"data":projectPages.find(p => p.id === match[2])?.id;
     if (match[2] && !page) return undefined;
-    return { projectId: decodeURIComponent(match[1]), page, action: url.searchParams.get("action") ?? undefined, focusId: url.searchParams.get("focus") ?? undefined, status: url.searchParams.get("status") ?? undefined };
+    return { projectId: decodeURIComponent(match[1]), page, action: legacyResults?(url.searchParams.get("action")==="new"?"new-experiment-record":"experimental-data"):url.searchParams.get("action") ?? undefined, focusId: url.searchParams.get("focus") ?? undefined, status: url.searchParams.get("status") ?? undefined };
   } catch { return undefined; }
 }
 export function projectPath(id: string, page: ProjectPage, options?: { action?: string; focus?: string; status?: string }): string {
+  if(page==="results")return projectPath(id,"data",{...options,action:options?.action==="new"?"new-experiment-record":"experimental-data"});
   const params = new URLSearchParams();
   if (options?.action) params.set("action", options.action);
   if (options?.focus) params.set("focus", options.focus);
