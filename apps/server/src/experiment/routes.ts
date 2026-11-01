@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
-import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
+import { browseDirectories, createDirectory, selectDirectory, browseLocalFiles } from "./directories.js";
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
 import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
@@ -239,11 +239,13 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       if(parts[2]==="diagnostics"&&method==="POST"){send(response,200,{environment:await service.diagnostics(projectId,profile.profile_id)});return true;}
     }
   }
+  if(parts[0]==='local-files'&&parts.length===1&&method==='GET'){send(response,200,await browseLocalFiles(url.searchParams.get('path')??undefined));return true;}
   if(parts[0]==="datasets"){
     if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
-      const profile=z.string().min(1).parse(url.searchParams.get("profile_id")),name=z.string().trim().min(1).max(200).parse(url.searchParams.get("name")),filename=z.string().min(1).max(255).parse(url.searchParams.get("filename")),requestId=z.string().uuid().parse(url.searchParams.get("request_id"));
-      service.data.profile(projectId,profile);const workspace=service.workspaces.get(projectId,profile)??experimentError("WORKSPACE_REQUIRED",409);
-      send(response,201,{dataset:await service.datasetUploads.upload(projectId,profile,workspace.root,service.terminals.connection(projectId,profile),request,name,filename,url.searchParams.get("extract")==="true",requestId)});return true;
+      const input=z.object({profile_id:z.string().min(1),name:z.string().trim().min(1).max(200),path:z.string().min(1).max(4096),extract:z.boolean(),request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+      const profile=input.profile_id;service.data.profile(projectId,profile);const workspace=service.workspaces.get(projectId,profile)??experimentError('WORKSPACE_REQUIRED',409);
+      const filename=input.path.split('/').at(-1)??'';
+      send(response,201,{dataset:await service.datasetUploads.upload(projectId,profile,workspace.root,service.terminals.connection(projectId,profile),request,input.name,filename,input.extract,input.request_id,input.path)});return true;
     }
     if(parts.length===3&&parts[2]==="cancel-upload"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.datasetUploads.cancel(projectId,parts[1]));return true;}
     if(parts.length===2&&["PUT","DELETE"].includes(method)){

@@ -65,3 +65,8 @@ export async function createDirectory(input: unknown) {
   }
   return { path: target };
 }
+
+export async function browseLocalFiles(path?:string){
+ const current=await resolveDirectory(path||homedir());
+ try{const entries=await readdir(current,{withFileTypes:true});return {path:current,parent:dirname(current)===current?null:dirname(current),directories:entries.filter(item=>item.isDirectory()&&item.name!=='.git').map(item=>({name:item.name,path:join(current,item.name)})).sort((a,b)=>a.name.localeCompare(b.name)),files:entries.filter(item=>item.isFile()).map(item=>({name:item.name,path:join(current,item.name)})).sort((a,b)=>a.name.localeCompare(b.name))};}catch{return experimentError('LOCAL_DIRECTORY_ACCESS_DENIED',403);}
+}
