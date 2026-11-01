@@ -6,6 +6,17 @@ import type { SshProfile } from "@trash/protocol";
 import { CredentialStore } from "./credential-store.js";
 export const quote = (value:string):string => `'${value.replace(/'/g, `'"'"'`)}'`;
 export function redact(value:string):string {return value.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+/g,"[REDACTED]").replace(/((?:password|passphrase|token|secret|api[_-]?key)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");}
+function connectionFailure(error:Error):string {
+  const detail=error as Error&{code?:string;level?:string};
+  if(detail.level==='client-authentication')return 'SSH_AUTH_FAILED';
+  if(detail.code==='ENOTFOUND'||detail.code==='EAI_AGAIN'||detail.level==='client-dns')return 'SSH_DNS_FAILED';
+  if(detail.code==='ECONNREFUSED')return 'SSH_CONNECTION_REFUSED';
+  if(detail.code==='ETIMEDOUT'||detail.level==='client-timeout')return 'SSH_CONNECTION_TIMEOUT';
+  if(detail.code==='ECONNRESET'||detail.code==='EPIPE')return 'SSH_CONNECTION_RESET';
+  if(detail.code==='ENETUNREACH'||detail.code==='EHOSTUNREACH')return 'SSH_HOST_UNREACHABLE';
+  if(detail.level==='handshake')return 'SSH_HANDSHAKE_FAILED';
+  return 'SSH_CONNECTION_FAILED';
+}
 export class SshService {
   private credentials=new Map<string,{password?:string;passphrase?:string}>();
   private observed=new Map<string,string>();
@@ -25,10 +36,13 @@ export class SshService {
   async probe(profile:SshProfile):Promise<string>{
     return new Promise((resolve,reject)=>{
       const client=new Client();this.clients.add(client);let fingerprint:string|undefined;
-      const timer=setTimeout(()=>{client.destroy();reject(Object.assign(new Error("SSH_NETWORK_FAILED"),{statusCode:422}));},15000);
-      client.on("error",()=>{if(!fingerprint)reject(Object.assign(new Error("SSH_NETWORK_FAILED"),{statusCode:422}));});
-      client.on("close",()=>{clearTimeout(timer);this.clients.delete(client);if(fingerprint)resolve(fingerprint);else reject(Object.assign(new Error("SSH_NETWORK_FAILED"),{statusCode:422}));});
-      client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:15000,hostVerifier:(key:Buffer)=>{fingerprint=`SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/,"")}`;this.observed.set(profile.profile_id,fingerprint);return false;}});
+      let settled=false;
+      const finish=(code?:string)=>{if(settled)return;settled=true;clearTimeout(timer);this.clients.delete(client);client.destroy();if(code)reject(Object.assign(new Error(code),{statusCode:422}));else resolve(fingerprint!);};
+      const timer=setTimeout(()=>finish('SSH_CONNECTION_TIMEOUT'),30000);
+      client.on("error",error=>finish(fingerprint?undefined:connectionFailure(error)));
+      client.on("close",()=>finish(fingerprint?undefined:'SSH_CONNECTION_CLOSED'));
+      try{client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:30000,hostVerifier:(key:Buffer)=>{fingerprint=`SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/,"")}`;this.observed.set(profile.profile_id,fingerprint);return false;}});}catch(error){finish(connectionFailure(error instanceof Error?error:new Error('SSH_CONNECTION_FAILED')));}
+
     });
   }
   confirm(profile:SshProfile,fingerprint:string):void{if(this.observed.get(profile.profile_id)!==fingerprint)experimentError("SSH_FINGERPRINT_NOT_OBSERVED",409);if(this.store.runs().some(r=>r.profile_id===profile.profile_id&&this.store.active(r)))experimentError("EXPERIMENT_ACTIVE",409);this.store.saveProfile({...profile,fingerprint});this.observed.delete(profile.profile_id);}
@@ -40,13 +54,15 @@ export class SshService {
     const key=profile.auth==="key"?await readFile(profile.key_path??experimentError("SSH_KEY_REQUIRED")):undefined;
     if(profile.auth==="agent"&&!process.env.SSH_AUTH_SOCK)experimentError("SSH_AGENT_UNAVAILABLE",409);
     return new Promise((resolve,reject)=>{
-      const client=new Client();this.clients.add(client);let mismatch=false;let ready=false;
-      client.on("close",()=>{this.clients.delete(client);if(!ready)reject(Object.assign(new Error(mismatch?"SSH_FINGERPRINT_CHANGED":"SSH_CONNECTION_FAILED"),{statusCode:422}));});
-      client.on("error",error=>reject(Object.assign(new Error(mismatch?"SSH_FINGERPRINT_CHANGED":("level" in error&&error.level==="client-authentication"?"SSH_AUTH_FAILED":"SSH_CONNECTION_FAILED")),{statusCode:422})));
-      client.once("ready",()=>{ready=true;resolve(new RemoteConnection(client));});
-      client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:15000,keepaliveInterval:10000,keepaliveCountMax:3,
+      const client=new Client();this.clients.add(client);let mismatch=false;let ready=false;let settled=false;
+      const fail=(code:string)=>{if(settled)return;settled=true;this.clients.delete(client);client.destroy();reject(Object.assign(new Error(code),{statusCode:422}));};
+      client.on("close",()=>{this.clients.delete(client);if(!ready)fail(mismatch?"SSH_FINGERPRINT_CHANGED":"SSH_CONNECTION_CLOSED");});
+      client.on("error",error=>{if(!ready)fail(mismatch?"SSH_FINGERPRINT_CHANGED":connectionFailure(error));});
+      client.once("ready",()=>{if(settled){client.destroy();return;}settled=true;ready=true;resolve(new RemoteConnection(client));});
+      try{client.connect({host:profile.host,port:profile.port,username:profile.username,readyTimeout:30000,keepaliveInterval:10000,keepaliveCountMax:3,
         ...(profile.auth==="password"?{password:credentials.password}:profile.auth==="key"?{privateKey:key,passphrase:credentials.passphrase}:{agent:process.env.SSH_AUTH_SOCK}),
-        hostVerifier:(raw:Buffer)=>{const fingerprint=`SHA256:${createHash("sha256").update(raw).digest("base64").replace(/=+$/,"")}`;mismatch=fingerprint!==profile.fingerprint;return !mismatch;}});
+        hostVerifier:(raw:Buffer)=>{const fingerprint=`SHA256:${createHash("sha256").update(raw).digest("base64").replace(/=+$/,"")}`;mismatch=fingerprint!==profile.fingerprint;return !mismatch;}});}catch(error){fail(mismatch?'SSH_FINGERPRINT_CHANGED':connectionFailure(error instanceof Error?error:new Error('SSH_CONNECTION_FAILED')));}
+
     });
   }
 }

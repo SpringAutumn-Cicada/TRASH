@@ -1,3 +1,4 @@
+import { sshConnectionErrors } from './ssh-errors.js';
 import React, { useEffect, useRef, useState } from "react";
 import { LoaderCircle, Server, X, Plus, Pencil } from "lucide-react";
 import type { SshProfile } from "@trash/protocol";
@@ -8,7 +9,7 @@ import { AutoDlInstanceDialog } from "./autodl-instance-dialog.js";
 import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 
 type Profile=SshProfile&{credential_available?:boolean};
-const errors:Record<string,string>={SSH_FINGERPRINT_REQUIRED:"请先探测并核对主机指纹。",SSH_FINGERPRINT_CHANGED:"主机指纹已改变，请先重新核对。",SSH_FINGERPRINT_NOT_OBSERVED:"请先探测主机指纹再确认信任。",SSH_AUTH_FAILED:"认证失败，请检查用户名和密码。",SSH_NETWORK_FAILED:"无法连接主机，请检查实例状态与网络。",SSH_CONNECTION_FAILED:"SSH 连接失败，请检查实例地址与端口。",SSH_CREDENTIAL_REQUIRED:"请补充 SSH 认证信息。",SSH_KEY_REQUIRED:"实例尚未配置私钥路径。",SSH_AGENT_UNAVAILABLE:"本机 SSH Agent 不可用。",TERMINAL_CONNECTING:"正在连接，请稍候。",SSH_TERMINAL_FAILED:"无法创建远端 Shell，请检查实例状态。",SSH_COMMAND_TIMEOUT:"远端操作超时。",EXPERIMENT_ACTIVE:"存在未结束实验，暂不能删除。",NOT_FOUND:"接口尚未加载，请重启后端后再试。"};
+const errors:Record<string,string>={...sshConnectionErrors,SSH_FINGERPRINT_REQUIRED:"请先探测并核对主机指纹。",SSH_FINGERPRINT_CHANGED:"主机指纹已改变，请先重新核对。",SSH_FINGERPRINT_NOT_OBSERVED:"请先探测主机指纹再确认信任。",SSH_AUTH_FAILED:"认证失败，请检查用户名和密码。",SSH_NETWORK_FAILED:"无法连接主机，请检查实例状态与网络。",SSH_CONNECTION_FAILED:"SSH 连接失败，请检查实例地址与端口。",SSH_CREDENTIAL_REQUIRED:"请补充 SSH 认证信息。",SSH_KEY_REQUIRED:"实例尚未配置私钥路径。",SSH_AGENT_UNAVAILABLE:"本机 SSH Agent 不可用。",TERMINAL_CONNECTING:"正在连接，请稍候。",SSH_TERMINAL_FAILED:"无法创建远端 Shell，请检查实例状态。",SSH_COMMAND_TIMEOUT:"远端操作超时。",EXPERIMENT_ACTIVE:"存在未结束实验，暂不能删除。",NOT_FOUND:"接口尚未加载，请重启后端后再试。"};
 export function AutoDlConnectionDialog({projectId,onClose,initialProfileId}:{projectId:string;onClose:()=>void;initialProfileId?:string}){
  const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
  const [profiles,setProfiles]=useState<Profile[]>([]),[selected,setSelected]=useState(initialProfileId??""),[sessions,setSessions]=useState<TerminalSession[]>([]);
