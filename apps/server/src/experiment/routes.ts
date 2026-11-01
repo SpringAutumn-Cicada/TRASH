@@ -15,6 +15,19 @@ import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
 export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
+  if(parts[0]==='reproduction-queues'){
+    if(parts.length===2&&parts[1]==='mapping-preview'&&method==='POST'){
+      const input=z.object({profile_id:z.string(),directory:z.string().startsWith('/'),path:z.string().min(1),dataset_ids:z.array(z.string()).min(1).max(50)}).strict().parse(await readJson(request));
+      if(input.path.startsWith('/')||input.path.split('/').some(part=>!part||part==='..'||part==='.'||part==='.venv'||part==='.git')||/[\x00-\x1f]/.test(input.path+input.directory))experimentError('INVALID_REQUEST',400);
+      const targets=input.dataset_ids.map(id=>service.data.datasets(projectId).find(dataset=>dataset.dataset_id===id&&dataset.profile_id===input.profile_id)??experimentError('DATASET_NOT_FOUND',404));
+      const remote=service.terminals.connection(projectId,input.profile_id);
+      const result=await remote.exec(['python3','-c',"import pathlib,sys,json; r=pathlib.Path(sys.argv[1]).resolve(); p=r/sys.argv[2]; targets=json.loads(sys.argv[3]); assert r.is_dir() and p.parent.is_dir() and p.parent.resolve().is_relative_to(r),'MAPPING_PARENT_INVALID'; assert not p.exists() and not p.is_symlink(),'DATA_MAPPING_CONFLICT'; assert all(pathlib.Path(t).exists() for t in targets),'DATASET_NOT_FOUND'; print(json.dumps({'available':True}))",input.directory,input.path,JSON.stringify(targets.map(dataset=>dataset.path))]);
+      send(response,200,JSON.parse(result));return true;
+    }
+    if(parts.length===1&&method==='GET'){send(response,200,{queues:service.reproductionQueues.list(projectId)});return true;}
+    if(parts.length===1&&method==='POST'){send(response,201,{queue:await service.reproductionQueues.create(projectId,await readJson(request))});return true;}
+    if(parts.length===3&&method==='POST'&&['resume','skip','cancel'].includes(parts[2])){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{queue:await service.reproductionQueues.action(projectId,parts[1],parts[2] as 'resume'|'skip'|'cancel')});return true;}
+  }
   if(parts[0]==="remote-workspace"){
     const profileId=z.string().min(1).parse(url.searchParams.get("profile_id"));service.data.profile(projectId,profileId);
     if(parts.length===1&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{workspace:service.workspaces.get(projectId,profileId)??null,suggested_root:service.workspaces.suggested(projectId),sources:service.data.profiles(projectId).filter(item=>item.profile_id!==profileId).flatMap(item=>{const workspace=service.workspaces.get(projectId,item.profile_id);return workspace?[{profile_id:item.profile_id,root:workspace.root}]:[]})});return true;}

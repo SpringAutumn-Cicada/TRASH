@@ -13,6 +13,9 @@ export type DatasetRef = z.infer<typeof datasetInputSchema> & { dataset_id: stri
 export const experimentPlanInputSchema = z.object({
   title: text, purpose: z.string().max(20000), method: text, baseline: z.string().max(2000).default(""), evaluation_protocol: z.string().max(20000),
   code_source:z.enum(["git","reproduction"]).default("git"), reproduction_id:text.optional(), snapshot_id:text.optional(),
+  deployed_directory:remotePathSchema.optional(),
+  data_mappings:z.array(z.object({path:outputPathSchema,dataset_id:text}).strict()).max(30).optional(),
+  report_id:text.optional(),
   commit_sha: z.union([commitShaSchema,z.literal("")]).default(""), profile_id: text, dataset_ids: z.array(text).max(50), python: remotePathSchema,
   command: z.array(z.string().min(1).max(4096)).min(1).max(100), env: z.record(z.string().max(4096)).default({}),
   config: z.record(z.unknown()).default({}), seed: z.number().int().optional(), gpu: z.string().regex(/^(cpu|\d+(,\d+)*)$/),
@@ -22,6 +25,8 @@ export const experimentPlanInputSchema = z.object({
 }).strict().superRefine((input, ctx) => {
   if(input.code_source==="git"&&!commitShaSchema.safeParse(input.commit_sha).success)ctx.addIssue({code:z.ZodIssueCode.custom,path:["commit_sha"],message:"实验代码需要完整 commit"});
   if(input.code_source==="reproduction"&&(!input.reproduction_id||!input.snapshot_id))ctx.addIssue({code:z.ZodIssueCode.custom,path:["snapshot_id"],message:"请选择复现代码快照"});
+  if(input.deployed_directory&&input.code_source!=='reproduction')ctx.addIssue({code:z.ZodIssueCode.custom,path:['deployed_directory'],message:'仅复现代码可复用部署目录'});
+  for(const mapping of input.data_mappings??[])if(mapping.path.split('/').some(part=>['.venv','venv','.trash-venv-checkpoint.json'].includes(part)))ctx.addIssue({code:z.ZodIssueCode.custom,path:['data_mappings'],message:'不可映射环境或平台文件'});
   for (const [key, value] of Object.entries(input.env)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /password|token|secret|api.?key|credential/i.test(key) || /\bsk-[\w-]+/.test(value)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["env", key], message: "仅允许非敏感环境变量" });
   }

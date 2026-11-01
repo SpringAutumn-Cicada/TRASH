@@ -33,7 +33,16 @@ def digest(path):
     return h.hexdigest()
 
 def collect():
-    names = ['manifest.json', 'environment.json', 'status.json', 'config.json', 'logs/stdout.log', 'logs/stdout.log.1', 'logs/stderr.log', 'logs/stderr.log.1', M['metrics_path']] + M['artifact_paths']
+    if M['metrics_path'].lower().endswith('.csv'):
+        import csv
+        source=safe_path(M['metrics_path'])
+        if source.is_file() and source.stat().st_size<=20*1024*1024:
+            with source.open(newline='',encoding='utf-8-sig') as file:
+                rows=list(csv.DictReader(file))
+            if len(rows)<=1000:
+                try: atomic('outputs/collected-metrics.json',{'metrics':[{'name':row['name'],'value':float(row['value']),'unit':row.get('unit',''),'condition':row.get('condition','')} for row in rows]})
+                except (KeyError,ValueError): pass
+    names = ['outputs/collected-metrics.json','data-mappings.json', 'manifest.json', 'environment.json', 'status.json', 'config.json', 'logs/stdout.log', 'logs/stdout.log.1', 'logs/stderr.log', 'logs/stderr.log.1', M['metrics_path']] + M['artifact_paths']
     items = []
     for name in dict.fromkeys(names):
         try:
@@ -89,10 +98,33 @@ while True:
         status('waiting', runner_version='2')
         time.sleep(2)
 process = None
+links=[]
 try:
     if digest(ROOT / 'code.bundle') != M['bundle_sha256']: raise RuntimeError('BUNDLE_HASH_MISMATCH')
     code = ROOT / 'code'
-    if M.get('code_source') == 'reproduction':
+    if M.get('deployed_directory'):
+        code=pathlib.Path(M['deployed_directory']).resolve()
+        if not code.is_dir(): raise RuntimeError('DEPLOYED_DIRECTORY_MISSING')
+        files=M['code_snapshot']['files']
+        prefix=''
+        if files and not all((code/item['path']).is_file() for item in files):
+            first=files[0]['path'].split('/')[0]
+            if all(item['path'].startswith(first+'/') for item in files): prefix=first+'/'
+        for item in files:
+            candidate=(code/item['path'][len(prefix):]).resolve()
+            if not candidate.is_relative_to(code) or not candidate.is_file() or digest(candidate)!=item['sha256']: raise RuntimeError('DEPLOYED_CODE_HASH_MISMATCH')
+        head=None
+        for mapping in M.get('data_mappings',[]):
+            dataset=next(d for d in M['datasets'] if d['dataset_id']==mapping['dataset_id'])
+            target=pathlib.Path(dataset['path']).resolve()
+            if not target.exists(): raise RuntimeError('DATASET_NOT_FOUND')
+            link=code/mapping['path']
+            if not link.parent.resolve().is_relative_to(code) or not link.parent.is_dir(): raise RuntimeError('MAPPING_PARENT_INVALID')
+            if link.is_symlink() and link.resolve()==target: continue
+            if link.exists() or link.is_symlink(): raise RuntimeError('DATA_MAPPING_CONFLICT')
+            link.symlink_to(target,target_is_directory=target.is_dir());links.append((link,target))
+        atomic('data-mappings.json',M.get('data_mappings',[]))
+    elif M.get('code_source') == 'reproduction':
         import zipfile,stat
         if code.exists(): raise RuntimeError('CODE_DIRECTORY_EXISTS')
         with zipfile.ZipFile(ROOT / 'code.bundle') as z:
@@ -115,6 +147,10 @@ try:
         if head != M['commit_sha']: raise RuntimeError('COMMIT_MISMATCH')
     env = os.environ.copy()
     env.update(M['env'])
+    env['PYTHONUNBUFFERED']='1'
+    env['PATH']=str(pathlib.Path(M['python']).parent)+os.pathsep+env.get('PATH','')
+    env['TRASH_DATASETS_JSON']=json.dumps(M['datasets'])
+    if len(M['datasets'])==1: env['TRASH_DATASET_DIR']=M['datasets'][0]['path']
     env['TRASH_RUN_DIR'] = str(ROOT)
     env['TRASH_OUTPUT_DIR'] = str(ROOT / 'outputs')
     env['TRASH_CONFIG_PATH'] = str(ROOT / 'config.json')
@@ -125,6 +161,7 @@ try:
     environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version='2', code_snapshot=M.get('code_snapshot')))
     atomic('environment.json', environment)
     argv = M['command']
+    argv=[value.replace('{dataset}',M['datasets'][0]['path'] if len(M['datasets'])==1 else '').replace('{output}',str(ROOT/'outputs')).replace('{config}',str(ROOT/'config.json')) for value in argv]
     if argv[0] in ['python','python3']: argv = [M['python']] + argv[1:]
     if M.get('preparation'):
         script = (code / M['preparation_script']).resolve()
@@ -168,6 +205,9 @@ except Exception as error:
         process.wait()
     status('failed', reason=str(error), finished_at=time.time())
     collect()
+finally:
+    for link,target in reversed(links):
+        if link.is_symlink() and link.resolve()==target: link.unlink()
 `;
 export const DIAGNOSTICS = String.raw`import os,sys,json,shutil,subprocess,platform
 root=sys.argv[1]

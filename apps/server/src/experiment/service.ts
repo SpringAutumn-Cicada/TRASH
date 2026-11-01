@@ -1,3 +1,4 @@
+import { ReproductionQueueService } from "./reproduction-queue.js";
 import { DatasetUploadService } from "./dataset-upload.js";
 import { WorkspaceService, directoryLabel, ensureRemoteDirectory } from "./workspace.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -5,7 +6,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { z } from "zod";
 import { ExperimentStore, KnowledgeStore, experimentError, type TrashStore } from "@trash/storage";
-import { experimentPlanInputSchema, metricSchema, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
+import { experimentPlanInputSchema, experimentResultSchema, metricSchema, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
 import { RepositoryService } from "./repository.js";
 import { SshService, RemoteConnection, redact } from "./ssh.js";
 import { DIAGNOSTICS, REMOTE_RUNNER, RUNNER_VERSION } from "./runner.js";
@@ -18,14 +19,16 @@ const artifactListSchema=z.array(z.object({path:z.string(),size_bytes:z.number()
 const remoteStatusSchema=z.object({run_id:z.string(),token:z.string(),state:z.string(),at:z.number(),exit_code:z.number().int().nullable().optional(),reason:z.string().nullable().optional(),started_at:z.number().optional(),finished_at:z.number().optional()}).passthrough();
 export class ExperimentService {
   readonly datasetUploads:DatasetUploadService;readonly workspaces:WorkspaceService;readonly deployments:EnvironmentDeploymentService;readonly environmentAnalysis:EnvironmentAnalysisService;readonly reproductions:ReproductionService;readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;readonly terminals:TerminalService;
+  readonly reproductionQueues:ReproductionQueueService;
   private inFlight=new Set<string>();private closed=false;private timer:ReturnType<typeof setInterval>;
   constructor(readonly store:TrashStore){
     this.workspaces=new WorkspaceService(store);this.reproductions=new ReproductionService(store);this.data=new ExperimentStore(store.db);this.datasetUploads=new DatasetUploadService(this.data,store.listProjects().map(item=>item.project_id),store.root);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);this.environmentAnalysis=new EnvironmentAnalysisService(store,this.reproductions);this.deployments=new EnvironmentDeploymentService(store,this.reproductions,this.workspaces);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
+    this.reproductionQueues=new ReproductionQueueService(this);
     this.timer=setInterval(()=>{void this.tick();},5000);this.timer.unref();
   }
-  close():void{this.closed=true;this.datasetUploads.close();clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
-  busyProject(projectId:string):boolean{return this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
+  close():void{this.closed=true;this.reproductionQueues.close();this.datasetUploads.close();clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
+  busyProject(projectId:string):boolean{return this.reproductionQueues.list(projectId).some(queue=>queue.status==='running'||queue.status==='paused')||this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
   private hostKey(profile:SshProfile):string{return `${profile.host.toLowerCase()}:${profile.port}:${profile.username}`;}
   private mark(run:ExperimentRun,state:ExperimentRunState,error?:string):void{
     if(this.closed)return;
@@ -65,6 +68,7 @@ export class ExperimentService {
     if((previous?.version??0)!==baseVersion)experimentError("VERSION_CONFLICT",409);
     const datasets=content.dataset_ids.map(key=>this.data.datasets(projectId).find(d=>d.dataset_id===key)??experimentError("DATASET_NOT_FOUND",404));
     if(datasets.some(d=>d.transfer_status&&d.transfer_status!=="ready"))experimentError("DATASET_NOT_READY",409);
+    if(content.data_mappings?.some(mapping=>!datasets.some(dataset=>dataset.dataset_id===mapping.dataset_id)))experimentError('DATASET_MAPPING_INVALID',400);
     if(datasets.some(d=>d.profile_id!==profile.profile_id))experimentError("DATASET_HOST_MISMATCH");
     const plan:ExperimentPlanVersion={plan_id:id??`plan_${randomUUID()}`,project_id:projectId,version:(previous?.version??0)+1,status:"draft",repository:repo,...(reproduction?{reproduction}:{}),profile,datasets,content,created_at:new Date().toISOString()};this.data.savePlan(plan);return plan;
   }
@@ -83,7 +87,9 @@ export class ExperimentService {
       if(plan.content.gpu!=="cpu"){
         const indices=String(environment.gpu).split("\n").map(row=>row.split(",")[0].trim());if(plan.content.gpu.split(",").some(id=>!indices.includes(id)))experimentError("GPU_UNAVAILABLE",422);
       }
-      for(const dataset of plan.datasets)await remote.exec([plan.content.python,"-c","import os,sys; assert os.path.exists(sys.argv[1]),'DATASET_NOT_FOUND'",dataset.path]);
+      for(const dataset of plan.datasets){await remote.exec([plan.content.python,"-c","import os,sys; assert os.path.exists(sys.argv[1]),'DATASET_NOT_FOUND'",dataset.path]);
+        if(dataset.sha256)await remote.exec([plan.content.python,'-c',"import sys,hashlib,pathlib; p=pathlib.Path(sys.argv[1]); assert p.is_file(),'DATASET_CHECKSUM_FILE_REQUIRED'; h=hashlib.sha256(); f=p.open('rb'); [h.update(b) for b in iter(lambda:f.read(1048576),b'')]; assert h.hexdigest()==sys.argv[2],'DATASET_HASH_MISMATCH'",dataset.checksum_manifest??dataset.path,dataset.sha256],undefined,600000);
+      }
       return environment;
     }finally{remote.close();}
   }
@@ -107,7 +113,7 @@ export class ExperimentService {
   }
   private async tick():Promise<void>{
     if(this.closed)return;
-    const all=this.data.runs();const hosts=new Set(all.filter(r=>this.data.active(r)).map(r=>r.host_key));
+    const all=this.data.runs().sort((a,b)=>a.created_at.localeCompare(b.created_at));const hosts=new Set(all.filter(r=>this.data.active(r)).map(r=>r.host_key));
     for(const key of hosts){
       if(this.inFlight.has(key))continue;
       const active=all.find(r=>r.host_key===key&&this.data.active(r)&&r.status!=="queued");
@@ -199,11 +205,13 @@ export class ExperimentService {
     run.artifacts=collected;
     run.collection_status=run.artifacts.some(a=>!a.downloaded)?"部分大文件仅保留远端引用":"产物已收集";
     if(run.preparation){run.metrics_status="环境准备不产生实验结果";return;}
-    const metricFile=run.artifacts.find(a=>a.path===run.plan.content.metrics_path&&a.downloaded&&a.artifact_id);
+    const metricFile=run.artifacts.find(a=>(a.path===(run.plan.content.metrics_path.toLowerCase().endsWith('.csv')?'outputs/collected-metrics.json':run.plan.content.metrics_path))&&a.downloaded&&a.artifact_id);
     if(!metricFile){run.metrics_status="执行结束，结果待补充：指标文件缺失或未下载";return;}
-    let metrics:z.infer<typeof metricSchema>[];
+    let metrics:z.infer<typeof metricSchema>[];let evaluationExtras:Record<string,unknown>={};
     try{
-      const bytes=this.store.readArtifact(run.project_id,metricFile.artifact_id!)!;metrics=z.object({metrics:z.array(metricSchema).min(1)}).strict().parse(JSON.parse(Buffer.from(bytes).toString())).metrics;
+      const bytes=this.store.readArtifact(run.project_id,metricFile.artifact_id!)!;const payload=z.object({metrics:z.array(metricSchema).default([]),confusion_matrix:z.unknown().optional(),evaluation:z.unknown().optional()}).strict().parse(JSON.parse(Buffer.from(bytes).toString()));
+      const normalized=experimentResultSchema.parse({schema_version:1,title:'collected',method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(', '),metrics:payload.metrics,...(payload.confusion_matrix?{confusion_matrix:payload.confusion_matrix}:{}),...(payload.evaluation?{evaluation:payload.evaluation}:{})});metrics=normalized.metrics;
+      evaluationExtras={...(normalized.confusion_matrix?{confusion_matrix:normalized.confusion_matrix}:{}),...(normalized.evaluation?{evaluation:normalized.evaluation}:{})};
       for(const expected of run.plan.content.expected_metrics)if(metrics.filter(m=>m.name===expected.name&&m.unit===expected.unit).length!==1)throw new Error("指标缺失或单位不符");
       if(metrics.some(m=>!run.plan.content.expected_metrics.some(e=>e.name===m.name&&e.unit===m.unit)))throw new Error("包含未声明指标");
     }catch{run.metrics_status="指标无效，需人工核对";return;}
@@ -215,7 +223,7 @@ export class ExperimentService {
     this.store.db.transaction(()=>{
       const knowledge=new KnowledgeStore(this.store.db);const existing=knowledge.list(run.project_id,"experiment-result").find(v=>"external_run_id" in v.content&&v.content.external_run_id===run.run_id);
       if(existing){run.result_id=existing.object_id;run.metrics_status="已登记结果";this.data.saveRun(run);return;}
-      const result=knowledge.write(run.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:run.plan.content.title,method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(", "),dataset_version:run.plan.datasets.map(d=>d.version).join(", "),evaluation_protocol:run.plan.content.evaluation_protocol,config:run.plan.content.config,environment,...(run.started_at?{run_at:run.started_at}:{}),seed:run.plan.content.seed,...(!run.plan.reproduction?{git_commit:run.plan.content.commit_sha}:{}),plan_version:`${run.plan.plan_id}:${run.plan.version}`,external_run_id:run.run_id,metrics,attachments:run.artifacts.map(a=>({name:a.path,uri:a.artifact_id?`/api/v1/projects/${run.project_id}/experiment-artifacts/${run.run_id}/${a.artifact_id}`:`ssh://${run.plan.profile.host}:${run.plan.profile.port}${run.remote_dir}/${a.path}`,sha256:a.sha256})),notes:"由远程实验收集，待研究者审阅"}},"agent");run.result_id=result.object_id;run.metrics_status="已登记待审结果";this.data.saveRun(run);
+      const result=knowledge.write(run.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:run.plan.content.title,method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(", "),dataset_version:run.plan.datasets.map(d=>d.version).join(", "),evaluation_protocol:run.plan.content.evaluation_protocol,config:run.plan.content.config,environment,...(run.started_at?{run_at:run.started_at}:{}),seed:run.plan.content.seed,...(!run.plan.reproduction?{git_commit:run.plan.content.commit_sha}:{}),plan_version:`${run.plan.plan_id}:${run.plan.version}`,external_run_id:run.run_id,metrics,...evaluationExtras,attachments:run.artifacts.map(a=>({name:a.path,uri:a.artifact_id?`/api/v1/projects/${run.project_id}/experiment-artifacts/${run.run_id}/${a.artifact_id}`:`ssh://${run.plan.profile.host}:${run.plan.profile.port}${run.remote_dir}/${a.path}`,sha256:a.sha256})),notes:"由远程实验收集，待研究者审阅"}},"agent");run.result_id=result.object_id;run.metrics_status="已登记待审结果";this.data.saveRun(run);
     })();
   }
 }
