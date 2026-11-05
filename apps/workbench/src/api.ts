@@ -1,5 +1,18 @@
 const API = "/api/v1";
 const errorMessages: Record<string, string> = {
+  FILES_WORKSPACE_MISSING: "项目目录尚不存在，请先在本地工作区中设置目录。",
+  FILES_OUTSIDE_WORKSPACE: "文件路径超出当前项目工作区。",
+  FILES_SYMLINK: "符号链接不支持直接操作，请在工作区中访问真实文件。",
+  FILES_MANAGED_READONLY: "此文件或目录由平台管理，请通过文献、卡片或 Wiki 等对应模块维护。",
+  FILES_CHANGED: "文件已被其他程序修改，当前编辑已保留，请先下载或复制内容后刷新核对。",
+  FILES_BOUND_REPOSITORY: "此目录包含平台绑定的代码仓库，请先在实验模块调整绑定后再移动或删除。",
+  FILES_EXISTS: "目标位置已有同名文件或文件夹，不会覆盖。",
+  FILES_INVALID_MOVE: "不能将目录移动到自身或其子目录。",
+  FILES_TOO_LARGE: "文件超过限制：在线文本编辑 2 MiB，单文件上传 50 MiB。",
+  FILES_NOT_FILE: "此路径不是可操作的普通文件。",
+  FILES_NOT_DIRECTORY: "此路径不是文件夹。",
+  FILES_DIRECTORY_TOO_LARGE: "目录项目过多，请输入更具体的子目录。",
+
   WORKSPACE_MIGRATING: "项目正在迁移，请等待完成后再操作。",
   WORKSPACE_TARGET_EXISTS: "目标文件夹已存在或正在被其他迁移使用，请换一个文件夹名称。",
   WORKSPACE_INVALID_TARGET: "请选择平台内部存储之外的目录，或默认 workspaces 根目录。",

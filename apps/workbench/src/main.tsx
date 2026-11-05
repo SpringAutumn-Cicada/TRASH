@@ -1,3 +1,4 @@
+import { ProjectFilesPage } from "./project-files.js";
 import { ProjectWorkspaceDialog } from "./project-workspace.js";
 import { BackgroundDatasetTransfers } from "./background-dataset-upload.js";
 import { DataPage } from "./data.js";
@@ -20,7 +21,7 @@ import "./styles.css";
 import "./themes.css";
 import "./workspace.css";
 
-const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:NotebookText,data:Database,reproductions:FolderOpen,experiments:FlaskConical,autodl:FolderOpen,results:ChartColumn,paper:NotebookText,tasks:ListTodo,chat:MessagesSquare};
+const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:NotebookText,data:Database,reproductions:FolderOpen,experiments:FlaskConical,autodl:FolderOpen,results:ChartColumn,paper:NotebookText,files:FolderOpen,tasks:ListTodo,chat:MessagesSquare};
 
 type NavigateOptions={action?:string;focus?:string;status?:string};
 function rememberedPage(id:string):ProjectPage {
@@ -33,7 +34,7 @@ function ThemeControl() {
   useEffect(()=>{document.documentElement.dataset.theme=theme;writePreference("trash-theme",theme);},[theme]);
   return <label className="theme-control"><Palette size={15}/><span className="sr-only">界面主题</span><select aria-label="界面主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="default">默认主题</option><option value="blue">蓝色科技</option></select></label>;
 }
-function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projectId:string;page:Exclude<ProjectPage,"overview"|"literature"|"experiments"|"reproductions"|"autodl"|"chat"|"paper"|"data">;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
+function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projectId:string;page:Exclude<ProjectPage,"overview"|"literature"|"experiments"|"reproductions"|"autodl"|"chat"|"paper"|"data"|"files">;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
   const [sources,setSources]=useState<Source[]>();const [error,setError]=useState("");
   useEffect(()=>{let active=true;void api<{sources:Source[]}>(`/projects/${encodeURIComponent(projectId)}/sources`).then(data=>{if(active)setSources(data.sources);}).catch(cause=>{if(active)setError(uiError(cause,"无法读取项目文献。"));});return()=>{active=false;};},[projectId]);
   if(error)return <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>;
@@ -173,14 +174,14 @@ function App() {
       <main className="workspace-content">
         {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+":"+path}>
-          {page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"||page==="reproductions"||page==="autodl"?<ExperimentsPage projectId={project.project_id} reproductionOnly={page==="reproductions"} autoDlOnly={page==="autodl"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onResult={id=>goPage("results",{focus:id})}/>:page==="data"?<DataPage projectId={project.project_id} onNavigate={goPage} action={route.action} focusId={route.focusId} status={route.status}/>:page==="paper"?<section aria-label="论文"><h2>论文</h2></section>:page==="chat"?<ProjectChat projectId={project.project_id}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
+          {page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"||page==="reproductions"||page==="autodl"?<ExperimentsPage projectId={project.project_id} reproductionOnly={page==="reproductions"} autoDlOnly={page==="autodl"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onResult={id=>goPage("results",{focus:id})}/>:page==="data"?<DataPage projectId={project.project_id} onNavigate={goPage} action={route.action} focusId={route.focusId} status={route.status}/>:page==="files"?<ProjectFilesPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="paper"?<section aria-label="论文"><h2>论文</h2></section>:page==="chat"?<ProjectChat projectId={project.project_id}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
     <BackgroundDatasetTransfers/>
     {leaveDialog}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} initialProfileId={autoDlProfile} onClose={()=>setAutoDlOpen(false)}/>}
-    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} onClose={()=>setWorkspaceOpen(false)}/>}
+    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} onClose={()=>setWorkspaceOpen(false)} onBrowse={()=>{const proceed=()=>{setWorkspaceOpen(false);goPage("files");};if(canLeave(proceed))proceed();}}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;

@@ -1,3 +1,4 @@
+import { ProjectFiles } from "./project-files.js";
 import { directoryRepairBusy } from "./experiment/directory-repair.js";
 import { ProjectWorkspaces, workspaceError } from "./project-workspace.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./experiment/directories.js";
@@ -52,8 +53,8 @@ async function readBody(request: IncomingMessage, limit: number): Promise<Uint8A
   return result;
 }
 
-async function readJson<T>(request: IncomingMessage): Promise<T> {
-  const bytes = await readBody(request, MAX_JSON_BYTES);
+async function readJson<T>(request: IncomingMessage, limit = MAX_JSON_BYTES): Promise<T> {
+  const bytes = await readBody(request, limit);
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as T; }
   catch { throw Object.assign(new Error("INVALID_JSON"), { statusCode: 400 }); }
 }
@@ -118,7 +119,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, workspaces: ProjectWorkspaces): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, workspaces: ProjectWorkspaces, files: ProjectFiles): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if(url.pathname==="/api/v1/workspace/defaults" && method==="GET"){mkdirSync(join(store.root,"workspaces"),{recursive:true});sendJson(response,200,{defaultRoot:join(store.root,"workspaces")});return;}
@@ -159,6 +160,28 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const subpath = projectRoute[2] ?? "";
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(subpath==="files"||subpath.startsWith("files/")){
+      const path=url.searchParams.get("path")??"",hidden=url.searchParams.get("hidden")==="true";
+      try{
+        if(subpath==="files"&&method==="GET"){sendJson(response,200,files.list(projectId,path,hidden));return;}
+        if(subpath==="files/search"&&method==="GET"){sendJson(response,200,files.search(projectId,url.searchParams.get("q")??"",hidden));return;}
+        if(subpath==="files/preview"&&method==="GET"){sendJson(response,200,files.preview(projectId,path));return;}
+        if(subpath==="files/inspect"&&method==="GET"){sendJson(response,200,files.inspect(projectId,path));return;}
+        if(subpath==="files/content"&&method==="GET"){await files.stream(projectId,path,request,response,url.searchParams.get("download")==="true");return;}
+        if(subpath==="files/recycle"&&method==="GET"){sendJson(response,200,files.recycled(projectId));return;}
+        if(subpath==="files/upload"&&method==="POST"){const bytes=await readBody(request,MAX_UPLOAD_BYTES);if(workspaces.busy(projectId))throw Object.assign(new Error("WORKSPACE_MIGRATING"),{statusCode:409});sendJson(response,201,files.upload(projectId,path,bytes));return;}
+        const actions={save:files.save.bind(files),create:files.create.bind(files),move:files.move.bind(files),delete:files.recycle.bind(files),restore:files.restore.bind(files)};
+        const action=subpath.slice('files/'.length);
+        if(method==="POST"&&Object.hasOwn(actions,action)){
+          const body=await readJson(request,action==="save"?12*1024*1024+8192:MAX_JSON_BYTES);if(workspaces.busy(projectId))throw Object.assign(new Error("WORKSPACE_MIGRATING"),{statusCode:409});
+          sendJson(response,200,actions[action as keyof typeof actions](projectId,body));return;
+        }
+      }catch(error){
+        if((error as NodeJS.ErrnoException).code==='EEXIST')throw Object.assign(new Error('FILES_EXISTS'),{statusCode:409});
+        workspaceError(error);
+      }
+      sendJson(response,404,{error:'NOT_FOUND'});return;
+    }
     if(subpath==="workspace/migrate" && method==="POST"){
       const input=z.object({root:z.string(),name:z.string(),confirm:z.literal(true)}).strict().parse(await readJson(request));
       if((workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||directoryRepairBusy(store,projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:"PROJECT_HAS_ACTIVE_TASKS"});return;}
@@ -349,6 +372,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const experiments = new ExperimentService(store);
   const codeAgent = new CodeAgent(store, experiments);
   const analysis = new LiteratureAnalysis(store, knowledge, agent);
+  const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)));
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
     const origin = request.headers.origin;
@@ -375,7 +399,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     let tracked:string|undefined;
     try{tracked=match?decodeURIComponent(match[1]):undefined;}catch{sendJson(response,400,{error:"INVALID_REQUEST"});return;}
     if(tracked)workspaces.requests.set(tracked,(workspaces.requests.get(tracked)??0)+1);
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, workspaces).catch(onError).finally(()=>{
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, workspaces, files).catch(onError).finally(()=>{
       if(tracked){const count=(workspaces.requests.get(tracked)??1)-1;if(count)workspaces.requests.set(tracked,count);else workspaces.requests.delete(tracked);}
     });
   });

@@ -338,3 +338,5 @@ export class TrashStore {
     return rows.map((row) => ({ source_id: row.source_id, locator: JSON.parse(row.locator_json) as SourceLocator, text: row.content, rank: -row.score }));
   }
 }
+
+export { parseMarkdown as parseKnowledgeMarkdown } from "./knowledge-markdown.js";

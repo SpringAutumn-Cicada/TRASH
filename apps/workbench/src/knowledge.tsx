@@ -21,7 +21,7 @@ const cardTemplate=(source:Source)=>({source_id:source.source_id,title:source.ti
 const resultTemplate={schema_version:1,title:"实验运行",method:"",dataset:"",dataset_version:"",task:"",split:"",evaluation_protocol:"",config:{},environment:{},metrics:[],attachments:[],notes:""};
 const cardFields:Record<string,string>={question:"研究问题",method:"方法",contributions:"贡献",limitations:"局限",reported_results:"论文报告的结果",experimental_conditions:"实验条件",ideas:"可借鉴思路",relevance:"与项目关系",open_questions:"待确认问题"};
 const experimentFields:Record<string,string>={method:"方法",dataset:"数据集",dataset_version:"数据集版本",task:"任务",split:"数据划分",evaluation_protocol:"评价协议",description:"说明",notes:"备注"};
-function Markdown({body}:{body:string}) {
+export function Markdown({body}:{body:string}) {
   return <div className="wiki-preview">{body.split("\n").map((line,i)=>{
     if(line.startsWith("### "))return <h4 key={i}>{line.slice(4)}</h4>;
     if(line.startsWith("## "))return <h3 key={i}>{line.slice(3)}</h3>;
