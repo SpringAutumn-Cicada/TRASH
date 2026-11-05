@@ -1,3 +1,4 @@
+import { ProjectWorkspaceDialog } from "./project-workspace.js";
 import { BackgroundDatasetTransfers } from "./background-dataset-upload.js";
 import { DataPage } from "./data.js";
 import { AutoDlConnectionStatus } from "./autodl-connection-status.js";
@@ -71,6 +72,7 @@ function App() {
   const {path,navigate,register,canLeave,leaveDialog}=useWorkspaceNavigation();
   const route=parseProjectRoute(path);
   const [projects,setProjects]=useState<ResearchProject[]>([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [notice,setNotice]=useState("");
+  const [workspaceOpen,setWorkspaceOpen]=useState(false);
   const [autoDlOpen,setAutoDlOpen]=useState(false);
   const [autoDlProfile,setAutoDlProfile]=useState<string>();
   const [query,setQuery]=useState("");const [createOpen,setCreateOpen]=useState(false);const [deleteTarget,setDeleteTarget]=useState<ResearchProject>();
@@ -129,7 +131,7 @@ function App() {
     if(!deleteTarget)return;
     const remaining=projects.filter(item=>item.project_id!==deleteTarget.project_id);
     setProjects(remaining);setDeleteTarget(undefined);setProjectMenu(false);
-    setNotice(cleanupPending?"项目记录已删除，部分文件仍待清理，位于工作区 deleted-projects 目录。":"项目及本地资料已删除。");
+    setNotice(cleanupPending?"项目记录已删除，部分本地文件已保留，请核对原项目工作区及 deleted-projects 目录后手动清理。":"项目及本地资料已删除。");
     const recent=[...remaining].sort((a,b)=>Number(readPreference(`trash-project-visited:${b.project_id}`)??0)-Number(readPreference(`trash-project-visited:${a.project_id}`)??0))[0];
     navigate(recent?projectPath(recent.project_id,rememberedPage(recent.project_id)):"/",true,true);void refresh();
   };
@@ -166,7 +168,7 @@ function App() {
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
         <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{project?.research_question??"整理文献、记录思路，逐步推进研究。"}</p></div>
         {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>{setAutoDlProfile(undefined);setAutoDlOpen(true);}}><Server size={16}/><span>AutoDL 连接</span></button></div>}
-        {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
+        {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>{if(canLeave(()=>{setWorkspaceOpen(true);setProjectMenu(false);})){setWorkspaceOpen(true);setProjectMenu(false);}}}><FolderOpen size={15}/>本地工作区 / 迁移</button><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
       <main className="workspace-content">
         {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
@@ -178,6 +180,7 @@ function App() {
     <BackgroundDatasetTransfers/>
     {leaveDialog}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} initialProfileId={autoDlProfile} onClose={()=>setAutoDlOpen(false)}/>}
+    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} onClose={()=>setWorkspaceOpen(false)}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;

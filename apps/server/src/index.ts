@@ -1,5 +1,8 @@
+import { directoryRepairBusy } from "./experiment/directory-repair.js";
+import { ProjectWorkspaces, workspaceError } from "./project-workspace.js";
+import { browseDirectories, createDirectory, selectDirectory } from "./experiment/directories.js";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -115,9 +118,15 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, workspaces: ProjectWorkspaces): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
+  if(url.pathname==="/api/v1/workspace/defaults" && method==="GET"){mkdirSync(join(store.root,"workspaces"),{recursive:true});sendJson(response,200,{defaultRoot:join(store.root,"workspaces")});return;}
+  if(url.pathname==="/api/v1/workspace/repository/directories" && method==="GET"){sendJson(response,200,await browseDirectories(url.searchParams.get("path")??undefined));return;}
+  if(url.pathname==="/api/v1/workspace/repository/directories" && method==="POST"){sendJson(response,201,await createDirectory(await readJson(request)));return;}
+  if(url.pathname==="/api/v1/workspace/repository/directories/select" && method==="POST"){
+    const input=z.object({path:z.string(),initialize_git:z.literal(false)}).strict().parse(await readJson(request));sendJson(response,200,await selectDirectory(input));return;
+  }
   if (url.pathname === "/api/v1/health" && method === "GET") {
     sendJson(response, 200, { name: "trash", status: "ready", protocol_version: PROTOCOL_VERSION });
     return;
@@ -133,10 +142,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     sendJson(response, 201, { project: restoreKnowledge(store, value) }); return;
   }
   if (url.pathname === "/api/v1/projects" && method === "POST") {
-    const input = await readJson<{ title: string; research_question: string; module?: { id: string; version: string } }>(request);
+    const input = await readJson<{ title: string; research_question: string; module?: { id: string; version: string }; workspace?: {root?:string;name:string} }>(request);
     if (!input || typeof input.title !== "string" || typeof input.research_question !== "string") throw Object.assign(new Error("PROJECT_FIELDS_REQUIRED"), { statusCode: 400 });
-    z.object({ title:z.string().trim().min(1).max(120),research_question:z.string().trim().min(1).max(10000),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional() }).strict().parse(input);
+    z.object({ title:z.string().trim().min(1).max(120),research_question:z.string().trim().min(1).max(10000),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional(),workspace:z.object({root:z.string().min(1).optional(),name:z.string().min(1)}).strict().optional() }).strict().parse(input);
     const project = store.createProject({ title: input.title, research_question: input.research_question, module: input.module ?? { id: "apt-provenance", version: "0.1.0" } });
+    try{await workspaces.initialize(project.project_id,input.workspace?{...input.workspace,root:input.workspace.root??join(store.root,"workspaces")}:undefined);}
+    catch(error){store.db.prepare("DELETE FROM projects WHERE project_id=?").run(project.project_id);workspaceError(error);}
     sendJson(response, 201, { project });
     return;
   }
@@ -146,6 +157,18 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
+    if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(subpath==="workspace/open" && method==="POST"){sendJson(response,200,await workspaces.open(projectId));return;}
+    if(subpath==="workspace/migrate" && method==="POST"){
+      const input=z.object({root:z.string(),name:z.string(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+      if((workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||directoryRepairBusy(store,projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:"PROJECT_HAS_ACTIVE_TASKS"});return;}
+      try{sendJson(response,202,{migration:await workspaces.start(projectId,{root:input.root,name:input.name})});}catch(error){workspaceError(error);}return;
+    }
+    if(subpath==="workspace/cleanup" && method==="POST"){
+      const input=z.object({job_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+      sendJson(response,200,workspaces.cleanup(projectId,input.job_id));return;
+    }
     if (subpath === "literature-analysis" && method === "GET") { sendJson(response, 200, { analysis: analysis.status(projectId) }); return; }
     if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel") && method === "POST") {
       z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
@@ -322,6 +345,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const provider = options.provider ?? new OpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY });
   const staticRoot = options.staticRoot ?? resolve(fileURLToPath(new URL("../../workbench/dist/", import.meta.url)));
   const knowledge = new KnowledgeStore(store.db);
+  const workspaces = new ProjectWorkspaces(store, knowledge);
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
   const codeAgent = new CodeAgent(store, experiments);
@@ -348,11 +372,17 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
       } catch (error) { onError(error); }
       return;
     }
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis).catch(onError);
+    const match=pathname.match(/^\/api\/v1\/projects\/([^/]+)/);
+    let tracked:string|undefined;
+    try{tracked=match?decodeURIComponent(match[1]):undefined;}catch{sendJson(response,400,{error:"INVALID_REQUEST"});return;}
+    if(tracked)workspaces.requests.set(tracked,(workspaces.requests.get(tracked)??0)+1);
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, workspaces).catch(onError).finally(()=>{
+      if(tracked){const count=(workspaces.requests.get(tracked)??1)-1;if(count)workspaces.requests.set(tracked,count);else workspaces.requests.delete(tracked);}
+    });
   });
   // Streaming datasets can reach 5 GiB; retain a bounded receive deadline for slow uploads.
   server.requestTimeout = 2 * 60 * 60 * 1000;
-  server.on("close", () => { codeAgent.close(); experiments.close(); agent.close(); });
-  return { server, store, closeConnections: () => experiments.terminals.close() };
+  server.on("close", () => { workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
+  return { server, store, closeConnections: () => {workspaces.close();experiments.terminals.close();} };
 }
 

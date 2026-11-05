@@ -22,3 +22,5 @@
 .literature-workspace .literature-tools{border:0;padding:0;max-width:none}
 .literature-workspace .literature-module-content>[hidden]{display:none}
 .literature-workspace .search-section{margin-top:0;margin-bottom:24px}
+
+.workspace-path{display:block;overflow-wrap:anywhere;white-space:pre-wrap;margin:8px 0}.workspace-settings{max-height:85dvh;overflow:auto}.workspace-settings progress{width:100%}

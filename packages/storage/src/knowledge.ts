@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, lstatSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { changedMarkdown, parseMarkdown, publishKnowledge, recoverKnowledge, publishKnowledgeHistory } from "./knowledge-markdown.js";
 import { randomUUID } from "node:crypto";
 import { parseKnowledge, type KnowledgeKind, type KnowledgeVersion, type KnowledgeTaskInput } from "@trash/protocol";
 import type Database from "better-sqlite3";
@@ -5,23 +8,67 @@ import type Database from "better-sqlite3";
 const fail = (code: string, statusCode: number): never => { throw Object.assign(new Error(code), { statusCode }); };
 export interface KnowledgeTask { task_id: string; project_id: string; input: KnowledgeTaskInput; snapshot: unknown; fingerprint: string; status: string; created_at: string; output_id?: string; output_version?: number; error?: string; attempt_of?: string }
 export class KnowledgeStore {
+  private syncing = false;
   constructor(readonly db: Database.Database) {}
+  private workspace(projectId:string):string|undefined {
+    const file=(this.db.pragma('database_list') as {name:string;file:string}[]).find(row=>row.name==='main')?.file;
+    if(!file)return;
+    const root=join(dirname(file),'projects',projectId);
+    const marker=join(root,'project.yaml');
+    if(!existsSync(marker)){
+      try{if(lstatSync(root).isSymbolicLink())fail('KNOWLEDGE_FILE_MISSING',409);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      return;
+    }
+    if(!readFileSync(marker,'utf8').includes(JSON.stringify(projectId)))fail('KNOWLEDGE_FILE_CONFLICT',409);
+    return root;
+  }
+  private recoverProject(projectId:string):void {
+    if(this.db.inTransaction||this.syncing)return;
+    const root=this.workspace(projectId);if(!root)return;
+    const directory=join(root,'.trash','knowledge-pending');if(!existsSync(directory))return;
+    for(const name of readdirSync(directory)){
+      if(!/^knowledge_[A-Za-z0-9-]+\.json$/.test(name))continue;
+      const id=name.slice(0,-5);
+      const row=this.db.prepare('SELECT data FROM knowledge_versions WHERE project_id=? AND object_id=? ORDER BY version DESC LIMIT 1').get(projectId,id) as {data:string}|undefined;
+      recoverKnowledge(root,row?JSON.parse(row.data) as KnowledgeVersion:undefined,id);
+    }
+  }
+  private reconcile(record:KnowledgeVersion):KnowledgeVersion {
+    if(this.syncing||this.db.inTransaction||record.kind==='experiment-result')return record;
+    const root=this.workspace(record.project_id);if(!root)return record;
+    if(!this.db.inTransaction)recoverKnowledge(root,record,record.object_id);
+    const text=changedMarkdown(root,record);if(text===undefined)return record;
+    this.syncing=true;
+    try{return this.write(record.project_id,record.kind,{object_id:record.object_id,base_version:record.version,content:parseMarkdown(text,record)});}
+    catch(error){if(error&&typeof error==='object'&&'issues' in error)fail('KNOWLEDGE_FILE_INVALID',409);throw error;}
+    finally{this.syncing=false;}
+  }
+  private publish(record:KnowledgeVersion):void {
+    const root=this.workspace(record.project_id);if(root)publishKnowledge(root,record);
+  }
   touch(projectId: string): void {
     const at = new Date().toISOString();
     this.db.prepare("UPDATE projects SET updated_at=?, data=json_set(data,'$.updated_at',?) WHERE project_id=?").run(at, at, projectId);
   }
   get(projectId: string, kind: KnowledgeKind, id: string, version?: number): KnowledgeVersion | undefined {
+    this.recoverProject(projectId);
     const row = (version
       ? this.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=? AND kind=? AND object_id=? AND version=?").get(projectId, kind, id, version)
       : this.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=? AND kind=? AND object_id=? ORDER BY version DESC LIMIT 1").get(projectId, kind, id)) as { data: string } | undefined;
-    return row ? JSON.parse(row.data) as KnowledgeVersion : undefined;
+    const record=row ? JSON.parse(row.data) as KnowledgeVersion : undefined;
+    return record && !version ? this.reconcile(record) : record;
+  }
+  materializeHistory(projectId:string,records:KnowledgeVersion[]):void {
+    const root=this.workspace(projectId);if(root)for(const record of records)publishKnowledgeHistory(root,record);
   }
   history(projectId: string, kind: KnowledgeKind, id: string): KnowledgeVersion[] {
+    this.get(projectId,kind,id);
     return (this.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=? AND kind=? AND object_id=? ORDER BY version DESC").all(projectId, kind, id) as { data: string }[]).map(r => JSON.parse(r.data) as KnowledgeVersion);
   }
   list(projectId: string, kind: KnowledgeKind, filters: Record<string, string> = {}): KnowledgeVersion[] {
+    this.recoverProject(projectId);
     const rows = this.db.prepare(`SELECT v.data FROM knowledge_versions v WHERE v.project_id=? AND v.kind=? AND v.version=(SELECT MAX(h.version) FROM knowledge_versions h WHERE h.object_id=v.object_id)` ).all(projectId, kind) as { data: string }[];
-    return rows.map(r => JSON.parse(r.data) as KnowledgeVersion).filter(v => {
+    return rows.map(r => this.reconcile(JSON.parse(r.data) as KnowledgeVersion)).filter(v => {
       if (filters.status && v.status !== filters.status) return false;
       const c = { ...v.content } as unknown as Record<string, unknown>;
       if (kind === "literature-card") {
@@ -57,6 +104,10 @@ export class KnowledgeStore {
     }
   }
   write(projectId: string, kind: KnowledgeKind, input: { object_id?: string; base_version: number; content: unknown }, author: "user" | "agent" = "user"): KnowledgeVersion {
+    if(!this.syncing){
+      const current=input.object_id?this.get(projectId,kind,input.object_id):kind==='literature-card'?this.list(projectId,kind).find(record=>'source_id' in record.content && record.content.source_id===(input.content as {source_id?:string})?.source_id):undefined;
+      if(current && current.version!==input.base_version)fail('VERSION_CONFLICT',409);
+    }
     return this.db.transaction(() => {
       if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id=?").get(projectId)) fail("PROJECT_NOT_FOUND", 404);
       const content = parseKnowledge(kind, input.content);
@@ -92,16 +143,20 @@ export class KnowledgeStore {
         for (const metric of content.metrics) if (typeof metric !== "string") this.db.prepare("INSERT INTO knowledge_metrics VALUES (?,?,?,?,?,?,?)").run(id, record.version, metric.name, metric.value, metric.unit, metric.condition, projectId);
       }
       this.touch(projectId);
+      this.publish(record);
       return record;
     })();
   }
   review(projectId: string, kind: KnowledgeKind, id: string, version: number, decision: "accepted" | "rejected", comment: string): KnowledgeVersion {
+    const latest=this.get(projectId,kind,id);
     return this.db.transaction(() => {
       const record = this.get(projectId, kind, id, version) ?? fail("NOT_FOUND", 404);
       record.status = decision;
       this.db.prepare("UPDATE knowledge_versions SET data=? WHERE object_id=? AND version=?").run(JSON.stringify(record), id, version);
       this.db.prepare("INSERT INTO knowledge_reviews VALUES (?,?,?,?,?,?)").run(id, version, decision, comment, "user", new Date().toISOString());
       this.touch(projectId);
+      if(latest?.version===version)this.publish(record);
+      else {const root=this.workspace(projectId);if(root)publishKnowledgeHistory(root,record);}
       return record;
     })();
   }

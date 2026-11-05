@@ -1,5 +1,22 @@
 const API = "/api/v1";
 const errorMessages: Record<string, string> = {
+  WORKSPACE_MIGRATING: "项目正在迁移，请等待完成后再操作。",
+  WORKSPACE_TARGET_EXISTS: "目标文件夹已存在或正在被其他迁移使用，请换一个文件夹名称。",
+  WORKSPACE_INVALID_TARGET: "请选择平台内部存储之外的目录，或默认 workspaces 根目录。",
+  WORKSPACE_NESTED: "目标目录不能位于已有项目工作区内部，也不能包含已有工作区。",
+  WORKSPACE_NO_SPACE: "目标磁盘可用空间不足。",
+  WORKSPACE_SOURCE_CHANGED: "迁移期间源文件发生变化，已保留原工作区，请停止外部编辑后重试。",
+  WORKSPACE_PROJECT_MISMATCH: "目录中的项目标识不匹配，未修改绑定。",
+  WORKSPACE_RESERVED_SYMLINK: "工作区保留目录存在不支持的符号链接，请先检查目录结构。",
+  WORKSPACE_ORIGINALS_CONFLICT: "旧原文目录与新 originals 目录都有内容，请先整理后重试。",
+  WORKSPACE_OPEN_FAILED: "无法打开系统文件管理器，请复制当前路径手动打开。",
+  WORKSPACE_BACKUP_UNAVAILABLE: "当前备份不可清理，请刷新状态后重试。",
+  WORKSPACE_BACKUP_IN_USE: "旧目录仍被其他项目使用，不能清理。",
+  WORKSPACE_NOT_CONFIGURED: "项目目录尚不存在，请先设置并迁移工作区。",
+  KNOWLEDGE_FILE_INVALID: "本地卡片或 Wiki 文件格式无效，请保留元数据和卡片栏目标题。",
+  KNOWLEDGE_FILE_CONFLICT: "本地文件与平台版本冲突，已保留文件，请核对元数据及历史记录后处理。",
+  KNOWLEDGE_FILE_MISSING: "本地卡片或 Wiki 文件缺失，请从版本历史恢复文件后重试。",
+
   INVALID_JSON: "请求内容无法识别，请检查输入后重试。",
   INVALID_REQUEST: "请求无效，请检查输入后重试。",
   PROJECT_FIELDS_REQUIRED: "请填写项目名称和研究问题。",

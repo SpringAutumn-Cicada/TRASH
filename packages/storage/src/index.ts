@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { makeId, researchProjectSchema, sourceSchema, type Artifact, type EvidencePassage, type ResearchProject, type Source, type SourceLocator } from "@trash/protocol";
@@ -163,6 +163,7 @@ export class TrashStore {
     const directory = join(this.root, "projects", project.project_id);
     const quarantine = join(this.root, "deleted-projects", `${project.project_id}-${makeId("artifact")}`);
     const hasFiles = existsSync(directory);
+    const externalWorkspace = hasFiles && lstatSync(directory).isSymbolicLink();
     if (hasFiles) {
       mkdirSync(join(this.root, "deleted-projects"), { recursive: true });
       renameSync(directory, quarantine);
@@ -193,7 +194,7 @@ export class TrashStore {
       try { rmSync(quarantine, { recursive: true, force: true }); }
       catch { return { deleted: true, cleanup_pending: true }; }
     }
-    return { deleted: true, cleanup_pending: false };
+    return { deleted: true, cleanup_pending: externalWorkspace };
   }
 
   saveArtifact(projectId: string, name: string, mediaType: string, bytes: Uint8Array): Artifact {
@@ -255,6 +256,13 @@ export class TrashStore {
       }
     });
     transaction();
+    for(const source of sources){
+      const root=join(this.root,'projects',source.project_id);
+      if(existsSync(join(root,'project.yaml'))){
+        const directory=join(root,'literature','parsed');mkdirSync(directory,{recursive:true});
+        const path=join(directory,source.source_id+'.json');writeFileSync(path+'.tmp',JSON.stringify({source,segments:segmentsBySource.get(source.source_id)??[]},null,2));renameSync(path+'.tmp',path);
+      }
+    }
     const at = new Date().toISOString();
     for (const projectId of new Set(sources.map(source => source.project_id))) this.db.prepare("UPDATE projects SET updated_at=?,data=json_set(data,'$.updated_at',?) WHERE project_id=?").run(at,at,projectId);
   }

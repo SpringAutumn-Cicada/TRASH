@@ -11,6 +11,7 @@ import type { ExperimentService } from './service.js';
 import { automaticExperimentInputSchema, prepareAutomaticExperiment, saveExperimentBindings } from './automatic-experiment.js';
 export interface DirectoryRepair {phase?:'analyzing'|'syncing'|'weights'|'rechecking'|'done';id:string;input:z.infer<typeof automaticExperimentInputSchema>;status:'analyzing'|'checking'|'completed'|'blocked'|'cancelled';message:string;changes:string[];task?:EnvironmentAnalysisTask;report?:CodeEnvironmentReport;plan_index?:number;checks?:{dataset_name:string;path:string;errors:string[]}[];error?:string}
 const active=new Map<string,AbortController>();
+export const directoryRepairBusy=(store:{root:string},project:string)=>[...active.keys()].some(path=>path.startsWith(join(store.root,"projects",project,"directory-repairs")+sep));
 const file=(s:ExperimentService,p:string,id:string)=>{if(!/^env_[a-f0-9-]+$/.test(id))experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);return join(s.store.root,'projects',p,'directory-repairs',id+'.json');};
 function save(s:ExperimentService,p:string,value:DirectoryRepair){const path=file(s,p,value.id);mkdirSync(join(path,'..'),{recursive:true});writeFileSync(path+'.tmp',JSON.stringify(value),{mode:0o600});renameSync(path+'.tmp',path);}
 export function directoryRepair(s:ExperimentService,p:string,id:string):DirectoryRepair {

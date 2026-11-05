@@ -1,7 +1,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
@@ -115,8 +115,9 @@ export class CodeAgent {
       task.before = await status(); this.save(task);
       if (item.stop || this.closed) return;
       const chat = task.purpose === "project-chat";
+      const paperWorkspace=chat&&existsSync(join(task.path,"..","project.yaml"))?await realpath(join(task.path,"..")):undefined;
       const args = ["exec", "--sandbox", task.sandbox, "-c", 'approval_policy="never"', "-C", task.path, ...(task.model ? ["--model", task.model] : []),
-        ...(chat ? ["--skip-git-repo-check", "-c", 'sandbox_workspace_write.network_access=true', ...(task.repository_path ? ["--add-dir", task.repository_path] : [])] : ["--ephemeral"]),
+        ...(chat ? ["--skip-git-repo-check", "-c", 'sandbox_workspace_write.network_access=true', ...(task.repository_path ? ["--add-dir", task.repository_path] : []), ...(paperWorkspace ? ["--add-dir",paperWorkspace] : [])] : ["--ephemeral"]),
         ...(chat && task.session_id ? ["resume", "--json", task.session_id, "-"] : ["--json", "--color", "never", "-"])];
       const child = spawn(this.command, args, { cwd: task.path, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(chat ? { TRASH_PROJECT_TOOL_TOKEN: item.toolToken, TRASH_PROJECT_TOOL_URL: item.toolUrl } : {}) } }); item.child = child;
       let pending = ""; let reportedFailure = "";
