@@ -2,7 +2,8 @@ import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, readdirSync, mkdirSync, writeFileSync, renameSync, symlinkSync, rmSync, readlinkSync } from 'node:fs';
 import { mkdir, readdir, lstat, readlink, symlink, copyFile, realpath, statfs } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { release } from 'node:os';
 import { TrashStore, KnowledgeStore } from '@trash/storage';
 import { z } from 'zod';
 
@@ -237,12 +238,42 @@ export class ProjectWorkspaces {
   async open(id:string){
     const path=this.state(id).path;
     if(!existsSync(path))fail('WORKSPACE_NOT_CONFIGURED');
-    await new Promise<void>((resolve,reject)=>{
-      const child=spawn(process.platform==='darwin'?'open':'xdg-open',[path],{stdio:'ignore'});
-      const timer=setTimeout(()=>{child.kill('SIGTERM');reject(Object.assign(new Error('WORKSPACE_OPEN_FAILED'),{statusCode:422}));},5000);
-      child.once('error',()=>{clearTimeout(timer);reject(Object.assign(new Error('WORKSPACE_OPEN_FAILED'),{statusCode:422}));});
-      child.once('exit',code=>{clearTimeout(timer);if(code===0)resolve();else reject(Object.assign(new Error('WORKSPACE_OPEN_FAILED'),{statusCode:422}));});
-    });return {path};
+    const isWsl=process.platform==='linux'&&Boolean(process.env.WSL_DISTRO_NAME||process.env.WSL_INTEROP||/microsoft/i.test(release()));
+    let folder=path;
+    if(isWsl){
+      folder=await new Promise<string>((resolve,reject)=>{
+        execFile('wslpath',['-w',path],{timeout:5000,encoding:'utf8'},(error,stdout)=>{
+          if(error||!stdout.trim())reject(Object.assign(new Error('WORKSPACE_OPEN_FAILED'),{statusCode:422}));
+          else resolve(stdout.trim());
+        });
+      });
+    }
+    const explorer=isWsl||process.platform==='win32';
+    const commands=explorer?[{command:'explorer.exe',args:[folder]}]:process.platform==='darwin'?[{command:'open',args:['-a','Finder',path]}]:[
+      {command:'nautilus',args:[path]}, {command:'dolphin',args:[path]},
+      {command:'thunar',args:[path]}, {command:'pcmanfm',args:[path]}
+    ];
+    for(const [index,target] of commands.entries()){
+      try{
+        await new Promise<void>((resolve,reject)=>{
+          const child=spawn(target.command,target.args,{stdio:'ignore'});
+          // GUI file managers may stay resident; acknowledge dispatch without terminating the window.
+          const timer=setTimeout(()=>{child.unref();resolve();},1500);
+          child.once('error',error=>{clearTimeout(timer);reject(error);});
+          child.once('exit',code=>{
+            clearTimeout(timer);
+            // Explorer can return 1 after delegating to the existing Windows shell process.
+            if(code===0||(explorer&&code===1))resolve();
+            else reject(Object.assign(new Error('WORKSPACE_OPEN_FAILED'),{statusCode:422}));
+          });
+        });
+        return {path};
+      }catch(error){
+        if((error as NodeJS.ErrnoException).code==='ENOENT'&&index+1<commands.length)continue;
+        fail('WORKSPACE_OPEN_FAILED',422);
+      }
+    }
+    fail('WORKSPACE_OPEN_FAILED',422);
   }
   cleanup(id:string,jobId:string){
     const file=join(this.jobRoot(),jobId+'.json');
