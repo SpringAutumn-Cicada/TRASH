@@ -9,7 +9,6 @@ const errorMessages: Record<string, string> = {
   WORKSPACE_PROJECT_MISMATCH: "目录中的项目标识不匹配，未修改绑定。",
   WORKSPACE_RESERVED_SYMLINK: "工作区保留目录存在不支持的符号链接，请先检查目录结构。",
   WORKSPACE_ORIGINALS_CONFLICT: "旧原文目录与新 originals 目录都有内容，请先整理后重试。",
-  WORKSPACE_OPEN_FAILED: "无法打开系统文件管理器，请复制当前路径手动打开。",
   WORKSPACE_BACKUP_UNAVAILABLE: "当前备份不可清理，请刷新状态后重试。",
   WORKSPACE_BACKUP_IN_USE: "旧目录仍被其他项目使用，不能清理。",
   WORKSPACE_NOT_CONFIGURED: "项目目录尚不存在，请先设置并迁移工作区。",

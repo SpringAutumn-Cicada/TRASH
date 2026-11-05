@@ -159,7 +159,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const subpath = projectRoute[2] ?? "";
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
-    if(subpath==="workspace/open" && method==="POST"){sendJson(response,200,await workspaces.open(projectId));return;}
     if(subpath==="workspace/migrate" && method==="POST"){
       const input=z.object({root:z.string(),name:z.string(),confirm:z.literal(true)}).strict().parse(await readJson(request));
       if((workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||directoryRepairBusy(store,projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:"PROJECT_HAS_ACTIVE_TASKS"});return;}
