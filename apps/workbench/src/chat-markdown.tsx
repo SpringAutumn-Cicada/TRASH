@@ -1,0 +1,45 @@
+import React, { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+import { copyText } from './clipboard.js';
+
+function inline(text:string):React.ReactNode[]{
+  return text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^\s)]+\))/g).map((part,index)=>{
+    if(part.startsWith('`')&&part.endsWith('`'))return <code key={index}>{part.slice(1,-1)}</code>;
+    if(part.startsWith('**')&&part.endsWith('**'))return <strong key={index}>{part.slice(2,-2)}</strong>;
+    const link=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if(link&&/^(https?:\/\/|#)/i.test(link[2]))return <a key={index} href={link[2]} target={link[2].startsWith('#')?undefined:'_blank'} rel="noopener noreferrer">{link[1]}</a>;
+    return part;
+  });
+}
+function CodeBlock({language,body}:{language:string;body:string}){
+  const [copied,setCopied]=useState(false),[error,setError]=useState(false);
+  return <div className="chat-code-block"><header><span>{language||'代码'}</span><button type="button" onClick={()=>{void copyText(body).then(()=>{setCopied(true);setError(false);}).catch(()=>setError(true));}}>{copied?<Check size={13}/>:<Copy size={13}/>} {error?'复制失败，请手动选择':copied?'已复制':'复制代码'}</button></header><pre><code>{body}</code></pre></div>;
+}
+export function ChatMarkdown({text}:{text:string}){
+  const lines=text.replace(/\r\n/g,'\n').split('\n'),blocks:React.ReactNode[]=[];
+  for(let i=0;i<lines.length;){
+    const line=lines[i];
+    if(!line.trim()){i++;continue;}
+    const fence=line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if(fence){const language=fence[2].trim(),body:string[]=[];i++;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))body.push(lines[i++]);if(i<lines.length)i++;blocks.push(<CodeBlock key={blocks.length} language={language} body={body.join('\n')}/>);continue;}
+    const heading=line.match(/^(#{1,6})\s+(.+)$/);
+    if(heading){const Tag=(`h${Math.min(heading[1].length+1,6)}`) as 'h2'|'h3'|'h4'|'h5'|'h6';blocks.push(<Tag key={blocks.length}>{inline(heading[2])}</Tag>);i++;continue;}
+    if(/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)){blocks.push(<hr key={blocks.length}/>);i++;continue;}
+    if(line.startsWith('>')){const quote:string[]=[];while(i<lines.length&&lines[i].startsWith('>'))quote.push(lines[i++].replace(/^>\s?/,''));blocks.push(<blockquote key={blocks.length}>{inline(quote.join('\n'))}</blockquote>);continue;}
+    if(/^\s*[-*+]\s+/.test(line)||/^\s*\d+[.)]\s+/.test(line)){
+      const ordered=/^\s*\d+[.)]\s+/.test(line),items:string[]=[];
+      const pattern=ordered?/^\s*\d+[.)]\s+/:/^\s*[-*+]\s+/;
+      while(i<lines.length&&pattern.test(lines[i]))items.push(lines[i++].replace(pattern,''));
+      const Tag=ordered?'ol':'ul';blocks.push(<Tag key={blocks.length}>{items.map((item,index)=><li key={index}>{inline(item)}</li>)}</Tag>);continue;
+    }
+    if(line.includes('|')&&i+1<lines.length&&/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i+1])){
+      const cells=(value:string)=>value.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(cell=>cell.trim());
+      const headers=cells(line),rows:string[][]=[];i+=2;while(i<lines.length&&lines[i].includes('|')&&lines[i].trim())rows.push(cells(lines[i++]));
+      blocks.push(<div className="chat-table-scroll" key={blocks.length}><table><thead><tr>{headers.map((cell,index)=><th key={index}>{inline(cell)}</th>)}</tr></thead><tbody>{rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{inline(cell)}</td>)}</tr>)}</tbody></table></div>);continue;
+    }
+    const paragraph=[line];i++;
+    while(i<lines.length&&lines[i].trim()&&!/^(?:\s*`{3,}|\s*~{3,}|#{1,6}\s|>|\s*[-*+]\s|\s*\d+[.)]\s)/.test(lines[i])&&!(lines[i].includes('|')&&i+1<lines.length&&/^[\s|:-]+$/.test(lines[i+1])))paragraph.push(lines[i++]);
+    blocks.push(<p key={blocks.length}>{inline(paragraph.join('\n'))}</p>);
+  }
+  return <div className="chat-markdown">{blocks}</div>;
+}
