@@ -17,9 +17,11 @@ export function ProjectChat({projectId}:{projectId:string}){
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
   const [turns,setTurns]=useState<Turn[]>([]),[conversation,setConversation]=useState(''),[draft,setDraft]=useState('');
   const [model,setModel]=useState(''),[sandbox,setSandbox]=useState('workspace-write'),[authorized,setAuthorized]=useState(false);
+  const [authorizationNeeded,setAuthorizationNeeded]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true),[connected,setConnected]=useState(true),[query,setQuery]=useState(''),[history,setHistory]=useState(true),[options,setOptions]=useState(false),[indexOpen,setIndexOpen]=useState(false),[away,setAway]=useState(false),[unread,setUnread]=useState(false),[copied,setCopied]=useState('');
   const [logs,setLogs]=useState<Record<string,string>>({}),[openLogs,setOpenLogs]=useState<Record<string,boolean>>({});
   const initial=useRef(false),messagesRef=useRef<HTMLDivElement>(null),input=useRef<HTMLTextAreaElement>(null),follow=useRef(true),alive=useRef(true),acting=useRef(false),current=useRef('');
+  const authorizationInput=useRef<HTMLInputElement>(null),grants=useRef<Record<string,{model:string;sandbox:string}>>({});
   const drafts=useRef<Record<string,string>>({});
   const clearDirty=useUnsavedChanges(Boolean(draft)||Object.values(drafts.current).some(Boolean));
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
@@ -56,8 +58,8 @@ export function ProjectChat({projectId}:{projectId:string}){
   const choose=(session?:Session)=>{
     if(acting.current)return;initial.current=true;
     drafts.current[current.current]=draft;
-    const next=session?.id??'';current.current=next;setConversation(next);setDraft(drafts.current[next]??'');setAuthorized(false);setOpenLogs({});setError('');setIndexOpen(false);
-    if(session){setSandbox(session.latest.sandbox);setModel(session.latest.model);}
+    const next=session?.id??'';current.current=next;setConversation(next);setDraft(drafts.current[next]??'');const grant=grants.current[next];setAuthorized(Boolean(session&&grant&&grant.model===session.latest.model&&grant.sandbox===session.latest.sandbox));setAuthorizationNeeded(false);setOpenLogs({});setError('');setIndexOpen(false);
+    if(session){setSandbox(session.latest.sandbox);setModel(session.latest.model);}else delete grants.current[''];
     input.current?.focus();
   };
   const act=async(action:()=>Promise<void>)=>{
@@ -65,12 +67,13 @@ export function ProjectChat({projectId}:{projectId:string}){
     try{await action();}catch(cause){if(alive.current)setError(cause instanceof Error?cause.message:'操作失败。');}finally{acting.current=false;if(alive.current)setBusy(false);}
   };
   const send=async(event:React.FormEvent)=>{
-    event.preventDefault();if(!draft.trim()||!authorized||active||acting.current)return;
+    event.preventDefault();if(!draft.trim()||active||acting.current||loading)return;
+    if(!authorized){setAuthorizationNeeded(true);authorizationInput.current?.focus();return;}
     const instructions=draft;
     await act(async()=>{
       const data=await call<{task:Turn}>('/chat/tasks',{instructions,model,sandbox,confirm:true,timeout_seconds:1800,...(conversation?{conversation_id:conversation}:{})});
       if(!alive.current)return;
-      drafts.current[current.current]='';drafts.current[data.task.conversation_id]='';current.current=data.task.conversation_id;
+      drafts.current[current.current]='';drafts.current[data.task.conversation_id]='';delete grants.current[''];grants.current[data.task.conversation_id]={model,sandbox};current.current=data.task.conversation_id;setAuthorizationNeeded(false);
       setConversation(data.task.conversation_id);setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);setDraft('');if(!Object.values(drafts.current).some(Boolean))clearDirty();follow.current=true;setIndexOpen(false);input.current?.focus();
     });
   };
@@ -92,9 +95,10 @@ export function ProjectChat({projectId}:{projectId:string}){
         </div>{away&&<button type="button" className="chat-jump-bottom" onClick={()=>scrollBottom(true)}><ArrowDown size={14}/>{unread?'有新进展 · 回到最新':'回到最新消息'}</button>}</div>
         {error&&<div className="chat-notice"><ErrorNotice>{error}</ErrorNotice><button type="button" className="icon-button" aria-label="关闭对话错误提示" onClick={()=>setError('')}><X size={13}/></button></div>}
         {active&&active.conversation_id!==conversation&&<div className="chat-other-active">另一个对话正在处理消息。<button type="button" className="text-button" onClick={()=>choose(sessions.find(item=>item.id===active.conversation_id))}>前往该对话</button></div>}
-        <form className="chat-composer" onSubmit={event=>void send(event)}><div className="chat-input-shell"><textarea ref={input} aria-label="发送给项目 Agent 的消息" required value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><button type="button" className={`chat-options-toggle ${options?'active':''}`} aria-expanded={options} onClick={()=>setOptions(!options)}><Settings2 size={14}/>{model||'本机默认模型'}<ChevronDown size={12}/></button><span className="chat-permission-label">{sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':'项目读写'}</span><span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span>{active?<button type="button" className="chat-stop-button" disabled={busy||active.status==='cancelling'} onClick={()=>void act(async()=>{await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={13}/>{active.status==='cancelling'?'正在停止':active.conversation_id!==conversation?'停止另一对话':'停止生成'}</button>:<button className="chat-send-button" aria-label="发送消息" disabled={busy||!authorized||!draft.trim()||loading}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>发送</span></button>}</div></div>
-          {options&&<div className="chat-options-panel"><div className="chat-settings"><label>模型<input value={model} maxLength={200} disabled={busy||Boolean(active)} placeholder="沿用本机配置" onChange={event=>{setModel(event.target.value);setAuthorized(false);}}/></label><label>对话权限<select value={sandbox} disabled={busy||Boolean(active)} onChange={event=>{setSandbox(event.target.value);setAuthorized(false);}}><option value="read-only">只读交流</option><option value="workspace-write">项目资料与代码读写</option><option value="danger-full-access">完整本机权限</option></select></label></div><p>项目读写模式可调用平台工具与网络。完整本机权限还可操作项目外文件。</p></div>}
-          <div className="chat-composer-footer"><label className="chat-authorization"><input type="checkbox" checked={authorized} disabled={busy} onChange={event=>setAuthorized(event.target.checked)}/><span>允许本次会话按所选权限处理项目{sandbox==='danger-full-access'?'及本机其他文件':''}</span></label><small>Ctrl / ⌘ + Enter 发送 · 调用本机账户</small></div>
+        <form className="chat-composer" onSubmit={event=>void send(event)}><div className="chat-input-shell"><textarea ref={input} aria-label="发送给项目 Agent 的消息" required value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><button type="button" className={`chat-options-toggle ${options?'active':''}`} aria-expanded={options} onClick={()=>setOptions(!options)}><Settings2 size={14}/>{model||'本机默认模型'}<ChevronDown size={12}/></button><span className="chat-permission-label">{sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':'项目读写'}</span><span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span>{active?<button type="button" className="chat-stop-button" disabled={busy||active.status==='cancelling'} onClick={()=>void act(async()=>{await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={13}/>{active.status==='cancelling'?'正在停止':active.conversation_id!==conversation?'停止另一对话':'停止生成'}</button>:<button className="chat-send-button" aria-label="发送消息" disabled={busy||!draft.trim()||loading} aria-describedby={!authorized?"chat-authorization-hint":undefined}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>发送</span></button>}</div></div>
+          {options&&<div className="chat-options-panel"><div className="chat-settings"><label>模型<input value={model} maxLength={200} disabled={busy||Boolean(active)} placeholder="沿用本机配置" onChange={event=>{setModel(event.target.value);setAuthorized(false);delete grants.current[current.current];setAuthorizationNeeded(false);}}/></label><label>对话权限<select value={sandbox} disabled={busy||Boolean(active)} onChange={event=>{setSandbox(event.target.value);setAuthorized(false);delete grants.current[current.current];setAuthorizationNeeded(false);}}><option value="read-only">只读交流</option><option value="workspace-write">项目资料与代码读写</option><option value="danger-full-access">完整本机权限</option></select></label></div><p>项目读写模式可调用平台工具与网络。完整本机权限还可操作项目外文件。</p></div>}
+          <div className="chat-composer-footer"><label className={`chat-authorization ${authorizationNeeded?'needs-authorization':''}`}><input ref={authorizationInput} aria-label="允许当前对话按所选权限操作" aria-describedby={!authorized?"chat-authorization-hint":undefined} type="checkbox" checked={authorized} disabled={busy} onChange={event=>{setAuthorized(event.target.checked);setAuthorizationNeeded(false);if(event.target.checked)grants.current[current.current]={model,sandbox};else delete grants.current[current.current];}}/><span>允许本次会话按所选权限处理项目{sandbox==='danger-full-access'?'及本机其他文件':''}</span></label><small>Ctrl / ⌘ + Enter 发送 · 调用本机账户</small></div>
+          {!authorized&&<p id="chat-authorization-hint" className={`chat-authorization-hint ${authorizationNeeded?'required':''}`} role={authorizationNeeded?'alert':undefined}>{authorizationNeeded?'消息尚未发送。请先勾选上方授权，再点击发送；输入内容已保留。':'首次发送前请勾选上方授权；切换模型或权限后需要重新确认。'}</p>}
         </form>
       </div>
     </div>

@@ -162,3 +162,8 @@
 .chat-messages{scroll-behavior:auto}
 }
 
+
+.chat-authorization-hint{font-size:10px;line-height:1.8;margin:6px 0 0;color:var(--muted)}
+.chat-authorization-hint.required{color:#a5513a}
+.chat-authorization.needs-authorization{color:#a5513a}
+.chat-authorization input:focus-visible{outline:2px solid var(--green);outline-offset:3px}
