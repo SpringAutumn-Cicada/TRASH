@@ -256,3 +256,15 @@
 .chat-tool-event summary small{margin-left:auto;color:var(--muted);font-size:10px}
 .chat-tool-event pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;padding:13px 15px;margin:0;border-top:1px solid var(--chat-line);font:11px/1.8 ui-monospace,monospace}
 .chat-output-writing{font-size:11px;color:var(--muted)}
+
+.chat-layout.chat-custom-height{height:auto;min-height:0;max-height:none}
+.chat-custom-height .chat-main{min-height:0}
+.chat-custom-height .chat-transcript-wrap{flex:none;height:var(--chat-message-height);min-height:240px}
+.chat-height-controls{display:flex;align-items:center;flex:none;gap:8px;min-height:25px;background:var(--chat-paper);border-top:1px solid var(--chat-line);padding:0 15px}
+.chat-height-grip{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-height:25px;color:var(--muted);font-size:10px;cursor:ns-resize;touch-action:none;user-select:none;outline-offset:-2px}
+.chat-height-grip:hover,.chat-height-grip:focus-visible{color:var(--green);background:var(--chat-canvas)}
+.chat-height-grip:focus-visible{outline:2px solid var(--green)}
+.chat-height-grip small{font-size:9px;font-variant-numeric:tabular-nums}
+.chat-height-reset{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--muted);font-size:10px;cursor:pointer;padding:4px}
+.chat-custom-height .chat-conversations{max-height:none}
+@media(max-width:800px){.chat-custom-height .chat-conversations{max-height:220px}.chat-height-controls{padding:0 10px}}
