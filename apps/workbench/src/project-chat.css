@@ -291,7 +291,7 @@
 /* Keep focus on the composer shell; textarea outlines otherwise cross attachment cards. */
 .project-chat .chat-input-shell textarea:focus,
 .project-chat .chat-input-shell textarea:focus-visible{outline:none;box-shadow:none;border:0}
-.project-chat .chat-input-shell:focus-within{border-width:1px;border-color:color-mix(in srgb,var(--green) 55%,var(--chat-line));box-shadow:none}
+.project-chat .chat-input-shell:focus-within{border-width:1px;border-color:color-mix(in srgb,var(--green) 55%,var(--chat-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 8%,transparent)}
 .project-chat .chat-input-shell>.chat-attachments{padding:12px 13px;border-bottom:1px solid var(--chat-line)}
 .project-chat .chat-input-shell>.chat-input-tools{border-top:1px solid var(--chat-line)}
 .project-chat .chat-input-shell.chat-drop-active{border-width:1px}
