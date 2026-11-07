@@ -217,9 +217,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const name=z.string().min(1).max(255).parse(url.searchParams.get('name'));
       sendJson(response,201,{attachment:uploadChatAttachment(store,projectId,name,bytes)});return;
     }
-    const attachmentRoute=subpath.match(/^chat\/attachments\/(artifact_[A-Za-z0-9-]+)$/);
-    if(attachmentRoute&&method==='GET'){
-      const [attachment]=resolveChatAttachments(store,projectId,[attachmentRoute[1]]);
+    const chatAttachmentRoute=subpath.match(/^chat\/attachments\/(artifact_[A-Za-z0-9-]+)$/);
+    if(chatAttachmentRoute&&method==='GET'){
+      const [attachment]=resolveChatAttachments(store,projectId,[chatAttachmentRoute[1]]);
       const bytes=store.readArtifact(projectId,attachment.id)!;
       response.writeHead(200,{'content-type':attachment.mime,'content-length':bytes.length,'content-disposition':`${attachment.image?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(bytes);return;
     }

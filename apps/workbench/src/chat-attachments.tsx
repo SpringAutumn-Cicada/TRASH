@@ -15,9 +15,16 @@ export function useChatAttachments(base:string,conversation:string,onError:(mess
     locked.current=true;setUploading(true);let added=0;
     try{for(const file of files){
       const response=await fetch(base+`/chat/attachments?name=${encodeURIComponent(file.name||'pasted-image.png')}`,{method:'POST',body:file});
-      const data=await response.json();if(!response.ok)throw new Error(data.error==='CHAT_IMAGE_UNSUPPORTED'?'图片仅支持 PNG、JPEG、WebP，请转换格式后上传。':'附件上传失败，请检查文件或稍后重试。');
-      if(alive.current)setDrafts(old=>({...old,[conversation]:[...(old[conversation]??[]),data.attachment as ChatAttachment]}));added++;
-    }}catch(cause){if(alive.current)onError(`${cause instanceof Error?cause.message:'附件上传失败。'}${added?` 已保留 ${added} 个上传成功的附件。`:''}`);}
+      let data:{error?:string;attachment?:ChatAttachment};
+      try{data=await response.json();}catch{throw new Error(`附件接口返回异常（HTTP ${response.status}），请确认后端已更新并重启。`);}
+      if(!response.ok){
+        const messages:Record<string,string>={NOT_FOUND:'附件上传接口尚未加载，请在平台点击重启，再重新上传。',CHAT_IMAGE_UNSUPPORTED:'图片仅支持 PNG、JPEG、WebP，请转换格式后上传。',CHAT_ATTACHMENT_SIZE:'附件为空或超过单文件 20 MiB 限制。',REQUEST_TOO_LARGE:'附件超过单文件 20 MiB 限制。',WORKSPACE_MIGRATING:'项目工作区正在迁移，请完成后再上传。',PROJECT_NOT_FOUND:'项目不存在或已删除，请刷新项目。',INVALID_REQUEST:'附件名称或请求无效，请检查文件名。',INTERNAL_ERROR:'附件保存失败，请检查工作区磁盘空间及写入权限。'};
+        throw new Error(messages[data.error??'']??`附件上传失败（HTTP ${response.status}，${data.error??'未知错误'}）。`);
+      }
+      if(!data.attachment)throw new Error('附件接口未返回有效记录，请更新并重启后端。');
+      const attachment=data.attachment;
+      if(alive.current)setDrafts(old=>({...old,[conversation]:[...(old[conversation]??[]),attachment]}));added++;
+    }}catch(cause){if(alive.current)onError(`${cause instanceof TypeError?'无法连接附件接口，请确认本分支后端服务已启动。':cause instanceof Error?cause.message:'附件上传失败。'}${added?` 已保留 ${added} 个上传成功的附件。`:''}`);}
     finally{locked.current=false;if(alive.current)setUploading(false);}
   };
   return {entries,uploading,dragging,setDragging,upload,hasDrafts:Object.values(drafts).some(list=>list.length>0),remove:(id:string)=>setDrafts(old=>({...old,[conversation]:(old[conversation]??[]).filter(item=>item.id!==id)})),clear:()=>setDrafts(old=>({...old,[conversation]:[]})),
