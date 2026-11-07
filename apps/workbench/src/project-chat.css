@@ -268,3 +268,22 @@
 .chat-height-reset{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--muted);font-size:10px;cursor:pointer;padding:4px}
 .chat-custom-height .chat-conversations{max-height:none}
 @media(max-width:800px){.chat-custom-height .chat-conversations{max-height:220px}.chat-height-controls{padding:0 10px}}
+
+.chat-attachment-icon{display:grid;place-items:center;width:27px;height:27px;border:0;border-radius:7px;background:none;color:var(--muted);cursor:pointer;flex:none;padding:0}
+.chat-attachment-icon:hover{background:var(--chat-canvas);color:var(--green)}
+.chat-attachment-icon:disabled{opacity:.4;cursor:not-allowed}
+.chat-attachments{display:flex;flex-wrap:wrap;gap:9px;padding:12px 13px 0}
+.chat-user .chat-attachments{padding:12px 0 0}
+.chat-attachment{position:relative;max-width:240px;border:1px solid var(--chat-line);border-radius:10px;background:var(--chat-paper);overflow:hidden}
+.chat-attachment>a{display:flex;align-items:center;gap:9px;padding:10px 25px 10px 11px;text-decoration:none;color:inherit;min-width:0}
+.chat-attachment a>svg{color:var(--green);flex:none}
+.chat-attachment a>span{display:flex;flex-direction:column;gap:4px;min-width:0}
+.chat-attachment strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.chat-attachment small{font-size:10px;color:var(--muted)}
+.chat-attachment img{display:block;width:66px;height:57px;object-fit:cover;border-radius:5px}
+.chat-attachment>button{position:absolute;right:3px;top:3px;display:grid;place-items:center;width:19px;height:19px;border:0;border-radius:50%;background:var(--chat-canvas);color:var(--muted);cursor:pointer}
+.chat-attachment-uploading{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);padding:10px}
+.chat-input-shell{position:relative}
+.chat-input-shell.chat-drop-active{border:2px dashed var(--green);background:var(--chat-canvas)}
+.chat-drop-label{padding:12px;text-align:center;font-size:12px;color:var(--green);pointer-events:none}
+@media(max-width:460px){.chat-input-tools{gap:4px}.chat-attachment{max-width:100%}.chat-options-toggle{max-width:35%}.chat-attachment-icon{width:25px}}

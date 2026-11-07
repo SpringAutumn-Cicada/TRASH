@@ -1,3 +1,4 @@
+import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
 import { directoryRepairBusy } from "./experiment/directory-repair.js";
 import { ProjectWorkspaces, workspaceError } from "./project-workspace.js";
@@ -209,6 +210,18 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const permission = codeAgent.authorizeTool(projectId, token);
       const result = projectChatTool(store, projectId, await readJson(request), permission.writable);
       codeAgent.recordTool(projectId, token, result); sendJson(response, 200, result); return;
+    }
+    if(subpath==='chat/attachments'&&method==='POST'){
+      const bytes=await readBody(request,20*1024*1024);
+      if(workspaces.busy(projectId))throw Object.assign(new Error('WORKSPACE_MIGRATING'),{statusCode:409});
+      const name=z.string().min(1).max(255).parse(url.searchParams.get('name'));
+      sendJson(response,201,{attachment:uploadChatAttachment(store,projectId,name,bytes)});return;
+    }
+    const attachmentRoute=subpath.match(/^chat\/attachments\/(artifact_[A-Za-z0-9-]+)$/);
+    if(attachmentRoute&&method==='GET'){
+      const [attachment]=resolveChatAttachments(store,projectId,[attachmentRoute[1]]);
+      const bytes=store.readArtifact(projectId,attachment.id)!;
+      response.writeHead(200,{'content-type':attachment.mime,'content-length':bytes.length,'content-disposition':`${attachment.image?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(bytes);return;
     }
     if (subpath === "chat/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose === "project-chat").map(task => ({ ...task, logs: "" })) }); return; }
     if (subpath === "chat/tasks" && method === "POST") {
