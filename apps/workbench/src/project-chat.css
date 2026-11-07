@@ -295,3 +295,8 @@
 .project-chat .chat-input-shell>.chat-attachments{padding:12px 13px;border-bottom:1px solid var(--chat-line)}
 .project-chat .chat-input-shell>.chat-input-tools{border-top:1px solid var(--chat-line)}
 .project-chat .chat-input-shell.chat-drop-active{border-width:1px}
+
+.chat-run-actions{display:flex;align-items:center;gap:6px}
+.chat-control-button{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer}
+.chat-control-button:hover:not(:disabled){background:var(--green-soft)}
+.chat-control-button:disabled{opacity:.35;cursor:not-allowed}

@@ -228,6 +228,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
       sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request), toolUrl) }); return;
     }
+    const chatAppend = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/append$/);
+    if (chatAppend && method === "POST") {
+      const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
+      sendJson(response, 201, { task: await codeAgent.append(projectId, chatAppend[1], await readJson(request), toolUrl) }); return;
+    }
     if (subpath === "code-agent/detect" && method === "GET") { sendJson(response, 200, await codeAgent.detect()); return; }
     if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose !== "project-chat").map(task => ({ ...task, logs: "", response: "" })) }); return; }
     if (subpath === "code-agent/tasks" && method === "POST") { sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request)) }); return; }
