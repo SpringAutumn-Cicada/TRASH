@@ -31,7 +31,10 @@ export function ProjectChat({projectId}:{projectId:string}){
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   const call=async<T,>(path:string,body?:unknown):Promise<T>=>{
     const response=await fetch(base+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-    const data=await response.json();if(!response.ok)throw new Error(errors[data.error]??'对话操作失败，请检查本机 Agent 配置或查看过程日志。');return data as T;
+    const appendRequest=/^\/chat\/tasks\/[^/]+\/append$/.test(path);
+    if(appendRequest&&response.status===404)throw new Error('追加接口尚未加载，或原任务已经结束。请先刷新对话状态；若仍在运行，请保存未发送内容，待任务结束或手动停止后，点击本分支重启按钮加载新接口。');
+    const data=await response.json().catch(()=>{throw new Error('服务返回了非 JSON 响应，请检查本分支服务是否正常运行。');});
+    if(!response.ok)throw new Error(errors[data.error]??`对话请求失败（HTTP ${response.status}${typeof data.error==='string'?`，${data.error}`:''}），请保留输入并查看服务日志。`);return data as T;
   };
   const refresh=async()=>{const data=await call<{tasks:Turn[]}>('/chat/tasks');if(alive.current){setTurns(data.tasks);setConnected(true);}return data.tasks;};
   useEffect(()=>{
