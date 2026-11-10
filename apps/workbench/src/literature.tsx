@@ -2,11 +2,12 @@ import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
-import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Trash2, X } from "lucide-react";
+import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
-import { useUnsavedChanges } from "./navigation.js";
+import { projectPath, useUnsavedChanges } from "./navigation.js";
+interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;task_id?:string}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -56,6 +57,20 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [deleting, setDeleting] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<Source>();
   const [deleteError, setDeleteError] = useState("");
+
+  const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
+  const [submitting,setSubmitting]=useState<string[]>([]);
+  const submissionLock=useRef(new Set<string>());
+  useEffect(()=>{let active=true;const load=async()=>{try{const result=await api<SourceAnalysisState[]>(`/projects/${encodeURIComponent(projectId)}/source-analyses`);if(active)setAnalyses(result);}catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}};void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer);};},[projectId]);
+  const analyzeSource=async(source:Source)=>{
+    if(submissionLock.current.has(source.source_id))return;
+    const previous=analyses.find(item=>item.source_id===source.source_id);
+    if(previous?.hasOutputs&&!window.confirm('重新生成这篇论文的详细卡片、关键信息卡片和单篇 Wiki？已有版本会保留在历史记录中。'))return;
+    submissionLock.current.add(source.source_id);setSubmitting([...submissionLock.current]);setError('');
+    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs)})});if(alive.current)setAnalyses(items=>[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);}
+    catch(cause){if(alive.current)setError(uiError(cause,'无法启动这篇论文的分析，请稍后重试。'));}
+    finally{submissionLock.current.delete(source.source_id);if(alive.current)setSubmitting([...submissionLock.current]);}
+  };
 
   const alive = useRef(true);
   const sourceRequest = useRef(0);
@@ -166,7 +181,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
             <form className="url-import" onSubmit={(event) => void importUrl(event)}><Link size={15} className="link-icon" /><input type="url" required value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="导入公开网页地址"/><button className="secondary-button" disabled={importing}>{importing ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}添加网页</button></form>
             {detail.sources.length === 0 ? <div className="source-empty"><FileUp size={21}/><span>尚未导入文献</span></div> : <div className="source-table">
               <div className="source-table-header"><span>标题 / 作者</span><span>年份</span><span>类型</span><span>状态</span></div>
-              {detail.sources.map((source) => <div className="source-row-container" key={source.source_id}><button className="source-row" onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button><button type="button" className="source-delete-button" title="删除参考文献" aria-label={`删除参考文献：${source.title}`} disabled={Boolean(deleting)} onClick={() => { setDeleteError(""); setDeleteTarget(source); }}>{deleting === source.source_id ? <LoaderCircle size={13} className="spin"/> : <Trash2 size={13}/>}</button></div>)}
+              {detail.sources.map((source) => <div className="source-row-container" key={source.source_id}><div className="source-row-main"><button className="source-row" onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button><button type="button" className="source-analyze-button" title="分析此篇文献：生成双卡片和单篇 Wiki" aria-label={`分析文献：${source.title}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.status??''))} onClick={()=>void analyzeSource(source)}>{submitting.includes(source.source_id)||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.status??''))?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}</button><button type="button" className="source-delete-button" title="删除参考文献" aria-label={`删除参考文献：${source.title}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.status??''))} onClick={() => { setDeleteError(""); setDeleteTarget(source); }}>{deleting === source.source_id ? <LoaderCircle size={13} className="spin"/> : <Trash2 size={13}/>}</button></div>{analyses.filter(item=>item.source_id===source.source_id&&item.status).map(item=><div className={`source-analysis-status status-${item.status}`} key={item.source_id}><span>{({queued:'等待分析',running:'正在阅读并生成双卡片及 Wiki',completed:'分析完成',failed:'分析失败',cancelled:'分析已停止',interrupted:'分析已中断'} as Record<string,string>)[item.status!]??item.status}{item.error?` · ${item.error}`:''}</span>{item.status==='completed'&&<><a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-detail`})}>详细卡片</a><a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-key`})}>关键信息</a><a href={projectPath(projectId,'wiki',{focus:`wiki-${source.source_id}`})}>单篇 Wiki</a></>}</div>)}</div>)}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />

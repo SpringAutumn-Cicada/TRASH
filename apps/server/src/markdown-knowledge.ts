@@ -54,9 +54,10 @@ export class MarkdownKnowledge {
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
   commit(project:string,files:{path:string;text:string;expected:string|null}[]){
     this.recover(project);
-    if(!files.length||files.length>2||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
+    if(!files.length||files.length>3||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(file=>{const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
     if(targets.length===2&&(!targets.every(t=>t.doc.kind==='literature-card')||targets[0].doc.source_id!==targets[1].doc.source_id||new Set(targets.map(t=>t.doc.card_type)).size!==2))fail('INVALID_REQUEST',400);
+    if(targets.length===3){const cards=targets.filter(t=>t.doc.kind==='literature-card'),wiki=targets.find(t=>t.doc.kind==='wiki-page');if(cards.length!==2||new Set(cards.map(t=>t.doc.card_type)).size!==2||!wiki||!wiki.doc.source_id||targets.some(t=>t.doc.source_id!==wiki.doc.source_id)||wiki.doc.id!==`wiki-${wiki.doc.source_id}`)fail('INVALID_REQUEST',400);}
     // All checks and writes are synchronous: no other server request can interleave this commit.
     const staged=targets.map(file=>{mkdirSync(dirname(file.target),{recursive:true});const temp=file.target+'.'+randomUUID()+'.tmp';writeFileSync(temp,file.text,{mode:0o600,flag:'wx'});return {...file,temp};});
     const journal=this.internal(project,'.trash/markdown-transaction.json');mkdirSync(dirname(journal),{recursive:true});

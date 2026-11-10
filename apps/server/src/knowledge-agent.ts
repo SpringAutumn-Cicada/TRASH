@@ -22,6 +22,9 @@ export class KnowledgeAgent implements TaskRunner {
   enqueue(projectId: string, input: KnowledgeTaskInput, retryOf?: string): KnowledgeTask[] {
     if (this.closed) requestError("SERVER_STOPPING",409);
     if (input.kind === "literature-card" && !input.source_ids.length) requestError("SOURCES_REQUIRED");
+    if (input.include_source_wiki && (input.kind !== 'literature-card' || input.source_ids.length !== 1 || input.dependencies.length || input.target_id)) requestError('INVALID_REQUEST',400);
+    const active = input.include_source_wiki && this.knowledge.tasks(projectId).find(t=>t.input.include_source_wiki && t.input.source_ids[0]===input.source_ids[0] && ['queued','running'].includes(t.status));
+    if(active)return [active];
     const inputs = input.kind === "literature-card" ? [...new Set(input.source_ids)].map(id=>({...input,source_ids:[id]})) : [input];
     const tasks = inputs.map(part => {
       const sourceIds=part.kind==='wiki-page'&&!part.source_ids.length?this.store.listSources(projectId).map(source=>source.source_id):part.source_ids;
@@ -30,7 +33,7 @@ export class KnowledgeAgent implements TaskRunner {
         return {source,segments:this.store.listSourceSegments(id)};
       });
       const markdown=new MarkdownKnowledge(this.store);
-      const documents=markdown.list(projectId).documents;
+      const documents=markdown.list(projectId).documents.filter(doc=>!part.include_source_wiki || doc.source_id===part.source_ids[0]);
       const dependencies=part.dependencies.map(d=>documents.find(doc=>doc.id===d.object_id) ?? this.knowledge.get(projectId,d.kind,d.object_id,d.version) ?? requestError("DEPENDENCY_NOT_FOUND",404));
       const previous = part.target_id ? documents.find(doc=>doc.id===part.target_id) : part.kind === "literature-card" ? documents.find(doc=>doc.source_id===part.source_ids[0]&&doc.card_type==='detail') : undefined;
       if (part.target_id && !previous) requestError("NOT_FOUND",404);
@@ -89,10 +92,12 @@ export class KnowledgeAgent implements TaskRunner {
       const source=task.input.source_ids[0];
       const id=task.input.kind==='literature-card'?`card-${source}`:snapshot.previous?.id??`wiki-${randomUUID()}`;
       const paths=task.input.kind==='literature-card'?[`literature/cards/${id}-detail.md`,`literature/cards/${id}-key.md`]:[`wiki/${id}.md`];
+      if(task.input.include_source_wiki)paths.push(`wiki/wiki-${source}.md`);
       const output=join(directory,'output');mkdirSync(output,{recursive:true});
       for(const doc of snapshot.documents??[]){const file=join(output,doc.path);mkdirSync(join(file,'..'),{recursive:true});writeFileSync(file,doc.text);}
       stageKnowledgeSkill(directory);
       let prompt=`读取 literature-skill/SKILL.md 和 input.json，严格使用 trash-literature-knowledge skill。模式：${task.input.kind}。直接生成 Markdown 文件到 output/ 下这些相对路径：${paths.join('、')}。frontmatter id 必须等于文件名去掉 .md，kind 为 ${task.input.kind}，卡片 source_id=${source??'不适用'}，两卡 card_type 分别为 detail/key。不输出正文 JSON。其他文件仅供阅读，不修改。保留已有用户信息。卡片必须一次完成两份，先详细后关键；Wiki 综合并拓展有来源的内容。用户要求：${task.input.instructions}。完成后回读文件并报告路径。`;
+      if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 应解释论文的问题、方法机制、实验结论、局限和有依据的拓展，关联本篇双卡片；明确区分原文结论和推断，不声称综合了其他论文，不读取其他论文。卡片仍为 literature-card。三份必须全部完成。`;
       writeFileSync(join(directory,'prompt.txt'),prompt);
       const cliVersion = await new Promise<string>((resolve,reject)=>execFile(this.cli.command,[...this.cli.prefix,"--version"],{timeout:10000,maxBuffer:65536},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
       writeFileSync(join(directory,"metadata.json"),JSON.stringify({adapter:"codex-cli",cli_version:cliVersion,prompt_version:3,skill:"trash-literature-knowledge",skill_hash:createHash("sha256").update(skillText()).digest("hex"),input_fingerprint:task.fingerprint,sandbox:"workspace-write"},null,2));
@@ -126,6 +131,7 @@ export class KnowledgeAgent implements TaskRunner {
         }
       }
       if(manifest.length){writeFileSync(join(directory,'pdf-reading.json'),JSON.stringify({status:'all-batches-noted',sources:manifest},null,2),{mode:0o600});prompt+=`\n原始 PDF 全页已分批提供视觉输入，各批笔记在 readings/。先读取全部笔记和 pdf-reading.json，再生成最终文件；笔记产生不等于每个图表已核验。保留未核实项，不仅依赖旧纯文字快照。每个重要证据使用带 source_id、hash、PDF页序的 pdf-view 链接。`;}
+      if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 应解释论文的问题、方法机制、实验结论、局限和有依据的拓展，关联本篇双卡片；明确区分原文结论和推断，不声称综合了其他论文，不读取其他论文。卡片仍为 literature-card。三份必须全部完成。`;
       writeFileSync(join(directory,'prompt.txt'),prompt);
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终卡片');
@@ -147,6 +153,7 @@ export class KnowledgeAgent implements TaskRunner {
         return {path,text,expected:before?.hash??null};
       });
       if(commits.every(file=>snapshot.documents?.find(doc=>doc.path===file.path)?.text===file.text))throw new Error('输出未更新；未把已有文件误报为本次生成');
+      if(task.input.include_source_wiki && commits.some(file=>markdown.parse(projectId,file.path,file.text).source_id!==source))throw new Error('生成文件来源与指定论文不一致');
       const records=markdown.commit(projectId,commits);
       task.status="completed";task.output_id=records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已保存待审：${records.map(record=>record.path).join('、')}`);
 
