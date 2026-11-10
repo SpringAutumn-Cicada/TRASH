@@ -1,3 +1,4 @@
+import { projectRuntime } from "./project-layout.js";
 import { MarkdownKnowledge, skillText, stageKnowledgeSkill } from "./markdown-knowledge.js";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -66,7 +67,7 @@ export class KnowledgeAgent implements TaskRunner {
     if(!task)return;
     // Reserve before filesystem work or process startup.
     task.status="running";this.knowledge.saveTask(task);this.reserved.add(projectId);
-    const directory=join(this.store.root,"projects",projectId,"tasks",task.task_id);
+    const directory=projectRuntime(this.store.root,projectId,'tasks',task.task_id);
     let child: ChildProcess | undefined;
     try {
       mkdirSync(directory,{recursive:true});

@@ -19,7 +19,7 @@ export function workspaceError(error:unknown):never {
 function fail(message:string,statusCode=409):never {
   throw Object.assign(new Error(message),{statusCode});
 }
-const directories=['literature/originals','literature/parsed','literature/cards','wiki','research','code','data','experiments','manuscript','exports','.trash'];
+const directories=['literature/originals','literature/parsed','literature/cards','wiki','code','data','experiments','manuscript','.trash'];
 const requestSchema=z.object({root:z.string().min(1).max(4096).refine(value=>isAbsolute(value)&&!value.includes('\0')),name:z.string().trim().min(1).max(120).refine(value=>value!=='.'&&value!=='..'&&!/[\\/]/.test(value)&&!Array.from(value).some(character=>character.charCodeAt(0)<32))}).strict();
 type Job={id:string;projectId:string;status:'copying'|'verifying'|'switching'|'completed'|'failed'|'interrupted';source:string;target:string;stage:string;backup?:string;files:number;bytes:number;totalFiles:number;totalBytes:number;externalLinks:string[];error?:string;createdAt:string};
 type Entry={path:string;size:number;link?:string;hash?:string};
@@ -113,7 +113,17 @@ export class ProjectWorkspaces {
     if(existsSync(marker)&&lstatSync(marker).isSymbolicLink())fail('WORKSPACE_RESERVED_SYMLINK');
     if(existsSync(marker)){
       const text=readFileSync(marker,'utf8');if(!text.includes(JSON.stringify(id)))fail('WORKSPACE_PROJECT_MISMATCH');
-    }else writeFileSync(marker,`format_version: 1\nproject_id: ${JSON.stringify(id)}\n`,{flag:'wx',mode:0o600});
+    }else writeFileSync(marker,`format_version: 2\nproject_id: ${JSON.stringify(id)}\n`,{flag:'wx',mode:0o600});
+    const readme=join(root,'README.md');
+    if(!existsSync(readme))writeFileSync(readme,`# 论文工作区
+
+文献 literature/、项目知识 wiki/、代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
+
+支持多个研究方向：wiki/directions/<方向ID>.md、code/directions/<方向ID>/、experiments/<方向ID>/<方案ID>/runs/<运行ID>/。
+
+在文件模块使用“研究目录”创建方向、实验方案和运行批次；目录创建不代表已执行实验。
+平台运行记录保存在 .trash/runtime/；旧项目内部路径继续兼容，不自动移动。子目录按需创建，数据和公共代码使用引用避免重复复制。
+`,{flag:'wx',mode:0o600});
     // Keep legacy artifact references valid while originals live in the public layout.
     const raw=join(root,'raw'),originals=join(root,'literature','originals');
     if(existsSync(raw)&&lstatSync(raw).isSymbolicLink()&&readlinkSync(raw)!=='literature/originals')fail('WORKSPACE_RESERVED_SYMLINK');

@@ -1,3 +1,4 @@
+import { createResearchFolder } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
@@ -162,6 +163,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const subpath = projectRoute[2] ?? "";
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(subpath==='workspace/research-folders'&&method==='POST'){
+      if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+      sendJson(response,201,createResearchFolder(store,projectId,await readJson(request)));return;
+    }
     if(subpath==="files"||subpath.startsWith("files/")){
       const path=url.searchParams.get("path")??"",hidden=url.searchParams.get("hidden")==="true";
       try{

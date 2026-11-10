@@ -1,5 +1,7 @@
 const API = "/api/v1";
 const errorMessages: Record<string, string> = {
+  DIRECTION_NOT_FOUND: "请先建立对应的研究方向，方向 ID 必须一致。",
+  SCHEME_NOT_FOUND: "请先在该方向下建立对应的实验方案。",
   FILES_WORKSPACE_MISSING: "项目目录尚不存在，请先在本地工作区中设置目录。",
   FILES_OUTSIDE_WORKSPACE: "文件路径超出当前项目工作区。",
   FILES_SYMLINK: "符号链接不支持直接操作，请在工作区中访问真实文件。",

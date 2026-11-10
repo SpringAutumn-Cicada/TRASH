@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -28,7 +29,7 @@ export class ExperimentFailureAnalysis {
   const update=(value:NonNullable<ExperimentRun['failure_analysis']>)=>{const current=this.service.data.run(project,id);if(current.failure_analysis?.status==='analyzing')this.service.data.saveRun({...current,failure_analysis:value});};
   const at=this.service.data.run(project,id).failure_analysis!.created_at;
   try{
-   const run=this.service.data.run(project,id),directory=join(this.service.store.root,'projects',project,'experiment-runs',id,'failure-analysis',randomUUID());mkdirSync(directory,{recursive:true});
+   const run=this.service.data.run(project,id),directory=projectRuntime(this.service.store.root,project,'experiment-runs',id,'failure-analysis',randomUUID());mkdirSync(directory,{recursive:true});
    const logs:Record<string,string>={};
    for(const stream of ['stdout','stderr']){try{const value=await this.service.logs(project,id,stream,0) as {text:string;offset:number};const tail=value.offset>64000?await this.service.logs(project,id,stream,value.offset-64000) as {text:string}:value;logs[stream]=redact(tail.text.slice(-64000));}catch{logs[stream]='远端日志暂不可读；不能假设错误原因。';}}
    const report=run.plan.content.report_id?this.service.environmentAnalysis.report(project,run.plan.content.reproduction_id!,run.plan.content.report_id).content:undefined;

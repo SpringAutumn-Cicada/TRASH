@@ -1,3 +1,4 @@
+import { projectRuntime } from "./project-layout.js";
 import { resolveChatAttachments, type ChatAttachment } from "./chat-attachments.js";
 import { readChatOutput, type ChatOutput } from "./chat-output.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -40,7 +41,7 @@ export class CodeAgent {
       if (task.status === "running" || task.status === "cancelling") { task.status = "interrupted"; task.error = "服务重启，旧任务状态未确认，请检查仓库与本机进程后再启动。"; this.save(task); }
     }
   }
-  private directory(project: string) { return join(this.store.root, "projects", project, "code-agent"); }
+  private directory(project: string) { return projectRuntime(this.store.root,project,'code-agent'); }
   private save(task: CodeTask) {
     const directory = this.directory(task.project_id); mkdirSync(directory, { recursive: true });
     const path = join(directory, `${task.task_id}.json`);
@@ -141,7 +142,8 @@ export class CodeAgent {
       task.before = await status(); this.save(task);
       if (item.stop || this.closed) return;
       const chat = task.purpose === "project-chat";
-      const paperWorkspace=chat&&existsSync(join(task.path,"..","project.yaml"))?await realpath(join(task.path,"..")):undefined;
+      const paperRoot=join(this.store.root,"projects",task.project_id);
+      const paperWorkspace=chat&&existsSync(join(paperRoot,"project.yaml"))?await realpath(paperRoot):undefined;
       const attachments=chat?resolveChatAttachments(this.store,task.project_id,input.attachments):[];
       const imageArgs=attachments.filter(file=>file.image).flatMap(file=>['--image',file.path]);
       const attachmentDirectories=[...new Set(attachments.map(file=>join(file.path,'..')))];

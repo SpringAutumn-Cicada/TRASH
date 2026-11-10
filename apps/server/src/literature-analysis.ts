@@ -1,3 +1,4 @@
+import { projectRuntime } from "./project-layout.js";
 import { markdownVersions } from "./markdown-knowledge.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ export class LiteratureAnalysis {
     }
     agent.onTaskSettled = project => this.advance(project);
   }
-  private path(project: string) { return join(this.store.root, "projects", project, "literature-analysis"); }
+  private path(project: string) { return projectRuntime(this.store.root,project,'literature-analysis'); }
   private save(value: Analysis) {
     value.updated_at = new Date().toISOString(); const path = this.path(value.project_id); mkdirSync(path, { recursive: true });
     const bytes = JSON.stringify(value);

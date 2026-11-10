@@ -1,3 +1,4 @@
+import { visibleEntry } from "./project-layout.js";
 import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -32,7 +33,7 @@ export class ProjectFiles {
   }
   private isProtected(path:string){
     const parts=path.split('/');
-    return !path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||parts[0]==='wiki'||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
+    return !path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
     const match=path.match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
@@ -60,7 +61,7 @@ export class ProjectFiles {
   }
   list(id:string,path:string,hidden:boolean){
     const directory=this.locate(id,path);if(!statSync(directory).isDirectory())fail('FILES_NOT_DIRECTORY',422);
-    const names=readdirSync(directory).filter(name=>hidden||!name.startsWith('.'));
+    const names=readdirSync(directory).filter(name=>visibleEntry(path,name,hidden));
     if(names.length>5000)fail('FILES_DIRECTORY_TOO_LARGE',422);
     const entries=names.map(name=>this.entry(id,path,name)).sort((a,b)=>Number(b.kind==='directory')-Number(a.kind==='directory')||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
     return {root:this.root(id),path,entries};
@@ -72,7 +73,7 @@ export class ProjectFiles {
       const path=queue.shift()!;
       let names:string[];try{names=readdirSync(this.locate(id,path));}catch{continue;}
       for(const name of names){
-        if(!hidden&&name.startsWith('.'))continue;
+        if(!visibleEntry(path,name,hidden))continue;
         visited++;if(visited>10000){truncated=true;break;}
         const entry=this.entry(id,path,name);
         if(name.toLowerCase().includes(query.toLowerCase()))entries.push(entry);

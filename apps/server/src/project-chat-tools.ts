@@ -1,3 +1,4 @@
+import { projectRuntime } from "./project-layout.js";
 import { MarkdownKnowledge, stageKnowledgeSkill, markdownVersions } from "./markdown-knowledge.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync } from "node:fs";
 import { join } from "node:path";
@@ -6,11 +7,11 @@ import { KnowledgeStore, experimentError, type TrashStore } from "@trash/storage
 import { knowledgeKindSchema, knowledgeWriteSchema } from "@trash/protocol";
 
 export function prepareChatWorkspace(store: TrashStore, projectId: string) {
-  const path = join(store.root, "projects", projectId, "agent-workspace"); mkdirSync(path, { recursive: true });
+  const path = projectRuntime(store.root,projectId,'agent-workspace'); mkdirSync(path, { recursive: true });
   const projectRoot=join(store.root,'projects',projectId);
   if(existsSync(join(projectRoot,'project.yaml'))){
     const drafts=join(path,'manuscripts');
-    if(!existsSync(drafts))symlinkSync('../manuscript',drafts,'dir');
+    if(!existsSync(drafts)){const draftRoot=join(projectRoot,'manuscript',...(readFileSync(join(projectRoot,'project.yaml'),'utf8').includes('format_version: 2')?['drafts']:[]));mkdirSync(draftRoot,{recursive:true});symlinkSync(draftRoot,drafts,'dir');}
   }
   const knowledge = new KnowledgeStore(store.db);
   writeFileSync(join(path, "project_snapshot.json"), JSON.stringify({ at: new Date().toISOString(), project: store.getProject(projectId), sources: store.listSources(projectId).slice(0, 200), cards: markdownVersions(store,projectId,"literature-card").slice(0, 100), wiki: markdownVersions(store,projectId,"wiki-page").slice(0, 100), results: knowledge.list(projectId, "experiment-result").slice(0, 100), note: "截取的本轮初始快照，完整最新内容请使用平台工具查询。" }), { mode: 0o600 });
@@ -49,7 +50,7 @@ export function projectChatTool(store: TrashStore, projectId: string, body: unkn
   const markdown=new MarkdownKnowledge(store);
   if(value.operation==='publish'){
     if(!writable)experimentError('AGENT_READ_ONLY',403);if(!value.files)experimentError('INVALID_REQUEST',400);
-    const files=value.files.map(file=>{markdown.locate(projectId,file.path);const draft=join(store.root,'projects',projectId,'agent-workspace','knowledge-draft',file.path);let current=join(store.root,'projects',projectId,'agent-workspace');for(const part of ['knowledge-draft',...file.path.split('/')]){current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())experimentError('KNOWLEDGE_PATH_INVALID',403);}if(lstatSync(draft).size>1024*1024)experimentError('KNOWLEDGE_FILE_INVALID',422);return {...file,text:readFileSync(draft,'utf8')};});
+    const files=value.files.map(file=>{markdown.locate(projectId,file.path);const draft=projectRuntime(store.root,projectId,'agent-workspace','knowledge-draft',file.path);let current=projectRuntime(store.root,projectId,'agent-workspace');for(const part of ['knowledge-draft',...file.path.split('/')]){current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())experimentError('KNOWLEDGE_PATH_INVALID',403);}if(lstatSync(draft).size>1024*1024)experimentError('KNOWLEDGE_FILE_INVALID',422);return {...file,text:readFileSync(draft,'utf8')};});
     if(files.some(file=>file.path.startsWith('literature/cards/'))&&files.length!==2)experimentError('CARD_PAIR_REQUIRED',400);
     return {records:markdown.commit(projectId,files)};
   }

@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 /* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -35,7 +36,7 @@ export class ReproductionService {
  acquire(project:string){if(this.pending.has(project))experimentError("REPRODUCTION_BUSY",409);this.pending.add(project);return ()=>this.pending.delete(project);}
  recordUpload(project:string,id:string,profile:string,value:{path:string;snapshot:ReproductionSnapshot}){const code=this.get(project,id);this.save({...code,uploads:[...(code.uploads??[]),{profile_id:profile,path:value.path,snapshot_id:value.snapshot.snapshot_id,sha256:value.snapshot.sha256,at:new Date().toISOString()}].slice(-50)});}
 
- private root(project:string){return join(this.store.root,"projects",project,"reproductions");}
+ private root(project:string){return projectRuntime(this.store.root,project,'reproductions');}
  private archiveName(name:string){
   if(!name||name==="."||name===".."||/[\\/\x00-\x1f\x7f]/.test(name)||!name.toLowerCase().endsWith(".zip")||Buffer.byteLength(name,"utf8")>255)experimentError("REPRODUCTION_ARCHIVE_NAME_INVALID",400);
   return name;
