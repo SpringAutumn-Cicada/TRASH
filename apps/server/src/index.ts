@@ -1,3 +1,4 @@
+import { PdfReading } from "./pdf-reading.js";
 import { createResearchFolder } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
@@ -12,7 +13,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { literatureSearchResultSchema, makeId, PROTOCOL_VERSION, sourceSchema, type LiteratureSearchResult, type Source } from "@trash/protocol";
-import { OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, type LiteratureSearchProvider, type ParsedSource } from "@trash/literature";
+import { pdfViewerAsset, OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, type LiteratureSearchProvider, type ParsedSource } from "@trash/literature";
 import { TrashStore, KnowledgeStore } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
@@ -113,7 +114,7 @@ async function serveStatic(staticRoot: string, requestPath: string, response: Se
 function jsonError(error: unknown): { status: number; code: string } {
   const statusCode = error && typeof error === "object" && "statusCode" in error ? Number((error as { statusCode: unknown }).statusCode) : 0;
   if (error instanceof ZodError) return { status: 400, code: "INVALID_REQUEST" };
-  if ([400, 403, 404, 409, 422].includes(statusCode)) return { status: statusCode, code: error instanceof Error ? error.message : "INVALID_REQUEST" };
+  if ([400, 403, 404, 409, 422, 503].includes(statusCode)) return { status: statusCode, code: error instanceof Error ? error.message : "INVALID_REQUEST" };
   if (statusCode === 413) return { status: 413, code: "REQUEST_TOO_LARGE" };
   if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") return { status: 404, code: error.message };
   if (error instanceof Error && ["UNSUPPORTED_FILE_TYPE", "URL_SCHEME_OR_CREDENTIALS_NOT_ALLOWED", "URL_HOST_NOT_PUBLIC", "WEBPAGE_NOT_HTML", "WEBPAGE_TOO_LARGE", "WEBPAGE_REDIRECT_LIMIT"].includes(error.message)) return { status: 422, code: error.message };
@@ -125,6 +126,7 @@ function jsonError(error: unknown): { status: number; code: string } {
 async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, workspaces: ProjectWorkspaces, files: ProjectFiles): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
+  if(url.pathname.startsWith('/api/v1/pdf-assets/')&&method==='GET'){try{const path=url.pathname.slice('/api/v1/pdf-assets/'.length);const bytes=await pdfViewerAsset(path);response.writeHead(200,{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':bytes.length,'cache-control':'public, max-age=86400'});response.end(bytes);}catch{sendJson(response,404,{error:'NOT_FOUND'});}return;}
   if(url.pathname==="/api/v1/workspace/defaults" && method==="GET"){mkdirSync(join(store.root,"workspaces"),{recursive:true});sendJson(response,200,{defaultRoot:join(store.root,"workspaces")});return;}
   if(url.pathname==="/api/v1/workspace/repository/directories" && method==="GET"){sendJson(response,200,await browseDirectories(url.searchParams.get("path")??undefined));return;}
   if(url.pathname==="/api/v1/workspace/repository/directories" && method==="POST"){sendJson(response,201,await createDirectory(await readJson(request)));return;}
@@ -163,6 +165,14 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const subpath = projectRoute[2] ?? "";
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
+    if(pdfView&&method==='GET'){const source=store.getSource(pdfView[1]);if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}response.writeHead(302,{location:`/pdf-reader?project=${encodeURIComponent(projectId)}&source=${encodeURIComponent(pdfView[1])}&hash=${encodeURIComponent(url.searchParams.get('hash')??'')}`});response.end();return;}
+    const pdfRoute=subpath.match(/^sources\/([^/]+)\/pdf(?:\/pages\/(\d+))?$/);
+    if(pdfRoute&&method==='GET'){
+      const pdf=new PdfReading(store);
+      if(pdfRoute[2]){const page=await pdf.page(projectId,pdfRoute[1],Number(pdfRoute[2]),Number(url.searchParams.get('scale')??2200));const bytes=await import('node:fs/promises').then(fs=>fs.readFile(page.path));response.writeHead(200,{'content-type':'image/png','content-length':bytes.length,'cache-control':'private, max-age=3600','x-content-type-options':'nosniff'});response.end(bytes);return;}
+      const doc=await pdf.document(projectId,pdfRoute[1]);sendJson(response,200,{source_id:doc.source_id,hash:doc.hash,artifact_id:doc.artifact_id,pageCount:doc.pageCount,pages:doc.pages});return;
+    }
     if(subpath==='workspace/research-folders'&&method==='POST'){
       if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
       sendJson(response,201,createResearchFolder(store,projectId,await readJson(request)));return;
@@ -214,7 +224,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
       const permission = codeAgent.authorizeTool(projectId, token);
-      const result = projectChatTool(store, projectId, await readJson(request), permission.writable);
+      const result = await projectChatTool(store, projectId, await readJson(request), permission.writable);
       codeAgent.recordTool(projectId, token, result); sendJson(response, 200, result); return;
     }
     if(subpath==='chat/attachments'&&method==='POST'){

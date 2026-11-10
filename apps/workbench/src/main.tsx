@@ -1,3 +1,4 @@
+import { PdfReader } from "./pdf-reader.js";
 import { MarkdownKnowledgePanel } from "./markdown-knowledge.js";
 import { ProjectFilesPage } from "./project-files.js";
 import { ProjectWorkspaceDialog } from "./project-workspace.js";
@@ -188,4 +189,6 @@ function App() {
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;
 }
-createRoot(document.getElementById("root")!).render(<App/>);
+const pdfParams=new URLSearchParams(window.location.search);
+const pdfPage=Number(new URLSearchParams(window.location.hash.slice(1)).get('page')??1);
+createRoot(document.getElementById("root")!).render(window.location.pathname==='/pdf-reader'&&pdfParams.get('project')&&pdfParams.get('source')?<PdfReader projectId={pdfParams.get('project')!} sourceId={pdfParams.get('source')!} page={pdfPage} expectedHash={pdfParams.get('hash')??undefined}/>:<App/>);

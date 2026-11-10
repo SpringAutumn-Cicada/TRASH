@@ -321,3 +321,18 @@ export function parseWebpage(html: Uint8Array, url: string): ParsedSource {
   });
   return { source_type: "webpage", title, authors: [], source_url: url, parse_status: segments.length ? "indexed" : "no_text", segments };
 }
+
+/** Read original page labels and per-page text, including pages without a text layer. */
+export async function inspectPdf(bytes:Uint8Array){
+  const task=getDocument({data:new Uint8Array(bytes)});const pdf=await task.promise;
+  try{const labels=await pdf.getPageLabels();const pages:{page:number;label:string;text:string}[]=[];
+    for(let page=1;page<=pdf.numPages;page++){const content=await (await pdf.getPage(page)).getTextContent();pages.push({page,label:labels?.[page-1]??String(page),text:content.items.flatMap(item=>'str' in item?[item.str]:[]).join(' ')});}
+    return {pageCount:pdf.numPages,pages};
+  }finally{await task.destroy();}
+}
+
+export async function pdfViewerAsset(path:string){
+  if(!/^(cmaps|standard_fonts|wasm)\/[A-Za-z0-9_.-]+$/.test(path))throw new Error('INVALID_PDF_ASSET');
+  const {createRequire}=await import('node:module');const {dirname,join}=await import('node:path');const {readFile}=await import('node:fs/promises');
+  return readFile(join(dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),path));
+}

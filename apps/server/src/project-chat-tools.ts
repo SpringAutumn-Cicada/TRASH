@@ -1,3 +1,4 @@
+import { PdfReading } from "./pdf-reading.js";
 import { projectRuntime } from "./project-layout.js";
 import { MarkdownKnowledge, stageKnowledgeSkill, markdownVersions } from "./markdown-knowledge.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync } from "node:fs";
@@ -28,7 +29,9 @@ except urllib.error.HTTPError as error:
   for(const doc of documents){const draft=join(path,'knowledge-draft',doc.path);mkdirSync(join(draft,'..'),{recursive:true});writeFileSync(draft,doc.text,{mode:0o600});}
   writeFileSync(join(path, "PROJECT_TOOLS.md"), `# 当前论文项目工具
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
-summary、sources、source（id）读取项目和论文；list/get 使用 kind 和 id 读取知识。
+summary、sources、source（id）读取项目和论文；
+{"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
+list/get 使用 kind 和 id 读取知识。
 卡片或 Wiki 必须先读取 literature-skill/SKILL.md，直接写 Markdown 到 knowledge-draft/literature/cards/ 或 knowledge-draft/wiki/。每篇卡片同时生成 card-<source_id>-detail.md 和 card-<source_id>-key.md，frontmatter id 与文件名一致，kind=literature-card，source_id 保留真实来源，card_type 分别为 detail/key。Wiki 使用 wiki-<稳定ID>.md，kind=wiki-page。
 先通过 list/get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"literature/cards/card-source-example-detail.md","expected":null},{"path":"literature/cards/card-source-example-key.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；冲突保留副本，不重试覆盖。双卡片同时提交。
 实验结果仍使用 write，kind=experiment-result，input 为原结构化记录及 base_version。不能编造结果。
@@ -37,8 +40,8 @@ summary、sources、source（id）读取项目和论文；list/get 使用 kind �
   return path;
 }
 
-export function projectChatTool(store: TrashStore, projectId: string, body: unknown, writable: boolean) {
-  const value = z.object({ operation: z.enum(["summary", "sources", "source", "list", "get", "write", "publish"]), kind: knowledgeKindSchema.optional(), id: z.string().min(1).optional(), input: knowledgeWriteSchema.optional(), files:z.array(z.object({path:z.string(),expected:z.string().nullable()}).strict()).min(1).max(2).optional() }).strict().parse(body);
+export async function projectChatTool(store: TrashStore, projectId: string, body: unknown, writable: boolean) {
+  const value = z.object({ operation: z.enum(["summary", "sources", "source", "list", "get", "write", "publish", "pdf-pages", "pdf-page"]), page:z.number().int().positive().optional(),scale:z.union([z.literal(2200),z.literal(4400)]).optional(),kind: knowledgeKindSchema.optional(), id: z.string().min(1).optional(), input: knowledgeWriteSchema.optional(), files:z.array(z.object({path:z.string(),expected:z.string().nullable()}).strict()).min(1).max(2).optional() }).strict().parse(body);
   const knowledge = new KnowledgeStore(store.db);
   if (value.operation === "summary") return { project: store.getProject(projectId) };
   if (value.operation === "sources") return { sources: store.listSources(projectId) };
@@ -46,6 +49,11 @@ export function projectChatTool(store: TrashStore, projectId: string, body: unkn
     const source = value.id && store.getSource(value.id);
     if (!source || source.project_id !== projectId) experimentError("SOURCE_NOT_FOUND", 404);
     return { source, segments: store.listSourceSegments(source.source_id) };
+  }
+  if(value.operation==='pdf-pages'||value.operation==='pdf-page'){
+    if(!value.id)experimentError('INVALID_REQUEST',400);const pdf=new PdfReading(store);
+    if(value.operation==='pdf-pages'){const doc=await pdf.document(projectId,value.id);return {source_id:doc.source_id,hash:doc.hash,pageCount:doc.pageCount,pages:doc.pages};}
+    if(!value.page)experimentError('INVALID_REQUEST',400);const page=await pdf.page(projectId,value.id,value.page,value.scale??2200);return {...page,instruction:'必须使用图像查看工具实际打开 path 才能声称看过此页图像。',citation:`/api/v1/projects/${projectId}/sources/${value.id}/pdf-view?hash=${page.hash}#page=${value.page}`};
   }
   const markdown=new MarkdownKnowledge(store);
   if(value.operation==='publish'){
