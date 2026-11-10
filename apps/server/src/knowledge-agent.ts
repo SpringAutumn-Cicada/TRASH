@@ -64,7 +64,7 @@ export class KnowledgeAgent implements TaskRunner {
   close(): void {this.closed=true; for(const active of this.running.values()){active.task.status="interrupted";this.knowledge.saveTask(active.task);this.terminate(active.child);}}
   private async readBatch(task:KnowledgeTask,prompt:string,images:string[],directory:string,timeout:number){
     if(timeout<=1)throw new Error('全文阅读超时，未发布最终卡片');
-    const child=spawn(this.cli.command,[...this.cli.prefix,'exec','--sandbox','workspace-write','-c','approval_policy="never"','--skip-git-repo-check','--ephemeral','--json','--color','never','-C',directory,...images.flatMap(path=>['--image',path]),'-'],{cwd:directory,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
+    const child=spawn(this.cli.command,[...this.cli.prefix,'exec','--sandbox','workspace-write','-c','approval_policy="never"','-c','mcp_servers.node_repl.enabled=false','--skip-git-repo-check','--ephemeral','--json','--color','never','-C',directory,...images.flatMap(path=>['--image',path]),'-'],{cwd:directory,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
     this.running.set(task.project_id,{child,task});
     let reportedFailure='',pending='';child.stdout.on('data',(chunk:Buffer)=>{pending+=chunk.toString();let newline:number;while((newline=pending.indexOf('\n'))>=0){const line=pending.slice(0,newline);pending=pending.slice(newline+1);try{const event=JSON.parse(line);if(event.type==='turn.failed'||event.type==='error')reportedFailure=redact(String(event.error?.message??event.message??'PDF 阅读失败'));}catch{/* Non-JSON output remains in logs. */}}if(pending.length>1024*1024)pending='';});
     let bytes=0;const log=(chunk:Buffer)=>{if(bytes>1024*1024)return;bytes+=chunk.length;this.knowledge.event(task.task_id,redact(chunk.toString()));};child.stdout.on('data',log);child.stderr.on('data',log);
@@ -78,10 +78,11 @@ export class KnowledgeAgent implements TaskRunner {
     if(!task)return;
     // Reserve before filesystem work or process startup.
     task.status="running";this.knowledge.saveTask(task);this.reserved.add(projectId);
-    const directory=projectRuntime(this.store.root,projectId,'tasks',task.task_id);
+    let directory=projectRuntime(this.store.root,projectId,'tasks',task.task_id);
     let child: ChildProcess | undefined;
     try {
       mkdirSync(directory,{recursive:true});
+      directory=realpathSync(directory);
       writeFileSync(join(directory,"input.json"),JSON.stringify(task.snapshot,null,2));
       const snapshot=task.snapshot as {sources:{source:{source_id:string;source_type:string};segments:unknown[]}[];documents:ReturnType<MarkdownKnowledge['list']>['documents'];previous?:ReturnType<MarkdownKnowledge['list']>['documents'][number]};
       const markdown=new MarkdownKnowledge(this.store);
@@ -128,7 +129,7 @@ export class KnowledgeAgent implements TaskRunner {
       writeFileSync(join(directory,'prompt.txt'),prompt);
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终卡片');
-      child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
+      child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
       this.running.set(projectId,{child,task});
       this.knowledge.event(task.task_id,"启动本机 Codex CLI；隔离任务目录直接写双卡片/Wiki Markdown，提示词版本 3。");
       let logBytes=0;

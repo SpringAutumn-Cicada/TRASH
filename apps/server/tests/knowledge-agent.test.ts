@@ -1,3 +1,4 @@
+import { MarkdownKnowledge } from "../src/markdown-knowledge.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -18,9 +19,12 @@ test("stub CLI produces candidates, preserves failed attempts and supports cance
   try{
     const input=knowledgeTaskInputSchema.parse({kind:"literature-card",source_ids:[source.source_id],title:"Paper"});
     const [ok]=agent.enqueue(project.project_id,input);await until(()=>knowledge.tasks(project.project_id).find(t=>t.task_id===ok.task_id)?.status==="completed");
-    assert.equal(knowledge.list(project.project_id,"literature-card")[0].status,"pending");
+    const markdown=new MarkdownKnowledge(store),before=markdown.list(project.project_id).documents;
+    assert.equal(before.length,2);assert.ok(before.every(doc=>doc.status==='pending'));
+    const hashes=before.map(doc=>doc.hash);
+    assert.equal(knowledge.list(project.project_id,'literature-card').length,0,'Markdown正文不应回写旧JSON知识库');
     const [bad]=agent.enqueue(project.project_id,{...input,instructions:"FIXTURE_BAD"});await until(()=>knowledge.tasks(project.project_id).find(t=>t.task_id===bad.task_id)?.status==="failed");
-    assert.equal(knowledge.list(project.project_id,"literature-card")[0].version,1);
+    assert.deepEqual(markdown.list(project.project_id).documents.map(doc=>doc.hash),hashes);
     const [waiting]=agent.enqueue(project.project_id,{...input,instructions:"FIXTURE_WAIT"});await until(()=>knowledge.tasks(project.project_id).find(t=>t.task_id===waiting.task_id)?.status==="running");
     agent.cancel(project.project_id,waiting.task_id);assert.equal(knowledge.tasks(project.project_id).find(t=>t.task_id===waiting.task_id)?.status,"cancelled");
   }finally{agent.close();await new Promise(resolve=>setTimeout(resolve,100));store.close();rmSync(root,{recursive:true,force:true});}
