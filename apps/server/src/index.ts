@@ -1,3 +1,4 @@
+import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
 import { directoryRepairBusy } from "./experiment/directory-repair.js";
@@ -223,6 +224,17 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const bytes=store.readArtifact(projectId,attachment.id)!;
       response.writeHead(200,{'content-type':attachment.mime,'content-length':bytes.length,'content-disposition':`${attachment.image?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(bytes);return;
     }
+    if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
+      const markdown=new MarkdownKnowledge(store);
+      if(subpath==='markdown-knowledge'&&method==='GET'){sendJson(response,200,markdown.list(projectId));return;}
+      if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
+      if(method==='POST'){
+        if(codeAgent.busy(projectId)||agent.isProjectBusy(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))throw Object.assign(new Error('PROJECT_HAS_ACTIVE_TASKS'),{statusCode:409});
+        if(subpath==='markdown-knowledge/save'){const input=z.object({path:z.string(),text:z.string().max(1024*1024),expected:z.string().nullable()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.save(projectId,input.path,input.text,input.expected)});return;}
+        if(subpath==='markdown-knowledge/review'){const input=z.object({path:z.string(),hash:z.string(),status:z.enum(['accepted','rejected'])}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.review(projectId,input.path,input.hash,input.status)});return;}
+      }
+      sendJson(response,404,{error:'NOT_FOUND'});return;
+    }
     if (subpath === "chat/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose === "project-chat").map(task => ({ ...task, logs: "" })) }); return; }
     if (subpath === "chat/tasks" && method === "POST") {
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
@@ -259,6 +271,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response, 200, deleted);
       return;
     }
+    if(subpath.startsWith('knowledge-tasks')&&method==='POST'&&codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
     if (await knowledgeRoute(request, response, url, projectId, subpath, store, knowledge, readJson, sendJson, agent)) return;
     const attachmentRoute = subpath.match(/^sources\/([^/]+)\/attachments$/);
     if (attachmentRoute && method === "POST") {

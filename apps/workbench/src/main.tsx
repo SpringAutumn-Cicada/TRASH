@@ -1,3 +1,4 @@
+import { MarkdownKnowledgePanel } from "./markdown-knowledge.js";
 import { ProjectFilesPage } from "./project-files.js";
 import { ProjectWorkspaceDialog } from "./project-workspace.js";
 import { BackgroundDatasetTransfers } from "./background-dataset-upload.js";
@@ -39,6 +40,7 @@ function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projec
   useEffect(()=>{let active=true;void api<{sources:Source[]}>(`/projects/${encodeURIComponent(projectId)}/sources`).then(data=>{if(active)setSources(data.sources);}).catch(cause=>{if(active)setError(uiError(cause,"无法读取项目文献。"));});return()=>{active=false;};},[projectId]);
   if(error)return <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>;
   if(!sources)return <div className="page-loading">正在加载项目资料…</div>;
+  if(page==='cards'||page==='wiki')return <MarkdownKnowledgePanel projectId={projectId} sources={sources} kind={page==='cards'?'literature-card':'wiki-page'} focusId={focusId} onNavigate={onNavigate}/>;
   const section={cards:"literature-cards",wiki:"wiki-pages",results:"experiment-results",tasks:"knowledge-tasks"} as const;
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
 }

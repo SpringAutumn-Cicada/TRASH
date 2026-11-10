@@ -1,3 +1,4 @@
+import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { z } from "zod";
@@ -8,6 +9,7 @@ import { requestError } from "./knowledge.js";
 
 const bundleSchema=z.object({
   schema_version:z.literal(1),project:researchProjectSchema,
+  markdown_files:z.array(z.object({path:z.string(),text:z.string().max(1024*1024)})).max(10000).default([]),
   sources:z.array(z.object({source:sourceSchema,segments:z.array(z.object({locator:sourceLocatorSchema,text:z.string(),source_id:z.string().optional(),ordinal:z.number().optional()})),details:z.string().optional()})),
   files:z.array(z.object({artifact:artifactSchema,bytes:z.string()})),
   records:z.array(z.object({object_id:z.string().regex(/^knowledge_[A-Za-z0-9-]+$/),project_id:z.string(),kind:knowledgeKindSchema,version:z.number().int().positive(),status:reviewStatusSchema,title:z.string(),content:z.unknown(),created_by:z.enum(["user","agent"]),created_at:z.string().datetime({offset:true})})),
@@ -18,6 +20,7 @@ export function restoreKnowledge(store: TrashStore, value: unknown) {
   const bundle=bundleSchema.parse(value), project=bundle.project, id=project.project_id;
   if(store.getProject(id))requestError("PROJECT_ALREADY_EXISTS",409);
   if(store.db.prepare("SELECT 1 FROM knowledge_versions WHERE project_id=?").get(id))requestError("PROJECT_ALREADY_EXISTS",409);
+  if(bundle.records.some(record=>record.kind!=='experiment-result'))requestError('LEGACY_KNOWLEDGE_BUNDLE_UNSUPPORTED',409);
   const sources=new Set(bundle.sources.map(s=>s.source.source_id));
   const artifactIds=new Set(bundle.files.map(f=>f.artifact.artifact_id));
   const versions=new Set(bundle.records.map(r=>`${r.object_id}:${r.version}`));
@@ -61,6 +64,8 @@ export function restoreKnowledge(store: TrashStore, value: unknown) {
         if(key)store.db.prepare("INSERT INTO knowledge_keys VALUES (?,?,?,?)").run(id,r.kind,key,r.object_id);
       }
       for(const r of bundle.reviews)store.db.prepare("INSERT INTO knowledge_reviews VALUES (?,?,?,?,?,?)").run(r.object_id,r.version,r.decision,r.comment,r.actor,r.at);
+      const markdown=new MarkdownKnowledge(store);
+      for(const file of bundle.markdown_files){const path=markdown.locate(id,file.path);markdown.save(id,file.path,file.text,null);created.push(path);}
     })();
     return project;
   }catch(error){for(const path of created)rmSync(path,{force:true});throw error;}

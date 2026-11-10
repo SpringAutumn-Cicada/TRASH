@@ -82,6 +82,10 @@ export async function knowledgeRoute(
     }
   }
   const kind = kinds[parts[0] as keyof typeof kinds] as KnowledgeKind | undefined;
+  if (kind && kind !== 'experiment-result') {
+    if(method==='GET'){const {markdownVersions}=await import('./markdown-knowledge.js');const records=markdownVersions(store,projectId,kind);const record=parts[1]?records.find(item=>item.object_id===parts[1]):undefined;if(parts[1]&&!record)requestError('NOT_FOUND',404);send(response,200,parts[1]?{record}:{records,total:records.length,page:1,limit:records.length});return true;}
+    requestError('MARKDOWN_DIRECT_WRITE_REQUIRED',409);
+  }
   if (kind) {
     const id = parts[1] ? decodeURIComponent(parts[1]) : undefined;
     if (!id && method === "GET") {
@@ -109,9 +113,6 @@ export async function knowledgeRoute(
       const version = url.searchParams.has("version") ? z.coerce.number().int().positive().parse(url.searchParams.get("version")) : undefined;
       const record = knowledge.get(projectId, kind, id, version);
       if (!record) requestError("NOT_FOUND", 404);
-      if (kind === "wiki-page" && url.searchParams.get("format") === "markdown" && "body" in record.content) {
-        response.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": 'attachment; filename="wiki.md"' }); response.end(`# ${record.title}\n\n${record.content.body}`); return true;
-      }
       send(response, 200, { record, stale: knowledge.stale(record) }); return true;
     }
     if (id && parts.length === 2 && method === "PUT") {
@@ -146,7 +147,8 @@ export async function knowledgeRoute(
     send(response,200,{ schema_version:1,title:"实验运行",method:"",dataset:"",dataset_version:"",task:"",split:"",evaluation_protocol:"",config:{},environment:{},metrics:[{name:"accuracy",value:0,unit:"ratio",condition:""}],attachments:[],notes:"" }); return true;
   }
   if (subpath === "wiki-export" && method === "GET") {
-    const pages=knowledge.list(projectId,"wiki-page");
+    const {markdownVersions}=await import("./markdown-knowledge.js");
+    const pages=markdownVersions(store,projectId,"wiki-page");
     const index=pages.map(p=>`- [${p.title}](#${p.object_id})`).join("\n");
     const body=pages.map(p=>`<a id="${p.object_id}"></a>\n\n# ${p.title}\n\n${"body" in p.content?p.content.body:""}\n\n引用对象：\n${"dependencies" in p.content?p.content.dependencies.map(d=>`- ${d.kind}: ${d.object_id} v${d.version}`).join("\n"):""}`).join("\n\n---\n\n");
     response.writeHead(200,{"content-type":"text/markdown; charset=utf-8","content-disposition":'attachment; filename="project-wiki.md"'});response.end(`# 项目 Wiki\n\n${index}\n\n${body}`);return true;
@@ -158,8 +160,10 @@ export async function knowledgeRoute(
       const file = store.artifactFile(projectId,row.artifact_id);
       return file ? { artifact:file.artifact, bytes:Buffer.from(store.readArtifact(projectId,row.artifact_id)!).toString("base64") } : undefined;
     }).filter(Boolean);
-    const records = (Object.values(kinds) as KnowledgeKind[]).flatMap(k => knowledge.list(projectId,k).flatMap(v => knowledge.history(projectId,k,v.object_id))).sort((a,b)=>a.created_at.localeCompare(b.created_at));
-    send(response,200,{schema_version:1,project,sources:sources.map(source=>({source,segments:store.listSourceSegments(source.source_id),details:(store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(source.source_id) as {data:string}|undefined)?.data})),files,records,attachments:store.db.prepare("SELECT a.* FROM source_attachments a JOIN sources s ON s.source_id=a.source_id WHERE s.project_id=?").all(projectId), reviews:store.db.prepare("SELECT r.* FROM knowledge_reviews r WHERE r.object_id IN (SELECT object_id FROM knowledge_versions WHERE project_id=?)").all(projectId)}); return true;
+    const {MarkdownKnowledge}=await import("./markdown-knowledge.js");
+    const markdown_files=new MarkdownKnowledge(store).list(projectId).documents.map(({path,text})=>({path,text}));
+    const records = (["experiment-result"] as KnowledgeKind[]).flatMap(k => knowledge.list(projectId,k).flatMap(v => knowledge.history(projectId,k,v.object_id))).sort((a,b)=>a.created_at.localeCompare(b.created_at));
+    send(response,200,{schema_version:1,project,markdown_files,sources:sources.map(source=>({source,segments:store.listSourceSegments(source.source_id),details:(store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(source.source_id) as {data:string}|undefined)?.data})),files,records,attachments:store.db.prepare("SELECT a.* FROM source_attachments a JOIN sources s ON s.source_id=a.source_id WHERE s.project_id=?").all(projectId), reviews:store.db.prepare("SELECT r.* FROM knowledge_reviews r WHERE r.object_id IN (SELECT object_id FROM knowledge_versions WHERE project_id=?)").all(projectId)}); return true;
   }
   return false;
 }

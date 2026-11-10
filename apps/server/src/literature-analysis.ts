@@ -1,3 +1,4 @@
+import { markdownVersions } from "./markdown-knowledge.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -53,12 +54,12 @@ export class LiteratureAnalysis {
   }
   private records(project: string, ids: string[]): KnowledgeVersion[] {
     return this.tasks(project, ids).filter(task => task.status === "completed" && task.output_id).flatMap(task => {
-      const record = this.knowledge.get(project, task.input.kind, task.output_id!, task.output_version);
+      const record = markdownVersions(this.store,project,task.input.kind).find(doc=>doc.object_id===task.output_id);
       return record ? [record] : [];
     });
   }
   private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string) {
-    const existing = this.knowledge.list(value.project_id, "wiki-page").find(record => record.title === title);
+    const existing = markdownVersions(this.store,value.project_id,"wiki-page").find(record => record.title === title);
     const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: [], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.object_id } : {}), instructions: `${instructions}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 900, regenerate: false };
     return this.agent.enqueue(value.project_id, input).map(task => task.task_id);
   }
