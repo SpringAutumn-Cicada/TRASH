@@ -8,7 +8,7 @@ import { sourceSchema, knowledgeWriteSchema, sourceDetailsSchema, type Knowledge
 
 export const kinds = { "literature-cards": "literature-card", "wiki-pages": "wiki-page", "experiment-results": "experiment-result" } as const;
 export function requestError(code: string, statusCode = 400): never { throw Object.assign(new Error(code), { statusCode }); }
-export interface TaskRunner { enqueue(projectId: string, input: z.infer<typeof knowledgeTaskInputSchema>, retryOf?: string): KnowledgeTask[]; cancel(projectId: string, taskId: string): void }
+export interface TaskRunner { enqueue(projectId: string, input: z.infer<typeof knowledgeTaskInputSchema>, retryOf?: string): KnowledgeTask[]; cancel(projectId: string, taskId: string): void; resumable?(task:KnowledgeTask):boolean }
 function csv(records: KnowledgeVersion[]): string {
   const escape = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
   return "\uFEFF" + [ ["id", "version", "status", "title", "content"], ...records.map(v => [v.object_id, v.version, v.status, v.title, JSON.stringify(v.content)]) ].map(row => row.map(escape).join(",")).join("\r\n");
@@ -153,8 +153,8 @@ export async function knowledgeRoute(
     if (!parts[1] && method === "POST") { send(response, 201, { tasks: runner.enqueue(projectId, knowledgeTaskInputSchema.parse(await readJson(request))) }); return true; }
     const task = knowledge.tasks(projectId).find(t => t.task_id === parts[1]);
     if (!task) requestError("NOT_FOUND", 404);
-    if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url)));return true;}
-    if(parts[2]==='stream'&&method==='GET'){streamTaskEvents(store,task,request,response,url);return true;}
+    if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url),runner.resumable?.bind(runner)));return true;}
+    if(parts[2]==='stream'&&method==='GET'){streamTaskEvents(store,task,request,response,url,runner.resumable?.bind(runner));return true;}
     if (parts[2] === "cancel" && method === "POST") { runner.cancel(projectId, task.task_id); send(response,200,{ok:true}); return true; }
     if (parts[2] === "retry" && method === "POST") { if (["running","queued"].includes(task.status)) requestError("TASK_ACTIVE",409); send(response,201,{tasks:runner.enqueue(projectId,{...task.input,regenerate:true},task.task_id)}); return true; }
     if (method === "GET") { send(response,200,{task,events:store.db.prepare("SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq LIMIT 1000").all(task.task_id)}); return true; }
