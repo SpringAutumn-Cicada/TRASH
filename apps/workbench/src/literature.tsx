@@ -45,6 +45,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [detail, setDetail] = useState<ProjectDetail>();
   const [searchScope,setSearchScope]=useState<'project'|'external'>('project');
   const [projectSearched,setProjectSearched]=useState(false),[externalSearched,setExternalSearched]=useState(false);
+  const [fileDragging,setFileDragging]=useState(false);
+  const dragDepth=useRef(0),uploadLock=useRef(false);
   const [libraryQuery,setLibraryQuery]=useState("");
   const [importOpen,setImportOpen]=useState(false);
   const [rowMenu,setRowMenu]=useState<string>();
@@ -116,17 +118,20 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   useEffect(() => { void refresh(); }, [projectId]);
 
   const uploadFiles = async (files: FileList | null) => {
-    if (!files || !detail) return;
+    if (!files?.length || !detail || uploadLock.current || importing) return;
+    const selectedFiles=Array.from(files);
+    if(selectedFiles.some(file=>! /\.(pdf|bib|bibtex|ris|md|markdown)$/i.test(file.name))){setError('请选择 PDF、BibTeX、RIS 或 Markdown 文件；文件夹请展开后再拖入。');return;}
+    uploadLock.current=true;
     setImporting(true); setError("");
     try {
-      for (const file of Array.from(files)) {
+      for (const file of selectedFiles) {
         await api(`/projects/${encodeURIComponent(projectId)}/sources/files?filename=${encodeURIComponent(file.name)}`, {
           method: "POST", headers: { "content-type": file.type || "application/octet-stream" }, body: file
         });
       }
       await refresh(); onChanged();
     } catch (cause) { setError(uiError(cause, "导入失败，请检查文件后重试。")); }
-    finally { setImporting(false); }
+    finally { uploadLock.current=false;setImporting(false); }
   };
 
   const importUrl = async (event: React.FormEvent) => {
@@ -195,7 +200,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
 
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
-  return <section className="literature-page">
+  return <section className={`literature-page ${fileDragging?'literature-file-dragging':''}`} onDragEnter={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current++;setFileDragging(true);}} onDragOver={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.dataTransfer.dropEffect=importing?'none':'copy';}} onDragLeave={event=>{if(searchOnly)return;event.preventDefault();dragDepth.current=Math.max(0,dragDepth.current-1);if(!dragDepth.current)setFileDragging(false);}} onDrop={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.stopPropagation();dragDepth.current=0;setFileDragging(false);if(importing||uploadLock.current)return;void uploadFiles(event.dataTransfer.files);}}>
+    {fileDragging&&!searchOnly&&<div className="literature-drop-overlay" role="status"><FileUp size={30}/><strong>{importing?'正在导入，请稍候':'松开以导入文献'}</strong><span>PDF · BibTeX · RIS · Markdown · 支持多个文件</span></div>}
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
@@ -205,7 +211,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               <label className="library-filter"><Search size={16}/><input aria-label="筛选已导入文献" value={libraryQuery} onChange={event=>setLibraryQuery(event.target.value)} placeholder="搜索已导入的标题、作者…"/>{libraryQuery&&<button type="button" aria-label="清空文献筛选" onClick={()=>setLibraryQuery('')}><X size={14}/></button>}</label>
               <div className="library-toolbar-actions"><div className="library-import" data-literature-menu>
                 <button type="button" className="primary-button" aria-expanded={importOpen} aria-controls="literature-import-panel" onClick={()=>{setImportOpen(v=>!v);setRowMenu(undefined);}}><Plus size={15}/>导入文献<ChevronDown size={12}/></button>
-                {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
+                {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown，也可拖入页面</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
               </div></div>
               <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
             </div>
