@@ -38,7 +38,7 @@ Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，�
 卡片或 Wiki 必须先读取 literature-skill/SKILL.md，直接写 Markdown 到 knowledge-draft/literature/cards/ 或 knowledge-draft/wiki/。每篇卡片同时生成 card-<source_id>-basic.md、card-<source_id>-detail.md 和 card-<source_id>-key.md，frontmatter id 与文件名一致，kind=literature-card，source_id 保留真实来源，card_type 分别为 basic/detail/key。Wiki 使用 wiki-<稳定ID>.md，kind=wiki-page。
 先通过 get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"literature/cards/card-source-example-basic.md","expected":null},{"path":"literature/cards/card-source-example-detail.md","expected":null},{"path":"literature/cards/card-source-example-key.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；冲突保留副本，不重试覆盖。三卡片同时提交，基本卡片严格按literature-skill/references/basic.md填写。发布后平台回填标题和年月，人工修改冲突保留建议。
 实验结果仍使用 write，kind=experiment-result，input 为原结构化记录及 base_version。不能编造结果。
-不要修改正式知识目录、.trash、数据库、任务文件、原始论文或其他项目。论文草稿可写 manuscripts/。不自动删除、审核或发起实验。写入不代替用户验收。
+不要修改正式知识目录、.trash、数据库、任务文件、原始论文或其他项目。论文草稿可写 manuscripts/。卡片/Wiki发布后直接可用，无人工采纳步骤；保留未知事实和待验证假设，不自动删除或发起实验。写入不代替用户验收。
 `);
   return path;
 }

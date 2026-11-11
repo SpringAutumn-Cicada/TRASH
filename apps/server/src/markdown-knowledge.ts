@@ -37,9 +37,8 @@ export class MarkdownKnowledge {
     if(meta.source_id&&this.store.getSource(meta.source_id)?.project_id!==project)fail('SOURCE_NOT_FOUND',404);
     const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
     if(meta.card_type==='basic')parseBasicCard(text);
-    const hash=digest(text);const reviewPath=this.internal(project,`.trash/markdown-reviews/${meta.id}.json`);
-    let review:{hash:string;status:string}|undefined;try{review=JSON.parse(readFileSync(reviewPath,'utf8'));}catch{/* Unreviewed file. */}
-    return {id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:review?.hash===hash?review.status:'pending',level:meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    const hash=digest(text);
+    return {id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
@@ -59,7 +58,7 @@ export class MarkdownKnowledge {
     if(force||JSON.stringify(entries)!==JSON.stringify(old))this.writeIndex(project,{version:2,entries});
     const documents=Object.values(entries).flatMap(e=>e.document?[{...e.document}]:[]);
     for(const doc of documents){
-      try{const review=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-reviews/${doc.id}.json`),'utf8'));doc.status=review.hash===doc.hash?review.status:'pending';}catch{doc.status='pending';}
+      doc.status='accepted'; // Legacy wire status: validated Markdown is immediately usable.
       if(doc.source_id){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/knowledge-sources/${doc.id}.json`),'utf8'));doc.stale=stamp.hash!==sourceContentHash(this.store.getSource(doc.source_id))&&stamp.hash!==legacySourceContentHash(this.store.getSource(doc.source_id));}catch{doc.stale=true;}}
       if(doc.card_type==='key'){const detail=documents.find(d=>d.source_id===doc.source_id&&d.card_type==='detail');try{const pair=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-pairs/${doc.id}.json`),'utf8'));doc.stale=Boolean(doc.stale)||!detail||pair.detail!==detail.hash||pair.key!==doc.hash;}catch{doc.stale=true;}}
       if(doc.kind==='wiki-page'){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-dependencies/${doc.id}.json`),'utf8')) as {path:string;hash:string}[];doc.dependencies=stamp;doc.stale=Boolean(doc.stale)||stamp.some(ref=>documents.find(d=>d.path===ref.path)?.hash!==ref.hash);}catch{doc.dependencies=[];doc.stale=true;}}
@@ -108,7 +107,6 @@ export class MarkdownKnowledge {
     for(const file of staged.filter(f=>f.doc.source_id)){const stamp=this.internal(project,`.trash/knowledge-sources/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({hash:sourceContentHash(this.store.getSource(file.doc.source_id!))}),{mode:0o600});}
     return staged.map(f=>f.doc);
   }
-  review(project:string,path:string,hash:string,status:'accepted'|'rejected') {const target=this.locate(project,path),doc=this.parse(project,path,readFileSync(target,'utf8'));if(doc.hash!==hash)fail('VERSION_CONFLICT');const file=this.internal(project,`.trash/markdown-reviews/${doc.id}.json`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify({hash,status,at:new Date().toISOString()}),{mode:0o600});return {...doc,status};}
   history(project:string,id:string){if(!/^[A-Za-z0-9_-]+$/.test(id))fail('INVALID_REQUEST',400);const dir=this.internal(project,`.trash/markdown-history/${id}`);return existsSync(dir)?readdirSync(dir).filter(n=>/^[a-f0-9]{64}\.md$/.test(n)).map(n=>({hash:n.slice(0,-3),text:readFileSync(join(dir,n),'utf8')})):[];}
 }
 

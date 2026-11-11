@@ -5,7 +5,7 @@ import { api, uiError } from "./api.js";
 
 type Progress = { total: number; completed: number; failed: number; active: number };
 type Analysis = { analysis_id: string; stage: string; active: boolean; source_count: number; skipped_count: number; cards: Progress; groups: Progress; wiki: Progress; error?: string; covered_sources?:string[];missing_sources?:string[];reused_sources?:string[];topic_count?:number;candidate_count?:number };
-const stages: Record<string, string> = { "cards-only":"逐篇更新知识", discovery:"从文献发现主题",cards: "逐篇整理卡片与线索", groups: "分组归纳文献知识", wiki: "形成项目主题 Wiki", completed: "分析完成，内容待审核", partial: "部分完成，请查看失败任务", failed: "分析失败", cancelled: "已停止，生成内容保留", interrupted: "服务重启，流程已中断" };
+const stages: Record<string, string> = { "cards-only":"逐篇更新知识", discovery:"从文献发现主题",cards: "逐篇整理卡片与线索", groups: "分组归纳文献知识", wiki: "形成项目主题 Wiki", completed: "分析完成，内容已可用", partial: "部分完成，请查看失败任务", failed: "分析失败", cancelled: "已停止，生成内容保留", interrupted: "服务重启，流程已中断" };
 export function LiteratureAnalysisButton({ projectId, sourceCount, blocked, onChanged }: { projectId: string; sourceCount: number; blocked: boolean; onChanged: () => void }) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [mode,setMode]=useState('all');

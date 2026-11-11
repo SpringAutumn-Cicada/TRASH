@@ -167,7 +167,7 @@ export class KnowledgeAgent implements TaskRunner {
       for(const [id,baseline] of Object.entries(snapshot.bibliography_baselines??{}))if(sourceContentHash(this.store.getSource(id))!==baseline.content_hash)throw new Error('论文原始内容已变化，保留工作副本，请重新分析');
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);
       for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.kind==='literature-card').map(({path,hash})=>({path,hash}))]);
-      task.status="completed";task.output_id=records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已保存待审：${records.map(record=>record.path).join('、')}`);
+      task.status="completed";task.output_id=records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${records.map(record=>record.path).join('、')}`);
 
     }catch(error){if(task.status==="running" && !this.closed){task.status="failed";task.error=redact(error instanceof Error?error.message:"任务失败");this.knowledge.saveTask(task);this.knowledge.event(task.task_id,task.error);}}
     finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}

@@ -9,7 +9,7 @@ export function projectOverview(store: TrashStore, projectId: string): ProjectOv
   const pages = markdownVersions(store,projectId,"wiki-page");
   const results = knowledge.list(projectId, "experiment-result");
   const cardSources = new Set(cards.flatMap(c => "source_id" in c.content ? [c.content.source_id] : []));
-  const accepted = new Set(cards.filter(card=>card.status==='accepted').flatMap(card=>'source_id' in card.content?[card.content.source_id]:[]));
+  const availableCards = new Set(cards.flatMap(card=>'source_id' in card.content?[card.content.source_id]:[]));
   const tasks = knowledge.tasks(projectId);
   const experimentStore = new ExperimentStore(store.db);
   const experiments = experimentStore.runs(projectId);
@@ -22,7 +22,7 @@ export function projectOverview(store: TrashStore, projectId: string): ProjectOv
     activities.push({ id: `${record.object_id}-${record.version}`, title: record.title, description: `${labels[record.kind]}保存 v${record.version}`, at: record.created_at, page: pageFor(record.kind), object_id: record.object_id });
   }
   for(const record of [...cards,...pages])activities.push({id:`markdown-${record.object_id}`,title:record.title,description:`${labels[record.kind]} Markdown 更新`,at:record.created_at,page:pageFor(record.kind),object_id:record.object_id});
-  const reviews = store.db.prepare(`SELECT r.rowid AS review_id,r.decision,r.at,v.data FROM knowledge_reviews r JOIN knowledge_versions v ON r.object_id=v.object_id AND r.version=v.version WHERE v.project_id=? ORDER BY r.at DESC LIMIT 10`).all(projectId) as { review_id: number; decision: string; at: string; data: string }[];
+  const reviews = store.db.prepare(`SELECT r.rowid AS review_id,r.decision,r.at,v.data FROM knowledge_reviews r JOIN knowledge_versions v ON r.object_id=v.object_id AND r.version=v.version WHERE v.project_id=? AND v.kind='experiment-result' ORDER BY r.at DESC LIMIT 10`).all(projectId) as { review_id: number; decision: string; at: string; data: string }[];
   for (const row of reviews) {
     const record = JSON.parse(row.data) as KnowledgeVersion;
     activities.push({ id: `review-${row.review_id}`, title: record.title, description: `${row.decision === "accepted" ? "采纳" : "拒绝"}${labels[record.kind]} v${record.version}`, at: row.at, page: pageFor(record.kind), object_id: record.object_id });
@@ -33,8 +33,8 @@ export function projectOverview(store: TrashStore, projectId: string): ProjectOv
   for (const task of tasks) activities.push({ id: task.task_id, title: task.input.title, description: `Agent 任务${states[task.status] ?? task.status}`, at: taskAt.get(task.task_id) ?? task.created_at, page: "tasks", object_id: task.task_id });
   for (const run of experiments) activities.push({ id:run.run_id,title:run.plan.content.title,description:`实验：${run.status}`,at:run.updated_at,page:"experiments",object_id:run.run_id });
   return {
-    counts: { sources: sources.length, accepted_cards: accepted.size, wiki_pages: pages.length, experiment_results: results.length },
-    pending: { unorganized_sources: sources.filter(source => !cardSources.has(source.source_id)).length, cards: cards.filter(card => card.status === "pending").length, wiki_pages: pages.filter(page => page.status === "pending").length, stale_wiki_pages: pages.filter(page => page.stale).length, unsuccessful_tasks: tasks.filter(task => ["failed", "interrupted"].includes(task.status)).length, active_experiments: experiments.filter(run => experimentStore.active(run)).length, failed_experiments: experiments.filter(run => run.status === "failed").length, pending_collection: experiments.filter(run => run.status === "collecting" || run.status === "completed" && !run.preparation && !run.result_id).length },
+    counts: { sources: sources.length, accepted_cards: availableCards.size, wiki_pages: pages.length, experiment_results: results.length },
+    pending: { unorganized_sources: sources.filter(source => !cardSources.has(source.source_id)).length, cards: 0, wiki_pages: 0, stale_wiki_pages: pages.filter(page => page.stale).length, unsuccessful_tasks: tasks.filter(task => ["failed", "interrupted"].includes(task.status)).length, active_experiments: experiments.filter(run => experimentStore.active(run)).length, failed_experiments: experiments.filter(run => run.status === "failed").length, pending_collection: experiments.filter(run => run.status === "collecting" || run.status === "completed" && !run.preparation && !run.result_id).length },
     activities: activities.sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || a.id.localeCompare(b.id)).slice(0, 10)
   };
 }
