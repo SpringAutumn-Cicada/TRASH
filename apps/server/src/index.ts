@@ -291,16 +291,22 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if(subpath==='source-analyses' && method==='GET'){
       const docs=new MarkdownKnowledge(store).index(projectId).documents;
       const tasks=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
-      sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);return {source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id};}));return;
+      sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);return {source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
     if(sourceAnalysis && method==='POST'){
-      const input=z.object({confirm:z.literal(true),regenerate:z.boolean().default(false)}).strict().parse(await readJson(request));
+      const input=z.object({confirm:z.literal(true),regenerate:z.boolean().default(false),resume:z.boolean().default(false)}).strict().parse(await readJson(request));
       const sourceId=decodeURIComponent(sourceAnalysis[1]),source=store.getSource(sourceId);
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
       const active=knowledge.tasks(projectId).find(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['queued','running'].includes(t.status));
       if(active){sendJson(response,200,{task_id:active.task_id,status:active.status});return;}
+      if(input.resume){
+        const previous=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['failed','interrupted','cancelled'].includes(t.status)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
+        if(!previous){sendJson(response,409,{error:'SOURCE_RESUME_UNAVAILABLE'});return;}
+        const [task]=agent.enqueue(projectId,{...previous.input,regenerate:true},previous.task_id);
+        sendJson(response,202,{task_id:task.task_id,status:task.status});return;
+      }
       if(!input.regenerate && new MarkdownKnowledge(store).index(projectId).documents.some(d=>d.source_id===sourceId)){sendJson(response,409,{error:'SOURCE_ANALYSIS_CONFIRM_REQUIRED'});return;}
       const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',source_ids:[sourceId],title:source.title,include_source_wiki:true,regenerate:input.regenerate}));
       sendJson(response,202,{task_id:task.task_id,status:task.status});return;
