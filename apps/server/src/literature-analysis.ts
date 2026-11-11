@@ -1,3 +1,4 @@
+import { discoverWikiTopics } from "./wiki-topics.js";
 import { projectRuntime } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -7,13 +8,13 @@ import { KnowledgeStore, experimentError, type TrashStore, type KnowledgeTask } 
 import type { KnowledgeTaskInput, KnowledgeVersion } from "@trash/protocol";
 import { KnowledgeAgent } from "./knowledge-agent.js";
 
-type Stage = "cards-only" | "cards" | "groups" | "wiki" | "completed" | "partial" | "failed" | "cancelled" | "interrupted";
+type Stage = "discovery" | "cards-only" | "cards" | "groups" | "wiki" | "completed" | "partial" | "failed" | "cancelled" | "interrupted";
 export interface Analysis {
   analysis_id: string; project_id: string; stage: Stage; created_at: string; updated_at: string;
   source_count: number; skipped_count: number; card_tasks: string[]; group_tasks: string[]; wiki_tasks: string[];
-  error?: string; reused_sources?:string[]; covered_sources?:string[]; missing_sources?:string[]; round?:number; overview?:boolean; group_history?:string[];card_documents?:string[];theme_title?:string;instructions?:string;
+  discovery_tasks?:string[];topic_count?:number;candidate_count?:number;error?: string; reused_sources?:string[]; covered_sources?:string[]; missing_sources?:string[]; round?:number; overview?:boolean; group_history?:string[];card_documents?:string[];theme_title?:string;instructions?:string;
 }
-const active = (value: Analysis) => ["cards-only", "cards", "groups", "wiki"].includes(value.stage);
+const active = (value: Analysis) => ["cards-only", "cards", "groups", "discovery", "wiki"].includes(value.stage);
 const pending = (task: KnowledgeTask) => ["queued", "running"].includes(task.status);
 export class LiteratureAnalysis {
   constructor(private store: TrashStore, private knowledge: KnowledgeStore, private agent: KnowledgeAgent) {
@@ -34,7 +35,7 @@ export class LiteratureAnalysis {
   status(project: string) {
     const value = this.read(project); if (!value) return null;
     const summarize = (ids: string[]) => { const tasks = this.tasks(project, ids); return { total: ids.length, completed: tasks.filter(task => task.status === "completed").length, failed: ids.length - tasks.filter(task => task.status === "completed" || pending(task)).length, active: tasks.filter(pending).length }; };
-    return { ...value, cards: summarize(value.card_tasks), groups: summarize(value.group_tasks), wiki: summarize(value.wiki_tasks), active: active(value) };
+    return { ...value, cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
   }
   start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string}={}) {
     const current = this.read(project); if (current && active(current)) return this.status(project);
@@ -49,15 +50,15 @@ export class LiteratureAnalysis {
       const markdown=new MarkdownKnowledge(this.store);const docs=markdown.index(project).documents;
       for(const source of eligible){
         const prior=this.knowledge.tasks(project).filter(t=>t.input.kind==='literature-card'&&t.input.source_ids[0]===source.source_id&&t.status==='completed').sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
-        const same=prior&&JSON.stringify((prior.snapshot as {sources?:unknown[]}).sources)===JSON.stringify([{source,segments:this.store.listSourceSegments(source.source_id)}]);
+        const same=prior&&(prior.snapshot as {prompt_version?:number}).prompt_version===5&&JSON.stringify((prior.snapshot as {sources?:unknown[]}).sources)===JSON.stringify([{source,segments:this.store.listSourceSegments(source.source_id)}]);
         const pair=docs.filter(d=>d.source_id===source.source_id&&['detail','key'].includes(d.card_type??''));
         if(same&&pair.length===2&&!pair.some(d=>d.stale)&&docs.some(d=>d.id===`wiki-${source.source_id}`&&!d.stale)){value.card_tasks.push(prior.task_id);value.reused_sources!.push(source.source_id);continue;}
         if(mode==='synthesis'||mode==='overview'||(mode==='missing'&&pair.length===2)||(mode==='changed'&&!pair.length)){if(pair.length===2){if(prior)value.card_tasks.push(prior.task_id);else{value.card_documents!.push(`card-${source.source_id}-key`);value.reused_sources!.push(source.source_id);}}else value.missing_sources!.push(source.source_id);continue;}
-        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成详细卡片、关键卡片和单篇 Wiki。数字保留真实原文定位，不编造。',timeout_seconds:3600,regenerate:false,include_source_wiki:true};
+        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的详细卡片、关键卡片，以及面向Agent的简短单篇线索笔记。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。',timeout_seconds:3600,regenerate:false,include_source_wiki:true};
         value.card_tasks.push(...this.agent.enqueue(project,input).map(t=>t.task_id));this.save(value);
       }
       if(mode==='missing'||mode==='changed'){value.stage='cards-only';}
-      if(mode==='overview'){const themes=docs.filter(d=>d.kind==='wiki-page'&&d.level==='topic');if(!themes.length)throw new Error('没有可用主题 Wiki，请先生成主题');value.stage='wiki';value.overview=true;const records=themes.map(d=>({object_id:d.id,project_id:project,kind:'wiki-page' as const,version:1,status:'pending' as const,title:d.title,content:{title:d.title,tags:[],body:new MarkdownKnowledge(this.store).read(project,d.id).text,dependencies:[]},created_by:'agent' as const,created_at:d.modified}));if(this.batches(records).length>1)throw new Error('主题材料超出总览预算，请先通过完整分层综合缩减');value.wiki_tasks=this.enqueueWiki(value,'项目知识总览',records,'总结各主题和研究方向，简洁链接导航，不重复所有细节。');}
+      if(mode==='overview'){const themes=docs.filter(d=>d.kind==='wiki-page'&&['topic','hypothesis','discovery'].includes(d.level??''));if(!themes.length)throw new Error('没有可用主题 Wiki，请先生成主题');value.stage='wiki';value.overview=true;const records=themes.map(d=>({object_id:d.id,project_id:project,kind:'wiki-page' as const,version:1,status:'pending' as const,title:d.title,content:{title:d.title,tags:[],body:new MarkdownKnowledge(this.store).read(project,d.id).text,dependencies:[]},created_by:'agent' as const,created_at:d.modified}));if(this.batches(records).length>1)throw new Error('主题材料超出总览预算，请先通过完整分层综合缩减');value.wiki_tasks=this.enqueueWiki(value,'项目知识总览',records,'总结各主题和研究方向，简洁链接导航，不重复所有细节。');}
       this.save(value);
       this.advance(project);
     } catch (error) { value.stage = "failed"; value.error = error instanceof Error ? error.message : "创建分析任务失败"; this.save(value); this.stopPending(value); }
@@ -68,25 +69,36 @@ export class LiteratureAnalysis {
     const idsToRead=[...documentIds,...this.tasks(project,ids).filter(t=>t.status==='completed').flatMap(task=>task.input.kind==='literature-card'?[`card-${task.input.source_ids[0]}-key`]:task.output_id?[task.output_id]:[])];return [...new Set(idsToRead)].flatMap(id=>{const meta=docs.find(d=>d.id===id);if(!meta)return [];const doc=markdown.read(project,meta.id);return [{object_id:doc.id,project_id:project,kind:doc.kind,version:1,status:'pending' as const,title:doc.title,content:doc.kind==='wiki-page'?{title:doc.title,tags:[],body:doc.text,dependencies:[]}:{source_id:doc.source_id!,title:doc.title,tags:[],question:doc.text,method:'',contributions:'',limitations:'',datasets:[],baselines:[],metrics:[],reported_results:'',experimental_conditions:'',ideas:'',relevance:'',open_questions:'',evidence:[]},created_by:'agent' as const,created_at:doc.modified}];});
   }
   private batches(records:KnowledgeVersion[]){const groups:KnowledgeVersion[][]=[];let current:KnowledgeVersion[]=[],size=0;for(const record of records){const length=JSON.stringify(record.content).length;if(length>30000)experimentError('KNOWLEDGE_INPUT_TOO_LARGE',422);if(current.length&&(size+length>30000||current.length>=40)){groups.push(current);current=[];size=0;}current.push(record);size+=length;}if(current.length)groups.push(current);return groups;}
-  private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string) {
-    const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>record.title===title);
+  private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string,level?:'discovery'|'topic'|'hypothesis'|'overview') {
+    const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>record.title===title&&(!level||record.level===level));
     const refs=records.map(r=>markdown.index(value.project_id).documents.find(d=>d.id===r.object_id)!);
-    if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed');if(old)return [old.task_id];}
-    const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: [], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.id } : {}), instructions: `${instructions}。用户要求：${value.instructions??""}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。缺失来源ID：${(value.missing_sources??[]).join(",")||"无"}。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 3600, regenerate: false, wiki_level:value.overview?"overview":"topic" };
+    if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed'&&(t.snapshot as {prompt_version?:number}).prompt_version===5);if(old)return [old.task_id];}
+    const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: [], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.id } : {}), instructions: `${instructions}。用户要求：${value.instructions??""}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。缺失来源ID：${(value.missing_sources??[]).join(",")||"无"}。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 3600, regenerate: false, wiki_level:level??(value.overview?"overview":"topic") };
     return this.agent.enqueue(value.project_id, input).map(task => task.task_id);
   }
   advance(project: string) {
     const value = this.read(project); if (!value || !active(value)) return;
     try {
-      const ids = ["cards","cards-only"].includes(value.stage) ? value.card_tasks : value.stage === "groups" ? value.group_tasks : value.wiki_tasks;
+      const ids = ["cards","cards-only"].includes(value.stage) ? value.card_tasks : value.stage === "groups" ? value.group_tasks : value.stage==='discovery' ? value.discovery_tasks??[] : value.wiki_tasks;
       if (this.tasks(project, ids).some(pending)) return;
       if(value.stage==='cards-only'){value.missing_sources=[...new Set([...(value.missing_sources??[]),...this.tasks(project,value.card_tasks).filter(t=>t.status!=='completed').map(t=>t.input.source_ids[0])])];value.stage=this.tasks(project,value.card_tasks).some(t=>t.status!=='completed')?'partial':'completed';value.covered_sources=this.tasks(project,value.card_tasks).filter(t=>t.status==='completed').map(t=>t.input.source_ids[0]);this.save(value);return;}
+      if(value.stage==='discovery'){
+        const discovery=this.records(project,value.discovery_tasks??[]);if(!discovery.length)throw new Error('主题发现没有有效清单，未自动创建主题');
+        const base=this.records(project,value.card_tasks,value.card_documents),groups=this.records(project,value.group_tasks);
+        const materials=[...base,...groups];
+        const candidates=discoverWikiTopics(String((discovery[0].content as {body:string}).body),materials);
+        const formal=candidates.filter(c=>c.eligible).slice(0,8);value.candidate_count=candidates.length-formal.length;value.topic_count=formal.length;
+        value.stage='wiki';value.wiki_tasks=[];
+        for(const topic of formal)value.wiki_tasks.push(...this.enqueueWiki(value,topic.level==='hypothesis'?`待验证假设：${topic.title}`:topic.title,topic.evidence,`围绕从文献实际发现的问题“${topic.title}”整理Agent研究记忆，不围绕项目题目扩写。何时读取、核心认识、证据与分歧、未知与待验证、项目关联、深入阅读。项目关联可为暂无。${topic.level==='hypothesis'?'这是待验证研究假设，不能写成已证实事实。':''}发现依据：${topic.body}`,topic.level));
+        if(!value.wiki_tasks.length){const failed=this.tasks(project,[...value.card_tasks,...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]).some(t=>t.status!=='completed');value.stage=failed||(value.missing_sources?.length??0)>0?'partial':'completed';value.error=failed?'部分材料失败；仅保留候选线索清单，未生成正式主题。':undefined;}
+        this.save(value);return;
+      }
       if(value.stage==='wiki'&&!value.overview&&!value.theme_title){
-        const records=this.records(project,value.wiki_tasks);if(!records.length)throw new Error('主题综合无成功结果');
-        value.overview=true;value.wiki_tasks.push(...this.enqueueWiki(value,'项目知识总览',records,'基于各主题 Wiki 生成简洁项目总览，以链接导航、研究方向、共识、分歧和待解决问题为主，不重复所有细节。'));this.save(value);return;
+        const records=[...this.records(project,value.wiki_tasks),...this.records(project,value.discovery_tasks??[])];if(!records.length)throw new Error('主题综合无成功结果');
+        value.overview=true;value.wiki_tasks.push(...this.enqueueWiki(value,'项目知识总览',records,'生成Agent研究记忆导航：何时读取、研究目标、关键认识、主题链接、候选线索与待验证假设、待解决问题。保留暂无直接项目关联的独立知识主题。500–1000字，不把假设写成事实，不替用户决定方向。'));this.save(value);return;
       }
       if (value.stage === "wiki") {
-        const tasks = this.tasks(project, [...value.card_tasks, ...(value.group_history??[]),...value.group_tasks, ...value.wiki_tasks]);
+        const tasks = this.tasks(project, [...value.card_tasks, ...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[]), ...value.wiki_tasks]);
         value.stage = !this.records(project, value.wiki_tasks).length ? "failed" : (tasks.some(task => task.status !== "completed") || this.records(project, value.wiki_tasks).length !== value.wiki_tasks.length || this.records(project, value.card_tasks,value.card_documents).length !== value.source_count) ? "partial" : "completed";
         if (value.stage !== "completed") value.error = "部分任务失败、被取消或未产生有效结果，请查看任务页。";
         this.save(value); return;
@@ -98,16 +110,16 @@ export class LiteratureAnalysis {
       if (batches.length > 1) {
         value.stage = "groups"; value.group_history=[...(value.group_history??[]),...value.group_tasks];value.group_tasks = [];
         value.round=(value.round??0)+1;if(value.round>8)throw new Error('分层综合超过8层，请缩小主题范围');
-        for(const [i,batch] of batches.entries())value.group_tasks.push(...this.enqueueWiki(value,`文献知识第${value.round}层分组${i+1}`,batch,'按实际提供来源归纳证据、共识、分歧和缺失，生成不超过3000字符的中间总结，必须保留来源链接与覆盖ID，避免逐篇重复摘要。'));
+        for(const [i,batch] of batches.entries())value.group_tasks.push(...this.enqueueWiki(value,`文献知识第${value.round}层分组${i+1}`,batch,'按实际提供来源归纳证据、共识、分歧和缺失，生成不超过3000字符的主题线索中间总结：开放提取共同假设、分歧、异常、机制和边界，不按项目题目筛掉主题。必须保留原始关键卡片ID及链接、覆盖ID，区分事实和推断，避免逐篇重复摘要。'));
         this.save(value); return;
       }
-      value.stage = "wiki";
-      for (const title of value.theme_title?[value.theme_title]:["研究问题与背景", "方法与技术路线", "数据集与评价方案", "研究思路与待验证假设"]) value.wiki_tasks.push(...this.enqueueWiki(value, title, records, `生成“${title}”主题知识页。基于输入卡片或分组汇总跨文献归纳，明确共同结论、不同观点、适用条件、局限与对当前论文的启发。区分真实研究事实与待验证假设，引用真实 source ID 和 knowledge ID，保留 dependencies。若输入部分缺失，明确说明分析范围。已有已采纳内容只创建修订候选，不自动批准。`));
+      if(value.theme_title){value.stage='wiki';value.wiki_tasks.push(...this.enqueueWiki(value,value.theme_title,records,`按用户明确主题“${value.theme_title}”生成精简Agent研究记忆。何时读取、核心认识、证据与分歧、未知与待验证、项目关联和深入阅读；不把假设写成事实。`));}
+      else{value.stage='discovery';value.discovery_tasks=this.enqueueWiki(value,'文献主题发现清单',records,'先开放发现文献主题，跨论文聚类去重，再关联项目。项目题目不是边界；不固定生成背景/方法/数据集等栏目主题。遵守 references/wiki.md 的发现清单格式：二级标题严格为“知识主题：具体问题”“候选线索：具体问题”或“研究假设：具体问题”；各项保留实际原始卡片ID或分组Wiki ID及证据链接，说明独立价值。单篇正式主题需写“单篇价值：理由”。最多8个，不凑数，证据不足只列候选线索。清单仅用于主题发现，不返回JSON。','discovery');}
       this.save(value);
     } catch (error) { value.stage = "failed"; value.error = error instanceof Error ? error.message : "知识归纳失败"; this.save(value); this.stopPending(value); }
   }
   private stopPending(value: Analysis) {
-    for (const task of this.tasks(value.project_id, [...value.card_tasks, ...(value.group_history??[]),...value.group_tasks, ...value.wiki_tasks]).filter(pending)) this.agent.cancel(value.project_id, task.task_id);
+    for (const task of this.tasks(value.project_id, [...value.card_tasks, ...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[]), ...value.wiki_tasks]).filter(pending)) this.agent.cancel(value.project_id, task.task_id);
   }
   cancel(project: string) {
     const value = this.read(project); if (!value || !active(value)) return this.status(project);

@@ -32,7 +32,7 @@ except urllib.error.HTTPError as error:
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
 list 使用 kind、page、limit（最多50）分页读取索引；search 使用 kind、query 查询标题与正文，返回片段。get 使用 kind、id、offset、length（最多16000字符）按需读取正文，返回 total/next_offset 和 hash。返回不完整必须继续读取，不能声称已读全文。
-先索引后关键卡片，再按需详细卡片、Wiki、PDF；回答报告材料范围。全项目综合必须分批覆盖所有关键卡片，并记录缺失项。每次 get 在 knowledge-draft 创建该文件完整工作副本，只有实际读取部分才算已阅读。新文档先写 knowledge_version: 2；Wiki level 为 single/topic/overview，主题文件必须明确来源。
+Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，先提取比较、再关联项目，不能受项目题目限制。知识主题、候选线索、待验证假设分开，先读references/wiki.md。先索引后关键卡片，再按需详细卡片、Wiki、PDF；回答报告材料范围。全项目综合必须分批覆盖所有关键卡片，并记录缺失项。每次 get 在 knowledge-draft 创建该文件完整工作副本，只有实际读取部分才算已阅读。新文档先写 knowledge_version: 2；Wiki level 为 single/discovery/topic/hypothesis/overview，主题文件必须明确来源。
 卡片或 Wiki 必须先读取 literature-skill/SKILL.md，直接写 Markdown 到 knowledge-draft/literature/cards/ 或 knowledge-draft/wiki/。每篇卡片同时生成 card-<source_id>-detail.md 和 card-<source_id>-key.md，frontmatter id 与文件名一致，kind=literature-card，source_id 保留真实来源，card_type 分别为 detail/key。Wiki 使用 wiki-<稳定ID>.md，kind=wiki-page。
 先通过 get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"literature/cards/card-source-example-detail.md","expected":null},{"path":"literature/cards/card-source-example-key.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；冲突保留副本，不重试覆盖。双卡片同时提交。
 实验结果仍使用 write，kind=experiment-result，input 为原结构化记录及 base_version。不能编造结果。

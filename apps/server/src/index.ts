@@ -289,7 +289,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if(subpath==='source-analyses' && method==='GET'){
       const docs=new MarkdownKnowledge(store).index(projectId).documents;
-      const tasks=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&(t.snapshot as {prompt_version?:number}).prompt_version===4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
+      const tasks=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
       sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);return {source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),task_id:task?.task_id};}));return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
