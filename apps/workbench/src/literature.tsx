@@ -39,6 +39,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const dragDepth=useRef(0),uploadLock=useRef(false);
   const [libraryQuery,setLibraryQuery]=useState("");
   const [importOpen,setImportOpen]=useState(false);
+  const [regenerateTarget,setRegenerateTarget]=useState<Source>();
+  const [regenerateError,setRegenerateError]=useState("");
   const [documentTarget,setDocumentTarget]=useState<{source:Source;type:string}>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,14 +80,14 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     };
     void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer);};
   },[projectId]);
-  const analyzeSource=async(source:Source)=>{
+  const analyzeSource=async(source:Source,confirmed=false)=>{
     if(submissionLock.current.has(source.source_id))return;
     const previous=analyses.find(item=>item.source_id===source.source_id);
-    const resume=['failed','interrupted','cancelled'].includes(previous?.status??'');
-    if(!resume&&previous?.hasOutputs&&!window.confirm('重新生成这篇论文的基本信息、详细卡片、关键信息卡片和 Wiki 线索？已有版本会保留在历史记录中。'))return;
-    submissionLock.current.add(source.source_id);setSubmitting([...submissionLock.current]);setError('');
-    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs),resume})});if(alive.current)setAnalyses(items=>[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);}
-    catch(cause){if(alive.current)setError(uiError(cause,'无法启动这篇论文的分析，请稍后重试。'));}
+    const resume=!confirmed&&['failed','interrupted','cancelled'].includes(previous?.status??'');
+    if(!confirmed&&!resume&&previous?.hasOutputs){setRegenerateError('');setRegenerateTarget(source);return false;}
+    submissionLock.current.add(source.source_id);setSubmitting([...submissionLock.current]);setError('');setRegenerateError('');
+    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs),resume})});if(alive.current)setAnalyses(items=>[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);return true;}
+    catch(cause){if(alive.current){const message=uiError(cause,'无法启动这篇论文的分析，请稍后重试。');if(confirmed)setRegenerateError(message);else setError(message);}return false;}
     finally{submissionLock.current.delete(source.source_id);if(alive.current)setSubmitting([...submissionLock.current]);}
   };
 
@@ -196,6 +198,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
   return <section className={`literature-page ${fileDragging?'literature-file-dragging':''}`} onDragEnter={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current++;setFileDragging(true);}} onDragOver={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.dataTransfer.dropEffect=importing?'none':'copy';}} onDragLeave={event=>{if(searchOnly)return;event.preventDefault();dragDepth.current=Math.max(0,dragDepth.current-1);if(!dragDepth.current)setFileDragging(false);}} onDrop={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.stopPropagation();dragDepth.current=0;setFileDragging(false);if(importing||uploadLock.current)return;void uploadFiles(event.dataTransfer.files);}}>
     {fileDragging&&!searchOnly&&<div className="literature-drop-overlay" role="status"><FileUp size={30}/><strong>{importing?'正在导入，请稍候':'松开以导入文献'}</strong><span>PDF · BibTeX · RIS · Markdown · 支持多个文件</span></div>}
+    {regenerateTarget&&<RegenerateSourceDialog source={regenerateTarget} busy={submitting.includes(regenerateTarget.source_id)} error={regenerateError} onClose={()=>{if(!submissionLock.current.has(regenerateTarget.source_id))setRegenerateTarget(undefined);}} onConfirm={()=>{void analyzeSource(regenerateTarget,true).then(ok=>{if(ok&&alive.current)setRegenerateTarget(undefined);});}}/>}
     {documentTarget&&<LiteratureDocumentDialog key={documentTarget.source.source_id} projectId={projectId} source={documentTarget.source} initialType={documentTarget.type} onClose={()=>setDocumentTarget(undefined)} onSaved={()=>{void refresh(true);onChanged();}}/>}
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
@@ -276,4 +279,34 @@ function DeleteSourceDialog({ source, busy, blocked, error, onClose, onConfirm }
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button project-delete-confirm" disabled={busy || blocked} onClick={onConfirm}>{busy ? "正在删除…" : "确认删除"}</button></div>
   </div></div></ModalLayer>;
+}
+
+
+function RegenerateSourceDialog({source,busy,error,onClose,onConfirm}:{source:Source;busy:boolean;error:string;onClose:()=>void;onConfirm:()=>void}){
+  const modal=useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    const previous=document.activeElement as HTMLElement|null;
+    modal.current?.querySelector<HTMLButtonElement>('[data-cancel]')?.focus();
+    return()=>{if(previous?.isConnected)previous.focus();};
+  },[]);
+  return <ModalLayer><div className="modal-backdrop literature-regenerate-backdrop" onClick={event=>{if(event.target===event.currentTarget&&!busy)onClose();}}>
+    <div ref={modal} tabIndex={-1} className="modal literature-regenerate-dialog" role="dialog" aria-modal="true" aria-labelledby="literature-regenerate-title" aria-describedby="literature-regenerate-description" aria-busy={busy} onKeyDown={event=>{
+      if(event.key==='Escape'){event.stopPropagation();if(!busy)onClose();}
+      if(event.key==='Tab'){
+        const buttons=Array.from(modal.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')??[]);
+        const first=buttons[0],last=buttons.at(-1);
+        if(!first){event.preventDefault();return;}
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+        else if(!event.shiftKey&&(document.activeElement===last||document.activeElement===modal.current)){event.preventDefault();first.focus();}
+      }
+    }}>
+      <header><span className="literature-regenerate-icon"><Sparkles size={22}/></span><button type="button" className="icon-button" aria-label="关闭重新分析确认" disabled={busy} onClick={onClose}><X size={18}/></button></header>
+      <h2 id="literature-regenerate-title">重新分析这篇论文？</h2>
+      <p id="literature-regenerate-description">将根据论文原文重新生成以下内容，已有版本会保留在历史记录中。</p>
+      <div className="literature-regenerate-paper"><span>当前论文</span><strong>{source.title}</strong></div>
+      <div className="literature-regenerate-outputs"><span>基础信息</span><span>关键卡片</span><span>详细卡片</span><span>Wiki</span></div>
+      {error&&<ErrorNotice>{error}</ErrorNotice>}
+      <footer><button type="button" data-cancel className="secondary-button" disabled={busy} onClick={onClose}>暂不生成</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}>{busy?<LoaderCircle size={15} className="spin"/>:<Sparkles size={15}/>}<span>{busy?'正在提交':'重新生成'}</span></button></footer>
+    </div>
+  </div></ModalLayer>;
 }
