@@ -245,7 +245,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge/document'&&method==='GET'){sendJson(response,200,{document:markdown.read(projectId,url.searchParams.get('id')??'')});return;}
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){
-        if(codeAgent.busy(projectId)||agent.isProjectBusy(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))throw Object.assign(new Error('PROJECT_HAS_ACTIVE_TASKS'),{statusCode:409});
+        // Local saves/reviews use the document hash, not the project-wide Agent lock.
+        // Markdown commits are synchronous; competing writes fail VERSION_CONFLICT.
         if(subpath==='markdown-knowledge/save'){const input=z.object({path:z.string(),text:z.string().max(1024*1024),expected:z.string().nullable()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.save(projectId,input.path,input.text,input.expected)});return;}
         if(subpath==='markdown-knowledge/review'){const input=z.object({path:z.string(),hash:z.string(),status:z.enum(['accepted','rejected'])}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.review(projectId,input.path,input.hash,input.status)});return;}
       }
