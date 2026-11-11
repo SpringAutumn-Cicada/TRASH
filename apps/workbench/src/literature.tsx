@@ -43,6 +43,8 @@ function parseStatusLabel(status: Source["parse_status"]): string {
 
 export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void}) {
   const [detail, setDetail] = useState<ProjectDetail>();
+  const [searchScope,setSearchScope]=useState<'project'|'external'>('project');
+  const [projectSearched,setProjectSearched]=useState(false),[externalSearched,setExternalSearched]=useState(false);
   const [libraryQuery,setLibraryQuery]=useState("");
   const [importOpen,setImportOpen]=useState(false);
   const [rowMenu,setRowMenu]=useState<string>();
@@ -137,15 +139,16 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   };
 
   const runSearch = async (event: React.FormEvent) => {
+    setProjectSearched(false);
     event.preventDefault(); setSearching(true);
-    try { setPassages((await api<{ passages: PassageResponse[] }>(`/projects/${encodeURIComponent(projectId)}/search`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query }) })).passages); }
+    try { setPassages((await api<{ passages: PassageResponse[] }>(`/projects/${encodeURIComponent(projectId)}/search`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query }) })).passages);setProjectSearched(true); }
     catch (cause) { setError(uiError(cause, "检索失败，请重试。")); }
     finally { setSearching(false); }
   };
 
   const runProviderSearch = async (event: React.FormEvent) => {
-    event.preventDefault(); setProviderSearching(true); setSelectedResults(new Set());
-    try { setProviderResults((await api<OpenAlexResponse>(`/literature/openalex/search?q=${encodeURIComponent(providerQuery)}`)).results); }
+    event.preventDefault();setExternalSearched(false); setProviderSearching(true); setSelectedResults(new Set());
+    try { setProviderResults((await api<OpenAlexResponse>(`/literature/openalex/search?q=${encodeURIComponent(providerQuery)}`)).results);setExternalSearched(true);setSelectedResults(new Set()); }
     catch (cause) { setError(uiError(cause, "文献搜索失败，请重试。")); }
     finally { setProviderSearching(false); }
   };
@@ -234,15 +237,12 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
             </section>}
 
           </section>
-          <aside className="literature-tools" hidden={!searchOnly}>
-            <section className="search-section"><div className="section-heading compact"><div><h2>检索项目资料</h2><p>结果会标明原文来源位置</p></div></div><form className="search-form" onSubmit={(event) => void runSearch(event)}><Search size={16}/><input value={query} onChange={(event) => setQuery(event.target.value)} minLength={2} placeholder="检索摘要和已导入正文"/><button className="secondary-button" disabled={searching || query.trim().length < 2}>{searching ? <LoaderCircle size={14} className="spin"/> : <Search size={14}/>}检索</button></form>
-              <div className="passage-results">{passages.map((passage, index) => <article className="passage" key={`${passage.source.source_id}-${index}`}><div className="passage-meta"><button onClick={() => onOpenSource ? onOpenSource(passage.source) : void openSource(passage.source)}>{passage.source.title}</button><span>{locatorLabel(passage.locator)}</span></div><p>{passage.text}</p></article>)}{passages.length === 0 && query.length > 1 && <div className="search-empty">没有匹配的段落。仅含元数据且没有摘要的记录无法检索正文。</div>}</div>
-            </section>
-            <section className="tool-section"><div className="tool-heading"><div><span className="tool-icon openalex-icon">O</span><div><h2>OpenAlex</h2><p>公开学术文献检索</p></div></div></div><form className="provider-search" onSubmit={(event) => void runProviderSearch(event)}><label htmlFor="openalex-query">搜索学术文献</label><div><input id="openalex-query" value={providerQuery} onChange={(event) => setProviderQuery(event.target.value)} minLength={2} placeholder="标题、作者或关键词"/><button className="icon-button search-submit" aria-label="搜索 OpenAlex" title="搜索 OpenAlex" disabled={providerSearching || providerQuery.trim().length < 2}>{providerSearching ? <LoaderCircle size={16} className="spin"/> : <Search size={16}/>}</button></div></form>
-              {providerResults.length > 0 && <><div className="provider-results-heading"><span>{providerResults.length} 条结果</span><button className="text-button" disabled={!selectedResults.size || importing} onClick={() => void importSearchResults()}><Plus size={13}/>{importing ? "正在导入…" : `导入所选（${selectedResults.size}）`}</button></div><div className="provider-results">{providerResults.map((result) => <label className="provider-result" key={result.provider_ref}><input type="checkbox" checked={selectedResults.has(result.provider_ref)} onChange={() => toggleResult(result.provider_ref)}/><span><strong>{result.title}</strong><small>{result.authors.slice(0, 3).join(", ") || "作者信息缺失"}{result.year ? ` · ${result.year}` : ""}</small></span></label>)}</div></>}
-            </section>
-            <section className="tool-section scholar-section"><div className="tool-heading"><div><span className="tool-icon scholar-icon">G</span><div><h2>Google Scholar</h2><p>由你主动发起的网页搜索</p></div></div><ExternalLink size={14}/></div><label htmlFor="scholar-query">搜索词</label><div className="scholar-search"><input id="scholar-query" value={providerQuery} onChange={(event) => setProviderQuery(event.target.value)} placeholder="APT 溯源检测"/><button className="icon-button" aria-label="打开 Google Scholar" title="打开 Google Scholar" onClick={() => window.open(`https://scholar.google.com/scholar?q=${encodeURIComponent(providerQuery)}`, "_blank", "noopener,noreferrer")}><ExternalLink size={15}/></button></div></section>
-            <div className="source-format-note"><strong>支持导入</strong><span>PDF · BibTeX · RIS · Markdown · 公开网页</span></div>
+          <aside className="literature-tools literature-discovery" hidden={!searchOnly}>
+            <header className="library-heading"><h2>搜索文献</h2><p>查找项目资料，或发现新的研究来源。</p></header>
+            <div className="discovery-scope" role="group" aria-label="搜索范围"><button type="button" aria-pressed={searchScope==='project'} onClick={()=>setSearchScope('project')}>项目资料</button><button type="button" aria-pressed={searchScope==='external'} onClick={()=>setSearchScope('external')}>外部文献</button></div>
+            {searchScope==='project'?<section className="discovery-content"><form className="discovery-search" onSubmit={event=>void runSearch(event)}><Search size={17}/><input aria-label="搜索项目资料" value={query} onChange={event=>{setQuery(event.target.value);setProjectSearched(false);}} minLength={2} placeholder="搜索已导入论文的摘要或正文…"/><button type="submit" className="primary-button" disabled={searching||query.trim().length<2}>{searching?<LoaderCircle size={14} className="spin"/>:<Search size={14}/>}搜索</button></form><p className="discovery-note">搜索范围为已导入资料，结果保留原文位置。</p>
+            {projectSearched&&passages.length>0?<div className="discovery-results"><div className="discovery-results-heading">{passages.length} 条匹配段落</div>{passages.map((passage,index)=><article key={`${passage.source.source_id}-${index}`}><header><button type="button" onClick={()=>onOpenSource?onOpenSource(passage.source):void openSource(passage.source)}>{passage.source.title}</button><span>{locatorLabel(passage.locator)}</span></header><p>{passage.text}</p><button type="button" className="text-button" onClick={()=>onOpenSource?onOpenSource(passage.source):void openSource(passage.source)}>查看来源<ExternalLink size={12}/></button></article>)}</div>:<div className="library-empty"><Search size={27}/><strong>{projectSearched?'未找到匹配段落':'从一个研究问题开始'}</strong><p>{projectSearched?'换个关键词再试，只有元数据的论文可能没有可检索正文。':'输入关键词，查找论文中的论点、方法与实验。'}</p></div>}</section>:<section className="discovery-content"><form className="discovery-search" onSubmit={event=>void runProviderSearch(event)}><Search size={17}/><input aria-label="搜索外部文献" value={providerQuery} onChange={event=>{setProviderQuery(event.target.value);setExternalSearched(false);}} minLength={2} placeholder="输入论文标题、作者或关键词…"/><button type="submit" className="primary-button" disabled={providerSearching||providerQuery.trim().length<2}>{providerSearching?<LoaderCircle size={14} className="spin"/>:<Search size={14}/>}搜索</button></form><div className="discovery-provider"><span>文献来源：OpenAlex</span><a href={`https://scholar.google.com/scholar?q=${encodeURIComponent(providerQuery)}`} target="_blank" rel="noreferrer">在 Google Scholar 中搜索<ExternalLink size={12}/></a></div>
+            {externalSearched&&providerResults.length>0?<div className="discovery-results"><div className="discovery-results-heading"><span>{providerResults.length} 条结果</span><button type="button" className="secondary-button" disabled={!selectedResults.size||importing} onClick={()=>void importSearchResults()}><Plus size={13}/>{importing?'正在导入…':`导入所选（${selectedResults.size}）`}</button></div>{providerResults.map(result=><label className="discovery-result" key={result.provider_ref}><input type="checkbox" checked={selectedResults.has(result.provider_ref)} onChange={()=>toggleResult(result.provider_ref)}/><span><strong>{result.title}</strong><small>{result.authors.slice(0,3).join(', ')||'作者信息缺失'}{result.year?` · ${result.year}`:''}</small></span></label>)}</div>:<div className="library-empty"><BookOpen size={27}/><strong>{externalSearched?'未找到匹配文献':'发现新的研究来源'}</strong><p>{externalSearched?'尝试调整标题、作者或关键词。':'检索公开学术文献，勾选结果加入文献库。'}</p></div>}</section>}
           </aside>
         </div>
   </section>;
