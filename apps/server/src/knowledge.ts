@@ -1,3 +1,4 @@
+import {taskSummary,taskEventPage,eventOptions,streamTaskEvents} from './task-events.js';
 import {bibliographyState,saveBibliographyState} from './source-bibliography.js';
 import { createReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -148,10 +149,12 @@ export async function knowledgeRoute(
     }
   }
   if (parts[0] === "knowledge-tasks") {
-    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId) }); return true; }
+    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId).map(task=>url.searchParams.get('summary')==='true'?taskSummary(store,task):task) }); return true; }
     if (!parts[1] && method === "POST") { send(response, 201, { tasks: runner.enqueue(projectId, knowledgeTaskInputSchema.parse(await readJson(request))) }); return true; }
     const task = knowledge.tasks(projectId).find(t => t.task_id === parts[1]);
     if (!task) requestError("NOT_FOUND", 404);
+    if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url)));return true;}
+    if(parts[2]==='stream'&&method==='GET'){streamTaskEvents(store,task,request,response,url);return true;}
     if (parts[2] === "cancel" && method === "POST") { runner.cancel(projectId, task.task_id); send(response,200,{ok:true}); return true; }
     if (parts[2] === "retry" && method === "POST") { if (["running","queued"].includes(task.status)) requestError("TASK_ACTIVE",409); send(response,201,{tasks:runner.enqueue(projectId,{...task.input,regenerate:true},task.task_id)}); return true; }
     if (method === "GET") { send(response,200,{task,events:store.db.prepare("SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq LIMIT 1000").all(task.task_id)}); return true; }

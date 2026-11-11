@@ -1,3 +1,4 @@
+import {closeTaskStreams} from './task-events.js';
 import {bibliographyState} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
 import { createResearchFolder } from "./project-layout.js";
@@ -482,7 +483,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   });
   // Streaming datasets can reach 5 GiB; retain a bounded receive deadline for slow uploads.
   server.requestTimeout = 2 * 60 * 60 * 1000;
-  server.on("close", () => { workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
-  return { server, store, closeConnections: () => {workspaces.close();experiments.terminals.close();} };
+  server.on("close", () => { closeTaskStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
+  return { server, store, closeConnections: () => {closeTaskStreams(store);workspaces.close();experiments.terminals.close();} };
 }
 
