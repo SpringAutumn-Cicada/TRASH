@@ -6,10 +6,11 @@ export const publicationDatePattern=/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/;
 /** Bibliographic corrections are not changes to the original paper or its evidence. */
 export function sourceContentHash(source:Source|undefined){
   if(!source)return '';
-  const {title,year,publication_date,...content}=source;void title;void year;void publication_date;
+  const {title,year,publication_date,authors,...content}=source;void title;void year;void publication_date;void authors;
   return createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
-export type BibliographyState={manual?:string[];revision?:number;suggestion?:{title?:string;publication_date?:string;card_hash:string};history?:{at:string;before:{title:string;year?:number;publication_date?:string};after:{title:string;year?:number;publication_date?:string};card_hash?:string;reason:string}[]};
+export function legacySourceContentHash(source:Source|undefined){if(!source)return '';const {title,year,publication_date,...content}=source;void title;void year;void publication_date;return createHash('sha256').update(JSON.stringify(content)).digest('hex');}
+export type BibliographyState={manual?:string[];revision?:number;suggestion?:{authors?:string[];title?:string;publication_date?:string;card_hash:string};history?:{at:string;before:{authors?:string[];title:string;year?:number;publication_date?:string};after:{authors?:string[];title:string;year?:number;publication_date?:string};card_hash?:string;reason:string}[]};
 export function bibliographyState(store:TrashStore,id:string):BibliographyState{
   store.db.exec('CREATE TABLE IF NOT EXISTS source_bibliography(source_id TEXT PRIMARY KEY,data TEXT NOT NULL)');
   const row=store.db.prepare('SELECT data FROM source_bibliography WHERE source_id=?').get(id) as {data:string}|undefined;
@@ -32,15 +33,17 @@ export function parseBasicCard(text:string){
   if(fields['源码状态']==='官方公开'&&!/https?:\/\//.test(fields['官方源码地址']))throw Object.assign(new Error('BASIC_CODE_URL_INVALID'),{statusCode:422});
   // Require an explicit date basis; preprint is not silently promoted to formal publication.
   const date=fields['发表年月']!=='未核实'&&/日期依据[：:]\s*(正式发表|在线发表)/.test(fields['证据与备注'])?fields['发表年月']:undefined;
-  return {title:fields['标题']==='未核实'?undefined:fields['标题'],publication_date:date};
+  const authors=fields['作者']==='未核实'?undefined:fields['作者'].split(/[、；;]|\s+and\s+|\s*&\s*/).map(s=>s.trim()).filter(Boolean);
+  if(authors&&(authors.length>200||authors.some(s=>s.length>200)))throw Object.assign(new Error('BASIC_CARD_INVALID'),{statusCode:422});
+  return {authors,title:fields['标题']==='未核实'?undefined:fields['标题'],publication_date:date};
 }
-export function applyBasicCard(store:TrashStore,source:Source,text:string,hash:string,baseline?:{title:string;publication_date?:string;year?:number;revision?:number}){
+export function applyBasicCard(store:TrashStore,source:Source,text:string,hash:string,baseline?:{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}){
   const parsed=parseBasicCard(text),state=bibliographyState(store,source.source_id);
   const legacy=store.db.prepare('SELECT data FROM source_details WHERE source_id=?').get(source.source_id) as {data:string}|undefined;
   const legacyDetails=legacy?JSON.parse(legacy.data):{};
   const manual=new Set(state.manual??[]);
   // Existing stored human metadata predating field provenance must also be protected.
-  if(state.revision===undefined){if(legacyDetails.title)manual.add('title');if(legacyDetails.year||legacyDetails.publication_date)manual.add('publication_date');}
+  if(state.revision===undefined){if(legacyDetails.authors?.length)manual.add('authors');if(legacyDetails.title)manual.add('title');if(legacyDetails.year||legacyDetails.publication_date)manual.add('publication_date');}
   const next={...source},suggestion:NonNullable<BibliographyState['suggestion']>={card_hash:hash};
   for(const field of ['title','publication_date'] as const){const proposed=parsed[field];if(!proposed)continue;
     if(field==='publication_date'&&proposed.length===4&&source.publication_date?.startsWith(proposed+'-'))continue;
@@ -48,7 +51,11 @@ export function applyBasicCard(store:TrashStore,source:Source,text:string,hash:s
     if(manual.has(field)||!unchanged){if(proposed!==source[field])suggestion[field]=proposed;continue;}
     next[field]=proposed;if(field==='publication_date')next.year=Number(proposed.slice(0,4));
   }
-  const before={title:source.title,year:source.year,publication_date:source.publication_date},after={title:next.title,year:next.year,publication_date:next.publication_date};
+  if(parsed.authors?.length){const proposed=parsed.authors,changed=JSON.stringify(proposed)!==JSON.stringify(source.authors);
+    const unchanged=baseline&&baseline.revision===(state.revision??0)&&JSON.stringify(baseline.authors)===JSON.stringify(source.authors);
+    if(manual.has('authors')||!unchanged){if(changed)suggestion.authors=proposed;}else next.authors=proposed;
+  }
+  const before={authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date},after={authors:next.authors,title:next.title,year:next.year,publication_date:next.publication_date};
   if(JSON.stringify(before)!==JSON.stringify(after)){store.db.prepare('UPDATE sources SET data=? WHERE source_id=?').run(JSON.stringify(next),source.source_id);state.history=[...(state.history??[]),{at:new Date().toISOString(),before,after,card_hash:hash,reason:'agent-basic-card'}];}
-  state.manual=[...manual];state.suggestion=suggestion.title||suggestion.publication_date?suggestion:undefined;saveBibliographyState(store,source.source_id,state);
+  state.manual=[...manual];state.suggestion=suggestion.authors||suggestion.title||suggestion.publication_date?suggestion:undefined;saveBibliographyState(store,source.source_id,state);
 }

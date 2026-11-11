@@ -57,7 +57,8 @@ export async function knowledgeRoute(
           const updated = { ...source, ...Object.fromEntries(Object.entries(details).filter(([key]) => ["title", "authors", "year", "publication_date", "doi"].includes(key))) };
           if(details.publication_date)updated.year=Number(details.publication_date.slice(0,4));
           const metadata=bibliographyState(store,sourceId),manual=new Set(metadata.manual??[]);
-          const before={title:source.title,year:source.year,publication_date:source.publication_date};
+          const before={authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date};
+          if(details.authors!==undefined&&JSON.stringify(details.authors)!==JSON.stringify(source.authors))manual.add('authors');
           if(details.title!==undefined&&details.title!==source.title)manual.add('title');
           if((details.publication_date!==undefined&&details.publication_date!==source.publication_date)||(details.year!==undefined&&details.year!==source.year))manual.add('publication_date');
           // Confirming a suggested value is an explicit human decision, even if unchanged.
@@ -65,8 +66,8 @@ export async function knowledgeRoute(
           if(details.publication_date!==undefined&&metadata.suggestion?.publication_date===details.publication_date)manual.add('publication_date');
           if(details.year!==undefined&&!details.publication_date&&details.year!==source.year)delete updated.publication_date;
           metadata.manual=[...manual];metadata.revision=(metadata.revision??0)+1;
-          if(metadata.suggestion){if(details.title===metadata.suggestion.title)delete metadata.suggestion.title;if(details.publication_date===metadata.suggestion.publication_date)delete metadata.suggestion.publication_date;if(!metadata.suggestion.title&&!metadata.suggestion.publication_date)metadata.suggestion=undefined;}
-          const after={title:updated.title,year:updated.year,publication_date:updated.publication_date};
+          if(metadata.suggestion){if(details.authors&&JSON.stringify(details.authors)===JSON.stringify(metadata.suggestion.authors)){manual.add('authors');metadata.manual=[...manual];delete metadata.suggestion.authors;}if(details.title===metadata.suggestion.title)delete metadata.suggestion.title;if(details.publication_date===metadata.suggestion.publication_date)delete metadata.suggestion.publication_date;if(!metadata.suggestion.authors&&!metadata.suggestion.title&&!metadata.suggestion.publication_date)metadata.suggestion=undefined;}
+          const after={authors:updated.authors,title:updated.title,year:updated.year,publication_date:updated.publication_date};
           if(JSON.stringify(before)!==JSON.stringify(after))metadata.history=[...(metadata.history??[]),{at:new Date().toISOString(),before,after,reason:'user-metadata'}];
           saveBibliographyState(store,sourceId,metadata);
           if (details.doi) {

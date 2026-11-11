@@ -16,7 +16,7 @@ export function prepareChatWorkspace(store: TrashStore, projectId: string) {
     if(!existsSync(drafts)){const draftRoot=join(projectRoot,'manuscript',...(readFileSync(join(projectRoot,'project.yaml'),'utf8').includes('format_version: 2')?['drafts']:[]));mkdirSync(draftRoot,{recursive:true});symlinkSync(draftRoot,drafts,'dir');}
   }
   writeFileSync(join(path, "project_snapshot.json"), JSON.stringify({ at:new Date().toISOString(),project:store.getProject(projectId),source_count:store.listSources(projectId).length,knowledge_count:new MarkdownKnowledge(store).index(projectId).documents.length,note:'仅项目概览，无知识正文。先 list/search 查询索引，再 get 按需读取；综合必须报告实际覆盖范围。' }),{mode:0o600});
-  writeFileSync(join(path,'bibliography-baselines.json'),JSON.stringify(Object.fromEntries(store.listSources(projectId).map(source=>[source.source_id,{title:source.title,year:source.year,publication_date:source.publication_date,revision:bibliographyState(store,source.source_id).revision??0,content_hash:sourceContentHash(source)}]))),{mode:0o600});
+  writeFileSync(join(path,'bibliography-baselines.json'),JSON.stringify(Object.fromEntries(store.listSources(projectId).map(source=>[source.source_id,{authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date,revision:bibliographyState(store,source.source_id).revision??0,content_hash:sourceContentHash(source)}]))),{mode:0o600});
   writeFileSync(join(path,'knowledge-reads.json'),'[]',{mode:0o600});
   writeFileSync(join(path, "project_tool.py"), `import os,sys,json,urllib.request,urllib.error
 payload=json.load(sys.stdin)

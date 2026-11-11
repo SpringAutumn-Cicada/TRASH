@@ -1,4 +1,4 @@
-import {parseBasicCard,applyBasicCard,sourceContentHash} from './source-bibliography.js';
+import {parseBasicCard,applyBasicCard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
 import type { KnowledgeVersion } from "@trash/protocol";
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, lstatSync, realpathSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -60,7 +60,7 @@ export class MarkdownKnowledge {
     const documents=Object.values(entries).flatMap(e=>e.document?[{...e.document}]:[]);
     for(const doc of documents){
       try{const review=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-reviews/${doc.id}.json`),'utf8'));doc.status=review.hash===doc.hash?review.status:'pending';}catch{doc.status='pending';}
-      if(doc.source_id){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/knowledge-sources/${doc.id}.json`),'utf8'));doc.stale=stamp.hash!==sourceContentHash(this.store.getSource(doc.source_id));}catch{doc.stale=true;}}
+      if(doc.source_id){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/knowledge-sources/${doc.id}.json`),'utf8'));doc.stale=stamp.hash!==sourceContentHash(this.store.getSource(doc.source_id))&&stamp.hash!==legacySourceContentHash(this.store.getSource(doc.source_id));}catch{doc.stale=true;}}
       if(doc.card_type==='key'){const detail=documents.find(d=>d.source_id===doc.source_id&&d.card_type==='detail');try{const pair=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-pairs/${doc.id}.json`),'utf8'));doc.stale=Boolean(doc.stale)||!detail||pair.detail!==detail.hash||pair.key!==doc.hash;}catch{doc.stale=true;}}
       if(doc.kind==='wiki-page'){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-dependencies/${doc.id}.json`),'utf8')) as {path:string;hash:string}[];doc.dependencies=stamp;doc.stale=Boolean(doc.stale)||stamp.some(ref=>documents.find(d=>d.path===ref.path)?.hash!==ref.hash);}catch{doc.dependencies=[];doc.stale=true;}}
     }
@@ -83,7 +83,7 @@ export class MarkdownKnowledge {
     unlinkSync(journal);
   }
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
-  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{title:string;publication_date?:string;year?:number;revision?:number}>={}){
+  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={}){
     this.recover(project);
     if(!files.length||files.length>4||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const file={...original,text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
