@@ -1,3 +1,4 @@
+import {bibliographyState,saveBibliographyState} from './source-bibliography.js';
 import { createReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
@@ -46,14 +47,28 @@ export async function knowledgeRoute(
     if (parts[2] === "details") {
       if (method === "GET") {
         const row = store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(sourceId) as { data: string } | undefined;
-        send(response, 200, { details: row ? JSON.parse(row.data) : sourceDetailsSchema.parse({}), source }); return true;
+        send(response, 200, { details: row ? JSON.parse(row.data) : sourceDetailsSchema.parse({}), source, bibliography:bibliographyState(store,sourceId) }); return true;
       }
       if (method === "PUT") {
         const details = sourceDetailsSchema.parse(await readJson(request));
         const oldDetails=store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(sourceId) as {data:string}|undefined;
         const mergedInto=oldDetails?(JSON.parse(oldDetails.data) as {merged_into?:string}).merged_into:undefined;
         store.db.transaction(() => {
-          const updated = { ...source, ...Object.fromEntries(Object.entries(details).filter(([key]) => ["title", "authors", "year", "doi"].includes(key))) };
+          const updated = { ...source, ...Object.fromEntries(Object.entries(details).filter(([key]) => ["title", "authors", "year", "publication_date", "doi"].includes(key))) };
+          if(details.publication_date)updated.year=Number(details.publication_date.slice(0,4));
+          const metadata=bibliographyState(store,sourceId),manual=new Set(metadata.manual??[]);
+          const before={title:source.title,year:source.year,publication_date:source.publication_date};
+          if(details.title!==undefined&&details.title!==source.title)manual.add('title');
+          if((details.publication_date!==undefined&&details.publication_date!==source.publication_date)||(details.year!==undefined&&details.year!==source.year))manual.add('publication_date');
+          // Confirming a suggested value is an explicit human decision, even if unchanged.
+          if(details.title!==undefined&&metadata.suggestion?.title===details.title)manual.add('title');
+          if(details.publication_date!==undefined&&metadata.suggestion?.publication_date===details.publication_date)manual.add('publication_date');
+          if(details.year!==undefined&&!details.publication_date&&details.year!==source.year)delete updated.publication_date;
+          metadata.manual=[...manual];metadata.revision=(metadata.revision??0)+1;
+          if(metadata.suggestion){if(details.title===metadata.suggestion.title)delete metadata.suggestion.title;if(details.publication_date===metadata.suggestion.publication_date)delete metadata.suggestion.publication_date;if(!metadata.suggestion.title&&!metadata.suggestion.publication_date)metadata.suggestion=undefined;}
+          const after={title:updated.title,year:updated.year,publication_date:updated.publication_date};
+          if(JSON.stringify(before)!==JSON.stringify(after))metadata.history=[...(metadata.history??[]),{at:new Date().toISOString(),before,after,reason:'user-metadata'}];
+          saveBibliographyState(store,sourceId,metadata);
           if (details.doi) {
             const normalized = details.doi.replace(/^https?:\/\/doi.org\//i, "").trim().toLowerCase();
             if (store.listSources(projectId).some(s => s.source_id !== sourceId && s.doi?.replace(/^https?:\/\/doi.org\//i, "").trim().toLowerCase() === normalized)) requestError("DUPLICATE_DOI", 409);

@@ -1,3 +1,4 @@
+import {sourceContentHash} from './source-bibliography.js';
 import { discoverWikiTopics } from "./wiki-topics.js";
 import { projectRuntime } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
@@ -50,11 +51,11 @@ export class LiteratureAnalysis {
       const markdown=new MarkdownKnowledge(this.store);const docs=markdown.index(project).documents;
       for(const source of eligible){
         const prior=this.knowledge.tasks(project).filter(t=>t.input.kind==='literature-card'&&t.input.source_ids[0]===source.source_id&&t.status==='completed').sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
-        const same=prior&&(prior.snapshot as {prompt_version?:number}).prompt_version===5&&JSON.stringify((prior.snapshot as {sources?:unknown[]}).sources)===JSON.stringify([{source,segments:this.store.listSourceSegments(source.source_id)}]);
-        const pair=docs.filter(d=>d.source_id===source.source_id&&['detail','key'].includes(d.card_type??''));
-        if(same&&pair.length===2&&!pair.some(d=>d.stale)&&docs.some(d=>d.id===`wiki-${source.source_id}`&&!d.stale)){value.card_tasks.push(prior.task_id);value.reused_sources!.push(source.source_id);continue;}
-        if(mode==='synthesis'||mode==='overview'||(mode==='missing'&&pair.length===2)||(mode==='changed'&&!pair.length)){if(pair.length===2){if(prior)value.card_tasks.push(prior.task_id);else{value.card_documents!.push(`card-${source.source_id}-key`);value.reused_sources!.push(source.source_id);}}else value.missing_sources!.push(source.source_id);continue;}
-        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的详细卡片、关键卡片，以及面向Agent的简短单篇线索笔记。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。',timeout_seconds:3600,regenerate:false,include_source_wiki:true};
+        const same=prior&&(prior.snapshot as {prompt_version?:number}).prompt_version===6&&(prior.snapshot as {bibliography_baselines?:Record<string,{content_hash:string}>}).bibliography_baselines?.[source.source_id]?.content_hash===sourceContentHash(source);
+        const pair=docs.filter(d=>d.source_id===source.source_id&&['basic','detail','key'].includes(d.card_type??''));
+        if(same&&pair.length===3&&!pair.some(d=>d.stale)&&docs.some(d=>d.id===`wiki-${source.source_id}`&&!d.stale)){value.card_tasks.push(prior.task_id);value.reused_sources!.push(source.source_id);continue;}
+        if(mode==='synthesis'||mode==='overview'||(mode==='missing'&&pair.length===3)||(mode==='changed'&&!pair.length)){if(pair.some(d=>d.card_type==='key')){if(prior)value.card_tasks.push(prior.task_id);else{value.card_documents!.push(`card-${source.source_id}-key`);value.reused_sources!.push(source.source_id);}}else value.missing_sources!.push(source.source_id);continue;}
+        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的基本信息卡片（含源码状态/地址）、详细卡片、关键卡片，以及面向Agent的简短单篇线索笔记。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。',timeout_seconds:3600,regenerate:false,include_source_wiki:true};
         value.card_tasks.push(...this.agent.enqueue(project,input).map(t=>t.task_id));this.save(value);
       }
       if(mode==='missing'||mode==='changed'){value.stage='cards-only';}
@@ -72,7 +73,7 @@ export class LiteratureAnalysis {
   private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string,level?:'discovery'|'topic'|'hypothesis'|'overview') {
     const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>record.title===title&&(!level||record.level===level));
     const refs=records.map(r=>markdown.index(value.project_id).documents.find(d=>d.id===r.object_id)!);
-    if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed'&&(t.snapshot as {prompt_version?:number}).prompt_version===5);if(old)return [old.task_id];}
+    if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed'&&(t.snapshot as {prompt_version?:number}).prompt_version===6);if(old)return [old.task_id];}
     const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: [], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.id } : {}), instructions: `${instructions}。用户要求：${value.instructions??""}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。缺失来源ID：${(value.missing_sources??[]).join(",")||"无"}。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 3600, regenerate: false, wiki_level:level??(value.overview?"overview":"topic") };
     return this.agent.enqueue(value.project_id, input).map(task => task.task_id);
   }

@@ -45,6 +45,7 @@ export const experimentResultSchema = z.object({
 });
 export const sourceDetailsSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(), authors: names.optional(), year: z.number().int().min(1000).max(3000).optional(), doi: z.string().max(500).optional(),
+  publication_date:z.string().regex(/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/).optional(),
   tags: names.default([]), reading_status: z.enum(["unread", "reading", "organized"]).default("unread"),
   purposes: z.array(z.enum(["background", "related-work", "method", "baseline", "dataset", "other"])).default([]), normalized_names: z.record(z.string()).default({})
 }).strict();

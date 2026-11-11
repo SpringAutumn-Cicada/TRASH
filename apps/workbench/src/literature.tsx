@@ -8,7 +8,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string}
+interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -69,6 +69,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
   const submissionLock=useRef(new Set<string>());
+  const completedAnalysis=useRef('');
   useEffect(()=>{
     let active=true,loadingStatus=false;
     type KnowledgeSummary={source_id?:string;kind:string;card_type?:string;stale?:boolean};
@@ -79,6 +80,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
         const [result,first]=await Promise.all([api<SourceAnalysisState[]>(`${base}/source-analyses`),api<{documents:KnowledgeSummary[];total:number}>(`${base}/markdown-knowledge?limit=100&page=1`)]);
         const documents=[...first.documents];
         for(let page=2;documents.length<first.total;page++){const next=await api<{documents:KnowledgeSummary[]}>(`${base}/markdown-knowledge?limit=100&page=${page}`);if(!next.documents.length)break;documents.push(...next.documents);}
+        const completion=result.filter(item=>item.status==='completed').map(item=>item.task_id).sort().join(',');
+        if(active&&completion!==completedAnalysis.current){completedAnalysis.current=completion;const updated=await api<ProjectDetail>(`${base}`);if(active)setDetail(updated);}
         if(active)setAnalyses(result.map(item=>{const docs=documents.filter(d=>d.source_id===item.source_id);return {...item,hasCards:['detail','key'].every(type=>docs.some(d=>d.card_type===type)),hasWiki:docs.some(d=>d.kind==='wiki-page'),stale:docs.some(d=>d.stale)};}));
       }catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}
       finally{loadingStatus=false;}
@@ -88,7 +91,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const analyzeSource=async(source:Source)=>{
     if(submissionLock.current.has(source.source_id))return;
     const previous=analyses.find(item=>item.source_id===source.source_id);
-    if(previous?.hasOutputs&&!window.confirm('重新生成这篇论文的详细卡片、关键信息卡片和单篇 Wiki？已有版本会保留在历史记录中。'))return;
+    if(previous?.hasOutputs&&!window.confirm('重新生成这篇论文的基本信息、详细卡片、关键信息卡片和 Wiki 线索？已有版本会保留在历史记录中。'))return;
     submissionLock.current.add(source.source_id);setSubmitting([...submissionLock.current]);setError('');
     try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs)})});if(alive.current)setAnalyses(items=>[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);}
     catch(cause){if(alive.current)setError(uiError(cause,'无法启动这篇论文的分析，请稍后重试。'));}
@@ -216,7 +219,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
             </div>
             {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
-              <div className="library-table-heading"><span>标题 / 作者</span><span className="library-year">年份</span><span>状态</span><span>操作</span></div>
+              <div className="library-table-heading"><span>标题 / 作者</span><span className="library-year">发表时间</span><span>状态</span><span>操作</span></div>
               {detail.sources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
                 const item=analyses.find(entry=>entry.source_id===source.source_id);
                 const pending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
@@ -224,11 +227,11 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                 const tone=pending?'active':item?.status==='failed'?'failed':item?.stale?'warning':item?.hasCards&&item?.hasWiki?'done':'idle';
                 return <article className="library-row" key={source.source_id}>
                   <button type="button" className="library-paper" onClick={()=>{if(source.source_type==='pdf')window.open(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/pdf-view`,'_blank','noopener,noreferrer');else void openSource(source);}} title={source.title}>
-                    <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(', ')||source.doi||'作者信息未提供'}</small><span className="library-mobile-year">{source.year??'年份未提供'}</span></span>
+                    <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(', ')||source.doi||'作者信息未提供'}</small><span className="library-mobile-year">{source.publication_date??source.year??'发表时间未提供'}</span></span>
                   </button>
-                  <span className="library-year">{source.year??'—'}</span>
-                  <div className="library-state"><span className={`library-status ${tone}`}><i/>{status}</span><small>{pending?'生成双卡片与单篇 Wiki':parseStatusLabel(source.parse_status)}</small>{(item?.hasCards||item?.hasWiki)&&<div className="library-outputs">{item.hasCards&&<a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-key`})}>卡片</a>}{item.hasWiki&&<a href={projectPath(projectId,'wiki',{focus:`wiki-${source.source_id}`})}>Wiki</a>}</div>}{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div>
-                  <div className="library-row-actions"><button type="button" className="library-analyze" title="只分析这篇论文，生成双卡片和单篇 Wiki" aria-label={`分析文献：${source.title}`} disabled={Boolean(deleting)||pending} onClick={()=>void analyzeSource(source)}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}分析</button><div className="library-more" data-literature-menu>
+                  <span className="library-year">{source.publication_date??source.year??'—'}</span>
+                  <div className="library-state"><span className={`library-status ${tone}`}><i/>{status}</span><small>{pending?'生成信息卡片与 Wiki 线索':parseStatusLabel(source.parse_status)}</small>{(item?.hasCards||item?.hasWiki)&&<div className="library-outputs">{item.hasBasic&&<a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-basic`})}>信息</a>}{item.hasCards&&<a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-key`})}>卡片</a>}{item.hasWiki&&<a href={projectPath(projectId,'wiki',{focus:`wiki-${source.source_id}`})}>Wiki</a>}</div>}{item?.metadataPending&&<button type="button" className="text-button" onClick={()=>void openSource(source)}>信息待确认</button>}{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div>
+                  <div className="library-row-actions"><button type="button" className="library-analyze" title="只分析这篇论文，生成三种卡片和 Wiki 线索" aria-label={`分析文献：${source.title}`} disabled={Boolean(deleting)||pending} onClick={()=>void analyzeSource(source)}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}分析</button><div className="library-more" data-literature-menu>
                     <button type="button" className="icon-button" aria-label={`更多操作：${source.title}`} aria-expanded={rowMenu===source.source_id} aria-controls={`source-menu-${source.source_id}`} onClick={()=>{setRowMenu(current=>current===source.source_id?undefined:source.source_id);setImportOpen(false);}}><MoreHorizontal size={17}/></button>
                     {rowMenu===source.source_id&&<div className="library-popover library-row-menu" id={`source-menu-${source.source_id}`}><button type="button" onClick={()=>{setRowMenu(undefined);void openSource(source);}}><Info size={14}/>文献信息</button><button type="button" disabled={Boolean(deleting)||pending} onClick={()=>{setRowMenu(undefined);void analyzeSource(source);}}><Sparkles size={14}/>{item?.hasOutputs?'重新分析':'分析此篇'}</button><button type="button" className="library-danger" disabled={Boolean(deleting)||pending} onClick={()=>{setRowMenu(undefined);setDeleteError('');setDeleteTarget(source);}}><Trash2 size={14}/>删除文献</button></div>}
                   </div></div>

@@ -110,6 +110,7 @@ export const sourceSchema = z.object({
   title: z.string().trim().min(1),
   authors: z.array(z.string().min(1)),
   year: z.number().int().min(1000).max(3000).optional(),
+  publication_date:z.string().regex(/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/).optional(),
   doi: z.string().optional(),
   source_type: z.enum(["pdf", "bibtex", "ris", "markdown", "webpage", "openalex"]),
   source_url: z.string().url().optional(),
