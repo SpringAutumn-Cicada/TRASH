@@ -1,3 +1,4 @@
+import {KnowledgeRelations} from './knowledge-relations.js';
 import React,{useEffect,useRef,useState} from 'react';
 import {LoaderCircle,Save,X} from 'lucide-react';
 import type {Source} from '@trash/protocol';
@@ -10,9 +11,9 @@ import './markdown-knowledge.css';
 
 type Document={id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean};
 const tabs=[['basic','基础信息'],['key','关键卡片'],['detail','详细卡片'],['wiki','Wiki']];
-export function LiteratureDocumentDialog({projectId,source,initialType,onClose,onSaved}:{projectId:string;source:Source;initialType:string;onClose:()=>void;onSaved:()=>void}){
+export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved}:{projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
-  const [type,setType]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState('');
+  const [type,setType]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
   const [loading,setLoading]=useState(true),[directoryLoaded,setDirectoryLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[editing,setEditing]=useState(false),[draft,setDraft]=useState('');
   const [history,setHistory]=useState<{hash:string;text:string}[]>(),[reload,setReload]=useState(0);
   const root=useRef<HTMLDivElement>(null),acting=useRef(false);
@@ -32,7 +33,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType,onClose,o
       }catch(e){if(active){setLoading(false);setDirectoryLoaded(true);setError(uiError(e,'无法读取文档目录。'));}}
     })();return()=>{active=false;};
   },[base,reload]);
-  const selected=linked||documents.find(d=>d.source_id===source.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
+  const selected=linked||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
   useEffect(()=>{
     let active=true;setDoc(undefined);setEditing(false);setHistory(undefined);setError('');setLoading(Boolean(selected));
     if(selected)void api<{document:Document}>(base+'/document?id='+encodeURIComponent(selected)).then(data=>{if(active){setDoc(data.document);setDraft(data.document.text);}}).catch(e=>{if(active)setError(uiError(e,'无法读取文档。'));}).finally(()=>{if(active)setLoading(false);});
@@ -45,8 +46,8 @@ export function LiteratureDocumentDialog({projectId,source,initialType,onClose,o
       if(event.key==='Escape'){event.stopPropagation();close();}
       if(event.key==='Tab'){const nodes=Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')??[]).filter(node=>node.getClientRects().length);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
     }}>
-      <header><div><small>论文内容</small><h3 id="literature-document-title">{source.title}</h3></div><button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button></header>
-      <nav className="library-document-tabs" aria-label="内容类型">{tabs.map(([value,label])=><button type="button" key={value} aria-pressed={!linked&&type===value} disabled={busy||!documents.some(d=>d.source_id===source.source_id&&(value==='wiki'?d.kind==='wiki-page':d.card_type===value))} onClick={()=>change(value)}>{label}</button>)}</nav>
+      <header><div><small>论文内容</small><h3 id="literature-document-title">{source?.title??doc?.title??'关联知识'}</h3></div><button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button></header>
+      {source&&<nav className="library-document-tabs" aria-label="内容类型">{tabs.map(([value,label])=><button type="button" key={value} aria-pressed={!linked&&type===value} disabled={busy||!documents.some(d=>Boolean(source)&&d.source_id===source?.source_id&&(value==='wiki'?d.kind==='wiki-page':d.card_type===value))} onClick={()=>change(value)}>{label}</button>)}</nav>}
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       <div className="library-document-scroll">
         {(loading||!directoryLoaded)?<p role="status"><LoaderCircle className="spin" size={16}/> 正在读取内容…</p>:doc?<>
@@ -57,6 +58,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType,onClose,o
             if(url.pathname.startsWith(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/`)&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
             const path=url.pathname.slice(1),next=documents.find(d=>d.path===path);if(next){setLinked(next.id);setHistory(undefined);}else setError('关联文档尚未生成或无法查看。');
           }}><ChatMarkdown text={doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')} allowRelativeLinks/></div>}
+          {!editing&&<KnowledgeRelations projectId={projectId} id={doc.id} hash={doc.hash} onOpen={id=>{setLinked(id);setHistory(undefined);}}/>}
           {history&&<section className="library-document-history"><h4>版本历史</h4>{history.length?history.map(version=><details key={version.hash}><summary>快照 {version.hash.slice(0,10)}</summary><pre>{version.text}</pre></details>):<p>暂无历史版本。</p>}</section>}
         </>:!error&&<p>该内容尚未生成，请先分析这篇论文。</p>}
       </div>

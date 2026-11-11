@@ -114,7 +114,7 @@ export class MarkdownKnowledge {
     const terms=[...new Set([...new Intl.Segmenter('zh',{granularity:'word'}).segment(query.toLowerCase())].filter(item=>item.isWordLike&&item.segment.length>1).map(item=>item.segment))].slice(0,30);
     const score=(d:typeof docs[number])=>terms.reduce((n,t)=>n+Number((d.title+' '+(d.aliases??[]).join(' ')).toLowerCase().includes(t))*8,0);
     const hits=terms.length?new Map((this.store.db.prepare(`SELECT path,(${terms.map(()=>"CASE WHEN instr(lower(text),?)>0 THEN 1 ELSE 0 END").join('+')}) AS score FROM knowledge_search_v2 WHERE project=?`).all(...terms,project) as {path:string;score:number}[]).map(row=>[row.path,row.score])):new Map<string,number>();
-    const ranked=docs.map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
+    const ranked=docs.filter(d=>d.kind==='wiki-page'||d.card_type==='key').map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
     const selected=ranked.slice(0,6).map(v=>v.d);
     for(const d of [...selected])for(const path of [...(d.dependencies??[]).map(r=>r.path),...(d.links??[]).map(l=>l.path)]){
       const related=docs.find(item=>item.path===path);if(related&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);

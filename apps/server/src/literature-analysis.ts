@@ -76,7 +76,7 @@ export class LiteratureAnalysis {
   status(project: string) {
     const value = this.read(project); if (!value) return null;
     const summarize = (ids: string[]) => { const tasks = this.tasks(project, ids); return { total: ids.length, completed: tasks.filter(task => task.status === "completed").length, failed: ids.length - tasks.filter(task => task.status === "completed" || pending(task)).length, active: tasks.filter(pending).length }; };
-    return { ...value, cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
+    return { ...value, can_resume:!active(value)&&[...value.card_tasks,...value.group_tasks,...(value.discovery_tasks??[]),...value.wiki_tasks].some(id=>['failed','interrupted','cancelled'].includes(this.tasks(project,[id])[0]?.status??'')), cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
   }
   start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string;incremental?:boolean;integration_task?:string}={}) {
     const current = this.read(project); if (current && active(current)) return this.status(project);
@@ -140,7 +140,7 @@ export class LiteratureAnalysis {
       }
       if(value.stage==='wiki'&&!value.overview&&!value.theme_title){
         const records=[...this.records(project,value.wiki_tasks),...this.records(project,value.discovery_tasks??[])];if(!records.length)throw new Error('主题综合无成功结果');
-        value.overview=true;value.wiki_tasks.push(...this.enqueueWiki(value,'项目知识总览',records,'增量修订Agent研究记忆导航，保留已有主题入口与人工方向，不删除本轮未提供的旧知识；本轮只更新直接相关认识：何时读取、研究目标、关键认识、主题链接、候选线索与待验证假设、待解决问题。保留暂无直接项目关联的独立知识主题。500–1000字，不把假设写成事实，不替用户决定方向。'));this.save(value);return;
+        value.overview=true;value.wiki_tasks.push(...this.enqueueWiki(value,'项目知识总览',records,'增量修订Agent研究记忆导航，保留已有主题入口与人工方向，不删除本轮未提供的旧知识；本轮只更新直接相关认识：何时读取、研究目标、关键认识、主题链接、候选线索与待验证假设、待解决问题。保留暂无直接项目关联的独立知识主题。400–800字，不把假设写成事实，不替用户决定方向。'));this.save(value);return;
       }
       if (value.stage === "wiki") {
         const tasks = this.tasks(project, [...value.card_tasks, ...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[]), ...value.wiki_tasks]);

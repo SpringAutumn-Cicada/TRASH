@@ -81,11 +81,15 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
     const ledger=projectRuntime(store.root,projectId,'agent-workspace','knowledge-reads.json');let refs:{path:string;hash:string}[]=[];try{refs=JSON.parse(readFileSync(ledger,'utf8'));}catch{/* No read dependencies. */}
     const index=markdown.index(projectId).documents;
     const evidence=new Set(files.flatMap(file=>(markdown.parse(projectId,file.path,file.text).links??[]).filter(l=>l.evidence).map(l=>l.path)));
-    refs=refs.filter(ref=>evidence.has(ref.path));
+    refs=[...new Map(refs.filter(ref=>evidence.has(ref.path)).map(ref=>[ref.path,ref])).values()];
     for(const path of evidence){if(files.some(file=>file.path===path))continue;const current=index.find(d=>d.path===path);if(!current)experimentError('DEPENDENCY_NOT_FOUND',404);const read=refs.find(ref=>ref.path===path);if(!read||current.hash!==read.hash)experimentError('VERSION_CONFLICT',409);}
 
     const baselines=JSON.parse(readFileSync(projectRuntime(store.root,projectId,'agent-workspace','bibliography-baselines.json'),'utf8'));for(const file of files.filter(f=>f.path.endsWith('-basic.md'))){const id=markdown.parse(projectId,file.path,file.text).source_id!;if(!baselines[id]||baselines[id].content_hash!==sourceContentHash(store.getSource(id)))experimentError('VERSION_CONFLICT',409);}
-    const records=markdown.commit(projectId,files,baselines);for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...refs.filter(r=>r.path!==record.path&&!records.some(output=>output.path===r.path)),...records.filter(output=>output.kind==='literature-card'&&evidence.has(output.path)).map(({path,hash})=>({path,hash}))],true);
+    const records=markdown.commit(projectId,files,baselines);
+    for(const record of records.filter(r=>r.kind==='wiki-page')){
+      const declared=new Set((record.links??[]).filter(link=>link.evidence).map(link=>link.path));
+      markdown.stamp(projectId,record.id,[...refs.filter(r=>declared.has(r.path)&&r.path!==record.path&&!records.some(output=>output.path===r.path)),...records.filter(output=>declared.has(output.path)&&output.path!==record.path).map(({path,hash})=>({path,hash}))],true);
+    }
     return {records};
   }
   if(value.kind&&value.kind!=='experiment-result'){
