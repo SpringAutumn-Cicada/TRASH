@@ -243,6 +243,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
       const markdown=new MarkdownKnowledge(store);
       if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true'}));return;}
+      if(subpath==='markdown-knowledge/relations'&&method==='GET'){sendJson(response,200,markdown.relations(projectId,url.searchParams.get('id')??''));return;}
+      if(subpath==='markdown-knowledge/health'&&method==='GET'){sendJson(response,200,markdown.health(projectId));return;}
+      if(subpath==='markdown-knowledge/navigation'&&method==='GET'){const input=z.object({page:z.coerce.number().int().min(1).default(1),limit:z.coerce.number().int().min(1).max(100).default(30),q:z.string().max(500).optional()}).parse(Object.fromEntries(url.searchParams));sendJson(response,200,markdown.navigation(projectId,input));return;}
+      if(subpath==='markdown-knowledge/context'&&method==='GET'){const input=z.object({q:z.string().min(1).max(500),budget:z.coerce.number().int().min(1000).max(24000).default(16000)}).parse(Object.fromEntries(url.searchParams));sendJson(response,200,markdown.context(projectId,input.q,input.budget));return;}
+      if(subpath==='markdown-knowledge/log'&&method==='GET'){const page=z.coerce.number().int().positive().default(1).parse(url.searchParams.get('page')??undefined);sendJson(response,200,markdown.operations(projectId,page));return;}
       if(subpath==='markdown-knowledge/document'&&method==='GET'){sendJson(response,200,{document:markdown.read(projectId,url.searchParams.get('id')??'')});return;}
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){

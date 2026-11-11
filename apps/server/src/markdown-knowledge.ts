@@ -1,12 +1,13 @@
+import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
 import {parseBasicCard,applyBasicCard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
 import type { KnowledgeVersion } from "@trash/protocol";
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, lstatSync, realpathSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, lstatSync, realpathSync, renameSync, writeFileSync, unlinkSync, appendFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[]};
+export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[]};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
@@ -38,7 +39,7 @@ export class MarkdownKnowledge {
     const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
-    return {id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    return {links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
@@ -49,13 +50,18 @@ export class MarkdownKnowledge {
     type Entry={signature:string;document?:Omit<MarkdownDocument,'text'>;error?:string};
     let old:Record<string,Entry>={};try{old=JSON.parse(readFileSync(this.internal(project,'.trash/knowledge-index-v2.json'),'utf8')).entries??{};}catch{/* Rebuildable index. */}
     const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
-    for(const dir of ['literature/cards','wiki']){const root=this.internal(project,dir);if(!existsSync(root))continue;for(const name of readdirSync(root).filter(n=>n.endsWith('.md'))){const path=dir+'/'+name;try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`memory-hint-1:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    for(const dir of ['literature/cards','wiki']){const root=this.internal(project,dir);if(!existsSync(root))continue;for(const name of readdirSync(root).filter(n=>n.endsWith('.md'))){const path=dir+'/'+name;try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`memory-links-2:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
       if(!force&&old[path]?.signature===signature)entries[path]=old[path];
       else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
       if(entries[path].error)errors.push({path,error:entries[path].error!});
     }catch(error){entries[path]={signature:'error',error:error instanceof Error?error.message:'KNOWLEDGE_FILE_INVALID'};errors.push({path,error:entries[path].error!});}}}
     this.store.db.transaction(()=>{for(const [path,entry] of Object.entries(entries)){if(!entry.document){this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,path);continue;}const cached=this.store.db.prepare('SELECT hash FROM knowledge_search_v2 WHERE project=? AND path=?').get(project,path) as {hash:string}|undefined;if(force||cached?.hash!==entry.document.hash)this.store.db.prepare('INSERT OR REPLACE INTO knowledge_search_v2(project,path,hash,text) VALUES(?,?,?,?)').run(project,path,entry.document.hash,readFileSync(this.locate(project,path),'utf8'));}for(const row of this.store.db.prepare('SELECT path FROM knowledge_search_v2 WHERE project=?').all(project) as {path:string}[])if(!entries[row.path]?.document)this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,row.path);})();
-    if(force||JSON.stringify(entries)!==JSON.stringify(old))this.writeIndex(project,{version:2,entries});
+    if(force||JSON.stringify(entries)!==JSON.stringify(old)){
+      this.writeIndex(project,{version:2,entries});
+      const lines=['# Wiki 导航','平台生成，可从 Markdown 重建；按需检索，不要求每轮全文读取。',''];
+      for(const entry of Object.values(entries)){const d=entry.document;if(d?.kind==='wiki-page')lines.push(`- [${d.title.replace(/[\[\]\r\n]/g,' ')}](../${d.path}) · ${d.level} · ${d.summary??''}`);}
+      const file=this.internal(project,'.trash/wiki-index.md');writeFileSync(file+'.tmp',lines.join('\n')+'\n',{mode:0o600});renameSync(file+'.tmp',file);
+    }
     const documents=Object.values(entries).flatMap(e=>e.document?[{...e.document}]:[]);
     for(const doc of documents){
       doc.status='accepted'; // Legacy wire status: validated Markdown is immediately usable.
@@ -71,8 +77,63 @@ export class MarkdownKnowledge {
   list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.read(project,d.id))};}
   query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean}={}){
     const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level));
-    const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
+    const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+(doc.aliases??[]).join(' ')+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
     const limit=Math.min(100,Math.max(1,options.limit??30)),page=Math.max(1,options.page??1);return {documents:docs.slice((page-1)*limit,page*limit).map(d=>({...d,...(matches[d.id]?{snippet:matches[d.id]}:{})})),total:docs.length,page,limit,errors:indexed.errors};
+  }
+  relations(project:string,id:string){
+    const docs=this.index(project).documents,doc=docs.find(d=>d.id===id);if(!doc)fail('NOT_FOUND',404);
+    const describe=(path:string)=>{const target=docs.find(d=>d.path===path);return {id:target?.id,path,title:target?.title??path,missing:!target,stale:target?.stale??false};};
+    return {
+      id,
+      evidence:(doc.dependencies??[]).map(ref=>({...describe(ref.path),hash:ref.hash,changed:docs.find(d=>d.path===ref.path)?.hash!==ref.hash,relation:'依据',reason:doc.links?.find(l=>l.path===ref.path&&l.evidence)?.reason??'生成或编辑时记录的依据'})),
+      related:(doc.links??[]).filter(link=>!link.evidence).map(link=>({...describe(link.path),relation:link.relation,reason:link.reason})),
+      backlinks:docs.filter(d=>d.id!==id).flatMap(d=>{
+        const links=(d.links??[]).filter(l=>l.path===doc.path);
+        if(links.length)return links.map(l=>({...describe(d.path),relation:l.relation,reason:l.reason,evidence:l.evidence}));
+        return d.dependencies?.some(r=>r.path===doc.path)?[{...describe(d.path),relation:'依据',reason:'生成时作为依据',evidence:true}]:[];
+      }),
+      broken:(doc.links??[]).filter(link=>!docs.some(d=>d.path===link.path)).map(link=>({...describe(link.path),relation:link.relation,reason:link.reason}))
+    };
+  }
+  health(project:string){
+    const {documents:docs,errors}=this.index(project);
+    const links=docs.flatMap(d=>(d.links??[]).map(link=>({from:d.id,...link})));
+    return {documents:docs.length,edges:links.length,
+      broken:links.filter(link=>!docs.some(d=>d.path===link.path)),
+      orphans:docs.filter(d=>d.kind==='wiki-page'&&d.level!=='overview'&&!d.links?.length&&!d.dependencies?.length&&!links.some(link=>link.path===d.path)).map(d=>({id:d.id,title:d.title})),
+      stale:docs.filter(d=>d.stale).map(d=>({id:d.id,title:d.title})),
+      duplicate_titles:docs.filter(d=>d.kind==='wiki-page').flatMap((d,i,all)=>all.slice(i+1).filter(other=>other.title.replace(/\s/g,'').toLowerCase()===d.title.replace(/\s/g,'').toLowerCase()).map(other=>({ids:[d.id,other.id],title:d.title}))),errors,
+      note:'仅结构检查；结论真实性、语义重复与分歧需要阅读证据后判断。'};
+  }
+  navigation(project:string,options:{page?:number;limit?:number;q?:string}={}){
+    const result=this.query(project,{...options,kind:'wiki-page'});
+    return {...result,documents:result.documents.map(d=>({id:d.id,path:d.path,title:d.title,aliases:d.aliases,level:d.level,summary:d.summary,stale:d.stale,hash:d.hash}))};
+  }
+  context(project:string,query:string,budget=16000){
+    const docs=this.index(project).documents;
+    const terms=[...new Set(query.toLowerCase().split(/[\s，,。;；?？、]+/).filter(Boolean))].slice(0,30);
+    const score=(d:typeof docs[number])=>terms.reduce((n,t)=>n+Number((d.title+' '+(d.aliases??[]).join(' ')).toLowerCase().includes(t))*8,0);
+    const ranked=docs.map(d=>({d,score:score(d)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
+    const selected=ranked.slice(0,6).map(v=>v.d);
+    for(const d of [...selected])for(const path of [...(d.dependencies??[]).map(r=>r.path),...(d.links??[]).map(l=>l.path)]){
+      const related=docs.find(item=>item.path===path);if(related&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
+    }
+    let remaining=Math.min(24000,Math.max(1000,budget));const omitted:string[]=[];
+    const records=selected.flatMap(d=>{const text=this.read(project,d.id).text;if(text.length>remaining){omitted.push(d.id);return [];}remaining-=text.length;return [{id:d.id,path:d.path,title:d.title,hash:d.hash,stale:d.stale,text}];});
+    return {query,documents:records,omitted,characters:records.reduce((n,d)=>n+d.text.length,0),candidates:ranked.length,note:'仅提供匹配页面及一跳关联；遗漏项可用 get 继续读取，不代表全库覆盖。'};
+  }
+  recordOperation(project:string,operation:string,documents:{id:string;path:string;hash:string}[],note=''){
+    this.store.db.exec('CREATE TABLE IF NOT EXISTS knowledge_memory_events(id TEXT PRIMARY KEY,project TEXT NOT NULL,at TEXT NOT NULL,operation TEXT NOT NULL,data TEXT NOT NULL)');
+    const at=new Date().toISOString();
+    this.store.db.prepare('INSERT INTO knowledge_memory_events VALUES(?,?,?,?,?)').run(randomUUID(),project,at,operation,JSON.stringify({documents,note}));
+    const file=this.internal(project,'.trash/wiki-log.md');mkdirSync(dirname(file),{recursive:true});
+    appendFileSync(file,`## [${at}] ${operation}\n${documents.map(d=>`- ${d.path} @ ${d.hash}`).join('\n')}\n${note.replace(/\r?\n/g,' ')}\n\n`,{mode:0o600});
+  }
+  operations(project:string,page=1){
+    this.store.db.exec('CREATE TABLE IF NOT EXISTS knowledge_memory_events(id TEXT PRIMARY KEY,project TEXT NOT NULL,at TEXT NOT NULL,operation TEXT NOT NULL,data TEXT NOT NULL)');
+    const total=(this.store.db.prepare('SELECT count(*) AS n FROM knowledge_memory_events WHERE project=?').get(project) as {n:number}).n;
+    const events=(this.store.db.prepare('SELECT id,at,operation,data FROM knowledge_memory_events WHERE project=? ORDER BY at DESC,id DESC LIMIT 30 OFFSET ?').all(project,(Math.max(1,page)-1)*30) as {id:string;at:string;operation:string;data:string}[]).map(row=>({...row,...JSON.parse(row.data),data:undefined}));
+    return {events,total,page,limit:30};
   }
   stamp(project:string,id:string,refs:{path:string;hash:string}[]){const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
   private recover(project:string){
@@ -103,8 +164,12 @@ export class MarkdownKnowledge {
     }catch(error){this.recover(project);throw error;}
     for(const file of staged.filter(f=>f.doc.card_type==='basic')){const source=this.store.getSource(file.doc.source_id!);if(source)this.store.db.transaction(()=>applyBasicCard(this.store,source,file.text,file.doc.hash,baselines[source.source_id]))();}
     const detail=staged.find(f=>f.doc.card_type==='detail'),key=staged.find(f=>f.doc.card_type==='key');if(detail&&key&&detail.doc.source_id===key.doc.source_id){const stamp=this.internal(project,`.trash/markdown-pairs/${key.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({detail:detail.doc.hash,key:key.doc.hash}),{mode:0o600});}
-    for(const file of staged.filter(file=>file.doc.kind==='wiki-page')){const refs:{path:string;hash:string}[]=[];for(const match of file.text.matchAll(/\[[^\]]+\]\(([^)\s]+)\)/g)){try{const path=new URL(match[1],'https://knowledge.local/'+file.path).pathname.slice(1);const target=this.locate(project,path);if(existsSync(target))refs.push({path,hash:digest(readFileSync(target,'utf8'))});}catch{/* External or non-knowledge link. */}}const stamp=this.internal(project,`.trash/markdown-dependencies/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify(refs),{mode:0o600});}
+    for(const file of staged.filter(file=>file.doc.kind==='wiki-page')){
+      const refs=(file.doc.links??[]).filter(link=>link.evidence).flatMap(link=>{try{const target=this.locate(project,link.path);return existsSync(target)?[{path:link.path,hash:digest(readFileSync(target,'utf8'))}]:[];}catch{return [];}});
+      this.stamp(project,file.doc.id,refs);
+    }
     for(const file of staged.filter(f=>f.doc.source_id)){const stamp=this.internal(project,`.trash/knowledge-sources/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({hash:sourceContentHash(this.store.getSource(file.doc.source_id!))}),{mode:0o600});}
+    this.recordOperation(project,'publish',staged.map(f=>({id:f.doc.id,path:f.path,hash:f.doc.hash})));
     return staged.map(f=>f.doc);
   }
   history(project:string,id:string){if(!/^[A-Za-z0-9_-]+$/.test(id))fail('INVALID_REQUEST',400);const dir=this.internal(project,`.trash/markdown-history/${id}`);return existsSync(dir)?readdirSync(dir).filter(n=>/^[a-f0-9]{64}\.md$/.test(n)).map(n=>({hash:n.slice(0,-3),text:readFileSync(join(dir,n),'utf8')})):[];}
