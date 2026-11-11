@@ -9,7 +9,7 @@ import {ErrorNotice} from './error-notice.js';
 import {useUnsavedChanges} from './navigation.js';
 import './markdown-knowledge.css';
 
-type Document={id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean};
+type Document={id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
 const tabs=[['basic','基础信息'],['key','关键卡片'],['detail','详细卡片'],['wiki','Wiki']];
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved}:{projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
@@ -57,7 +57,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
             event.preventDefault();const url=new URL(href,'https://knowledge.local/'+doc.path);
             if(url.pathname.startsWith(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/`)&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
             const path=url.pathname.slice(1),next=documents.find(d=>d.path===path);if(next){setLinked(next.id);setHistory(undefined);}else setError('关联文档尚未生成或无法查看。');
-          }}><ChatMarkdown text={doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')} allowRelativeLinks/></div>}
+          }}><ChatMarkdown text={doc.kind==='wiki-page'&&doc.level==='single'?doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/^#\s+.+$/m,()=>`# ${doc.title}`):doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')} allowRelativeLinks/></div>}
           {!editing&&<KnowledgeRelations projectId={projectId} id={doc.id} hash={doc.hash} onOpen={id=>{setLinked(id);setHistory(undefined);}}/>}
           {history&&<section className="library-document-history"><h4>版本历史</h4>{history.length?history.map(version=><details key={version.hash}><summary>快照 {version.hash.slice(0,10)}</summary><pre>{version.text}</pre></details>):<p>暂无历史版本。</p>}</section>}
         </>:!error&&<p>该内容尚未生成，请先分析这篇论文。</p>}
