@@ -1,13 +1,14 @@
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
+import "./literature-ui.css";
 import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
-import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
+import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, Trash2, X, MoreHorizontal, ChevronDown, BookOpen, Info } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;task_id?:string}
+interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -42,6 +43,9 @@ function parseStatusLabel(status: Source["parse_status"]): string {
 
 export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void}) {
   const [detail, setDetail] = useState<ProjectDetail>();
+  const [libraryQuery,setLibraryQuery]=useState("");
+  const [importOpen,setImportOpen]=useState(false);
+  const [rowMenu,setRowMenu]=useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -61,7 +65,22 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
   const submissionLock=useRef(new Set<string>());
-  useEffect(()=>{let active=true;const load=async()=>{try{const result=await api<SourceAnalysisState[]>(`/projects/${encodeURIComponent(projectId)}/source-analyses`);if(active)setAnalyses(result);}catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}};void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer);};},[projectId]);
+  useEffect(()=>{
+    let active=true,loadingStatus=false;
+    type KnowledgeSummary={source_id?:string;kind:string;card_type?:string;stale?:boolean};
+    const load=async()=>{
+      if(loadingStatus)return;loadingStatus=true;
+      try{
+        const base=`/projects/${encodeURIComponent(projectId)}`;
+        const [result,first]=await Promise.all([api<SourceAnalysisState[]>(`${base}/source-analyses`),api<{documents:KnowledgeSummary[];total:number}>(`${base}/markdown-knowledge?limit=100&page=1`)]);
+        const documents=[...first.documents];
+        for(let page=2;documents.length<first.total;page++){const next=await api<{documents:KnowledgeSummary[]}>(`${base}/markdown-knowledge?limit=100&page=${page}`);if(!next.documents.length)break;documents.push(...next.documents);}
+        if(active)setAnalyses(result.map(item=>{const docs=documents.filter(d=>d.source_id===item.source_id);return {...item,hasCards:['detail','key'].every(type=>docs.some(d=>d.card_type===type)),hasWiki:docs.some(d=>d.kind==='wiki-page'),stale:docs.some(d=>d.stale)};}));
+      }catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}
+      finally{loadingStatus=false;}
+    };
+    void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer);};
+  },[projectId]);
   const analyzeSource=async(source:Source)=>{
     if(submissionLock.current.has(source.source_id))return;
     const previous=analyses.find(item=>item.source_id===source.source_id);
@@ -74,9 +93,11 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
 
   const alive = useRef(true);
   const sourceRequest = useRef(0);
+  useEffect(()=>{const close=(event:PointerEvent)=>{const target=event.target as Element;if(!target.closest('.library-import'))setImportOpen(false);if(!target.closest('.library-more'))setRowMenu(undefined);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){const trigger=document.activeElement?.closest('.library-import,.library-more')?.querySelector<HTMLButtonElement>('button[aria-expanded]');setImportOpen(false);setRowMenu(undefined);trigger?.focus();}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useUnsavedChanges(Boolean(urlValue.trim()) || importing);
   useEffect(() => {
+    if (action === "import") {setImportOpen(true);}
     if (action === "import") document.querySelector<HTMLInputElement>('[aria-label="导入文献文件"]')?.focus();
   }, [action, loading]);
   useEffect(() => {
@@ -172,16 +193,39 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
   return <section className="literature-page">
-    {!searchOnly && <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing || Boolean(deleting)} onChanged={onChanged}/>}
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
           <section className="literature-main" hidden={searchOnly}>
-            <div className="section-heading"><div><h2>项目文献</h2><p>已导入的文献记录和来源文件</p></div><label className="primary-button upload-button"><FileUp size={15} />{importing ? "正在导入…" : "导入文件"}<input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={(event) => { void uploadFiles(event.target.files); event.currentTarget.value = ""; }} /></label></div>
-            <form className="url-import" onSubmit={(event) => void importUrl(event)}><Link size={15} className="link-icon" /><input type="url" required value={urlValue} onChange={(event) => setUrlValue(event.target.value)} placeholder="导入公开网页地址"/><button className="secondary-button" disabled={importing}>{importing ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}添加网页</button></form>
-            {detail.sources.length === 0 ? <div className="source-empty"><FileUp size={21}/><span>尚未导入文献</span></div> : <div className="source-table">
-              <div className="source-table-header"><span>标题 / 作者</span><span>年份</span><span>类型</span><span>状态</span></div>
-              {detail.sources.map((source) => <div className="source-row-container" key={source.source_id}><div className="source-row-main"><button className="source-row" onClick={() => void openSource(source)}><span className="source-title"><span className={`file-type type-${source.source_type}`}>{source.source_type === "openalex" ? "OA" : source.source_type.slice(0, 2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(", ") || source.doi || source.source_url || "暂无元数据"}</small></span></span><span className="year-cell">{source.year ?? "—"}</span><span className="type-cell">{sourceTypeLabel(source.source_type)}</span><span><i className={`parse-dot parse-${source.parse_status}`} />{parseStatusLabel(source.parse_status)}</span></button><button type="button" className="source-analyze-button" title="分析此篇文献：生成双卡片和单篇 Wiki" aria-label={`分析文献：${source.title}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.status??''))} onClick={()=>void analyzeSource(source)}>{submitting.includes(source.source_id)||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.status??''))?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}</button><button type="button" className="source-delete-button" title="删除参考文献" aria-label={`删除参考文献：${source.title}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.status??''))} onClick={() => { setDeleteError(""); setDeleteTarget(source); }}>{deleting === source.source_id ? <LoaderCircle size={13} className="spin"/> : <Trash2 size={13}/>}</button></div>{analyses.filter(item=>item.source_id===source.source_id&&item.status).map(item=><div className={`source-analysis-status status-${item.status}`} key={item.source_id}><span>{({queued:'等待分析',running:'正在阅读并生成双卡片及 Wiki',completed:'分析完成',failed:'分析失败',cancelled:'分析已停止',interrupted:'分析已中断'} as Record<string,string>)[item.status!]??item.status}{item.error?` · ${item.error}`:''}</span>{item.status==='completed'&&<><a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-detail`})}>详细卡片</a><a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-key`})}>关键信息</a><a href={projectPath(projectId,'wiki',{focus:`wiki-${source.source_id}`})}>单篇 Wiki</a></>}</div>)}</div>)}
+            <header className="library-heading"><div><h2>文献库 <span>{detail.sources.length}</span></h2><p>阅读原文，整理每一篇论文的研究知识。</p></div></header>
+            <div className="library-toolbar">
+              <label className="library-filter"><Search size={16}/><input aria-label="筛选已导入文献" value={libraryQuery} onChange={event=>setLibraryQuery(event.target.value)} placeholder="搜索已导入的标题、作者…"/>{libraryQuery&&<button type="button" aria-label="清空文献筛选" onClick={()=>setLibraryQuery('')}><X size={14}/></button>}</label>
+              <div className="library-toolbar-actions"><div className="library-import" data-literature-menu>
+                <button type="button" className="primary-button" aria-expanded={importOpen} aria-controls="literature-import-panel" onClick={()=>{setImportOpen(v=>!v);setRowMenu(undefined);}}><Plus size={15}/>导入文献<ChevronDown size={12}/></button>
+                {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
+              </div></div>
+              <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
+            </div>
+            {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
+              <div className="library-table-heading"><span>标题 / 作者</span><span className="library-year">年份</span><span>状态</span><span>操作</span></div>
+              {detail.sources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
+                const item=analyses.find(entry=>entry.source_id===source.source_id);
+                const pending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
+                const status=pending?(item?.status==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasCards&&item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
+                const tone=pending?'active':item?.status==='failed'?'failed':item?.stale?'warning':item?.hasCards&&item?.hasWiki?'done':'idle';
+                return <article className="library-row" key={source.source_id}>
+                  <button type="button" className="library-paper" onClick={()=>{if(source.source_type==='pdf')window.open(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/pdf-view`,'_blank','noopener,noreferrer');else void openSource(source);}} title={source.title}>
+                    <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small>{source.authors.join(', ')||source.doi||'作者信息未提供'}</small><span className="library-mobile-year">{source.year??'年份未提供'}</span></span>
+                  </button>
+                  <span className="library-year">{source.year??'—'}</span>
+                  <div className="library-state"><span className={`library-status ${tone}`}><i/>{status}</span><small>{pending?'生成双卡片与单篇 Wiki':parseStatusLabel(source.parse_status)}</small>{(item?.hasCards||item?.hasWiki)&&<div className="library-outputs">{item.hasCards&&<a href={projectPath(projectId,'cards',{focus:`card-${source.source_id}-key`})}>卡片</a>}{item.hasWiki&&<a href={projectPath(projectId,'wiki',{focus:`wiki-${source.source_id}`})}>Wiki</a>}</div>}{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div>
+                  <div className="library-row-actions"><button type="button" className="library-analyze" title="只分析这篇论文，生成双卡片和单篇 Wiki" aria-label={`分析文献：${source.title}`} disabled={Boolean(deleting)||pending} onClick={()=>void analyzeSource(source)}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}分析</button><div className="library-more" data-literature-menu>
+                    <button type="button" className="icon-button" aria-label={`更多操作：${source.title}`} aria-expanded={rowMenu===source.source_id} aria-controls={`source-menu-${source.source_id}`} onClick={()=>{setRowMenu(current=>current===source.source_id?undefined:source.source_id);setImportOpen(false);}}><MoreHorizontal size={17}/></button>
+                    {rowMenu===source.source_id&&<div className="library-popover library-row-menu" id={`source-menu-${source.source_id}`}><button type="button" onClick={()=>{setRowMenu(undefined);void openSource(source);}}><Info size={14}/>文献信息</button><button type="button" disabled={Boolean(deleting)||pending} onClick={()=>{setRowMenu(undefined);void analyzeSource(source);}}><Sparkles size={14}/>{item?.hasOutputs?'重新分析':'分析此篇'}</button><button type="button" className="library-danger" disabled={Boolean(deleting)||pending} onClick={()=>{setRowMenu(undefined);setDeleteError('');setDeleteTarget(source);}}><Trash2 size={14}/>删除文献</button></div>}
+                  </div></div>
+                </article>;
+              })}
+              {detail.sources.length>0&&!detail.sources.some(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase()))&&<div className="library-empty library-no-results"><Search size={23}/><strong>没有找到匹配的文献</strong><button type="button" className="text-button" onClick={()=>setLibraryQuery('')}>清空筛选</button></div>}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />
