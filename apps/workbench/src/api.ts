@@ -39,6 +39,8 @@ const errorMessages: Record<string, string> = {
   EXPERIMENT_ACTIVE: "项目有未结束的实验，请先取消并确认远端停止。",
   PROJECT_HAS_ACTIVE_TASKS: "项目还有活动任务或 SSH 终端，请先停止任务并断开终端。",
   SOURCE_ANALYSIS_CONFIRM_REQUIRED: "这篇论文已有生成内容，请刷新页面后确认重新生成。",
+  KNOWLEDGE_MATERIALS_REQUIRED: "请先生成所选论文的关键卡片，再综合 Wiki。",
+  KNOWLEDGE_INPUT_TOO_LARGE: "所选材料超过单次读取预算，请在文献页执行分层综合，或减少所选材料。",
   SOURCE_NOT_FOUND: "未找到该文献来源。",
   SOURCE_IN_USE: "该文献仍被卡片、Wiki、实验结果历史或合并记录引用，暂不能删除。",
   ANALYSIS_NO_READABLE_SOURCES: "文献暂没有可分析的正文或摘要，请先导入包含正文的文件。",

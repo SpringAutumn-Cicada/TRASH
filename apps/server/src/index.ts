@@ -210,10 +210,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === "literature-analysis" && method === "GET") { sendJson(response, 200, { analysis: analysis.status(projectId) }); return; }
     if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel") && method === "POST") {
-      z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
+      const input=z.object({ confirm: z.literal(true),mode:z.enum(['all','missing','changed','synthesis','overview']).default('all'),source_ids:z.array(z.string().min(1)).max(1000).optional(),title:z.string().min(1).max(500).optional(),instructions:z.string().max(10000).optional() }).strict().parse(await readJson(request));
       if (subpath.endsWith("/cancel")) { sendJson(response, 200, { analysis: analysis.cancel(projectId) }); return; }
       if (codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
-      sendJson(response, 202, { analysis: analysis.start(projectId) }); return;
+      sendJson(response, 202, { analysis: analysis.start(projectId,input.mode,input) }); return;
     }
     const deleteSourceRoute = subpath.match(/^sources\/([^/]+)$/);
     if (deleteSourceRoute && method === "DELETE") {
@@ -241,7 +241,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
       const markdown=new MarkdownKnowledge(store);
-      if(subpath==='markdown-knowledge'&&method==='GET'){sendJson(response,200,markdown.list(projectId));return;}
+      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true'}));return;}
+      if(subpath==='markdown-knowledge/document'&&method==='GET'){sendJson(response,200,{document:markdown.read(projectId,url.searchParams.get('id')??'')});return;}
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){
         if(codeAgent.busy(projectId)||agent.isProjectBusy(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))throw Object.assign(new Error('PROJECT_HAS_ACTIVE_TASKS'),{statusCode:409});
@@ -287,8 +288,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       return;
     }
     if(subpath==='source-analyses' && method==='GET'){
-      const docs=new MarkdownKnowledge(store).list(projectId).documents;
-      const tasks=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki).sort((a,b)=>b.created_at.localeCompare(a.created_at));
+      const docs=new MarkdownKnowledge(store).index(projectId).documents;
+      const tasks=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&(t.snapshot as {prompt_version?:number}).prompt_version===4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
       sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);return {source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),task_id:task?.task_id};}));return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
@@ -299,7 +300,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
       const active=knowledge.tasks(projectId).find(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['queued','running'].includes(t.status));
       if(active){sendJson(response,200,{task_id:active.task_id,status:active.status});return;}
-      if(!input.regenerate && new MarkdownKnowledge(store).list(projectId).documents.some(d=>d.source_id===sourceId)){sendJson(response,409,{error:'SOURCE_ANALYSIS_CONFIRM_REQUIRED'});return;}
+      if(!input.regenerate && new MarkdownKnowledge(store).index(projectId).documents.some(d=>d.source_id===sourceId)){sendJson(response,409,{error:'SOURCE_ANALYSIS_CONFIRM_REQUIRED'});return;}
       const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',source_ids:[sourceId],title:source.title,include_source_wiki:true,regenerate:input.regenerate}));
       sendJson(response,202,{task_id:task.task_id,status:task.status});return;
     }

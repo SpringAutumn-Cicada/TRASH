@@ -63,6 +63,6 @@ export const knowledgeTaskInputSchema = z.object({
   kind: z.enum(["literature-card", "wiki-page"]), source_ids: z.array(z.string().min(1)).max(100).default([]),
   dependencies: z.array(dependencySchema).max(100).default([]), target_id: z.string().optional(),
   title: z.string().min(1).max(500), instructions: z.string().max(10000).default(""),
-  timeout_seconds: z.number().int().min(30).max(7200).default(900), regenerate: z.boolean().default(false), include_source_wiki: z.boolean().optional()
+  timeout_seconds: z.number().int().min(30).max(7200).default(900), regenerate: z.boolean().default(false), include_source_wiki: z.boolean().optional(), wiki_level:z.enum(['single','topic','overview']).optional()
 }).strict();
 export type KnowledgeTaskInput = z.infer<typeof knowledgeTaskInputSchema>;

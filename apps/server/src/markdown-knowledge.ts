@@ -5,7 +5,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'detail'|'key';title:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean};
+export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'detail'|'key';title:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[]};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
@@ -37,14 +37,43 @@ export class MarkdownKnowledge {
     const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
     const hash=digest(text);const reviewPath=this.internal(project,`.trash/markdown-reviews/${meta.id}.json`);
     let review:{hash:string;status:string}|undefined;try{review=JSON.parse(readFileSync(reviewPath,'utf8'));}catch{/* Unreviewed file. */}
-    return {id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:review?.hash===hash?review.status:'pending'};
+    return {id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:review?.hash===hash?review.status:'pending',level:meta.level??(meta.source_id?'single':'topic'),summary:match[2].replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
-  list(project:string){this.recover(project);const documents:MarkdownDocument[]=[],errors:{path:string;error:string}[]=[];
-    for(const dir of ['literature/cards','wiki']){const root=this.internal(project,dir);if(!existsSync(root))continue;for(const name of readdirSync(root).filter(name=>name.endsWith('.md'))){const path=dir+'/'+name;try{const physical=this.locate(project,path);if(lstatSync(physical).size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const doc=this.parse(project,path,readFileSync(physical,'utf8'));doc.modified=lstatSync(physical).mtime.toISOString();documents.push(doc);}catch(error){errors.push({path,error:error instanceof Error?error.message:'KNOWLEDGE_FILE_INVALID'});}}}
-    for(const doc of documents.filter(d=>d.card_type==='key')){const detail=documents.find(d=>d.source_id===doc.source_id&&d.card_type==='detail');const stamp=this.internal(project,`.trash/markdown-pairs/${doc.id}.json`);try{const value=JSON.parse(readFileSync(stamp,'utf8')) as {detail:string;key:string};doc.stale=!detail||value.detail!==detail.hash||value.key!==doc.hash;}catch{doc.stale=true;}}
-    for(const doc of documents.filter(d=>d.kind==='wiki-page')){const stamp=this.internal(project,`.trash/markdown-dependencies/${doc.id}.json`);try{const refs=JSON.parse(readFileSync(stamp,'utf8')) as {path:string;hash:string}[];doc.stale=refs.some(ref=>documents.find(d=>d.path===ref.path)?.hash!==ref.hash);}catch{doc.stale=false;}}
+  // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
+  private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
+  private writeIndex(project:string,value:unknown){const file=this.internal(project,'.trash/knowledge-index-v2.json');mkdirSync(dirname(file),{recursive:true});const temp=file+'.tmp';writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,file);}
+  index(project:string,force=false){
+    this.recover(project);
+    this.store.db.exec("CREATE TABLE IF NOT EXISTS knowledge_search_v2(project TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(project,path))");
+    type Entry={signature:string;document?:Omit<MarkdownDocument,'text'>;error?:string};
+    let old:Record<string,Entry>={};try{old=JSON.parse(readFileSync(this.internal(project,'.trash/knowledge-index-v2.json'),'utf8')).entries??{};}catch{/* Rebuildable index. */}
+    const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
+    for(const dir of ['literature/cards','wiki']){const root=this.internal(project,dir);if(!existsSync(root))continue;for(const name of readdirSync(root).filter(n=>n.endsWith('.md'))){const path=dir+'/'+name;try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+      if(!force&&old[path]?.signature===signature)entries[path]=old[path];
+      else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
+      if(entries[path].error)errors.push({path,error:entries[path].error!});
+    }catch(error){entries[path]={signature:'error',error:error instanceof Error?error.message:'KNOWLEDGE_FILE_INVALID'};errors.push({path,error:entries[path].error!});}}}
+    this.store.db.transaction(()=>{for(const [path,entry] of Object.entries(entries)){if(!entry.document){this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,path);continue;}const cached=this.store.db.prepare('SELECT hash FROM knowledge_search_v2 WHERE project=? AND path=?').get(project,path) as {hash:string}|undefined;if(force||cached?.hash!==entry.document.hash)this.store.db.prepare('INSERT OR REPLACE INTO knowledge_search_v2(project,path,hash,text) VALUES(?,?,?,?)').run(project,path,entry.document.hash,readFileSync(this.locate(project,path),'utf8'));}for(const row of this.store.db.prepare('SELECT path FROM knowledge_search_v2 WHERE project=?').all(project) as {path:string}[])if(!entries[row.path]?.document)this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,row.path);})();
+    if(force||JSON.stringify(entries)!==JSON.stringify(old))this.writeIndex(project,{version:2,entries});
+    const documents=Object.values(entries).flatMap(e=>e.document?[{...e.document}]:[]);
+    for(const doc of documents){
+      try{const review=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-reviews/${doc.id}.json`),'utf8'));doc.status=review.hash===doc.hash?review.status:'pending';}catch{doc.status='pending';}
+      if(doc.source_id){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/knowledge-sources/${doc.id}.json`),'utf8'));doc.stale=stamp.hash!==digest(JSON.stringify(this.store.getSource(doc.source_id)));}catch{doc.stale=true;}}
+      if(doc.card_type==='key'){const detail=documents.find(d=>d.source_id===doc.source_id&&d.card_type==='detail');try{const pair=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-pairs/${doc.id}.json`),'utf8'));doc.stale=Boolean(doc.stale)||!detail||pair.detail!==detail.hash||pair.key!==doc.hash;}catch{doc.stale=true;}}
+      if(doc.kind==='wiki-page'){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-dependencies/${doc.id}.json`),'utf8')) as {path:string;hash:string}[];doc.dependencies=stamp;doc.stale=Boolean(doc.stale)||stamp.some(ref=>documents.find(d=>d.path===ref.path)?.hash!==ref.hash);}catch{doc.dependencies=[];doc.stale=true;}}
+    }
+    // Propagate invalidation through the actual dependency graph, including missing files.
+    for(let i=0;i<documents.length;i++){let changed=false;for(const doc of documents)if(!doc.stale&&doc.dependencies?.some(ref=>documents.find(d=>d.path===ref.path)?.stale)){doc.stale=true;changed=true;}if(!changed)break;}
     return {documents:documents.sort((a,b)=>b.modified.localeCompare(a.modified)),errors};
   }
+  read(project:string,id:string){const entry=this.index(project).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash)fail('VERSION_CONFLICT');return {...entry,text};}
+  list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.read(project,d.id))};}
+  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean}={}){
+    const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level));
+    const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
+    const limit=Math.min(100,Math.max(1,options.limit??30)),page=Math.max(1,options.page??1);return {documents:docs.slice((page-1)*limit,page*limit).map(d=>({...d,...(matches[d.id]?{snippet:matches[d.id]}:{})})),total:docs.length,page,limit,errors:indexed.errors};
+  }
+  stamp(project:string,id:string,refs:{path:string;hash:string}[]){const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
   private recover(project:string){
     const journal=this.internal(project,'.trash/markdown-transaction.json');if(!existsSync(journal))return;
     const batch=JSON.parse(readFileSync(journal,'utf8')) as {committed:boolean;files:{path:string;text:string;before:string|null}[]};
@@ -55,7 +84,7 @@ export class MarkdownKnowledge {
   commit(project:string,files:{path:string;text:string;expected:string|null}[]){
     this.recover(project);
     if(!files.length||files.length>3||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
-    const targets=files.map(file=>{const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
+    const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const file={...original,text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
     if(targets.length===2&&(!targets.every(t=>t.doc.kind==='literature-card')||targets[0].doc.source_id!==targets[1].doc.source_id||new Set(targets.map(t=>t.doc.card_type)).size!==2))fail('INVALID_REQUEST',400);
     if(targets.length===3){const cards=targets.filter(t=>t.doc.kind==='literature-card'),wiki=targets.find(t=>t.doc.kind==='wiki-page');if(cards.length!==2||new Set(cards.map(t=>t.doc.card_type)).size!==2||!wiki||!wiki.doc.source_id||targets.some(t=>t.doc.source_id!==wiki.doc.source_id)||wiki.doc.id!==`wiki-${wiki.doc.source_id}`)fail('INVALID_REQUEST',400);}
     // All checks and writes are synchronous: no other server request can interleave this commit.
@@ -69,6 +98,7 @@ export class MarkdownKnowledge {
     }catch(error){this.recover(project);throw error;}
     const detail=staged.find(f=>f.doc.card_type==='detail'),key=staged.find(f=>f.doc.card_type==='key');if(detail&&key&&detail.doc.source_id===key.doc.source_id){const stamp=this.internal(project,`.trash/markdown-pairs/${key.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({detail:detail.doc.hash,key:key.doc.hash}),{mode:0o600});}
     for(const file of staged.filter(file=>file.doc.kind==='wiki-page')){const refs:{path:string;hash:string}[]=[];for(const match of file.text.matchAll(/\[[^\]]+\]\(([^)\s]+)\)/g)){try{const path=new URL(match[1],'https://knowledge.local/'+file.path).pathname.slice(1);const target=this.locate(project,path);if(existsSync(target))refs.push({path,hash:digest(readFileSync(target,'utf8'))});}catch{/* External or non-knowledge link. */}}const stamp=this.internal(project,`.trash/markdown-dependencies/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify(refs),{mode:0o600});}
+    for(const file of staged.filter(f=>f.doc.source_id)){const stamp=this.internal(project,`.trash/knowledge-sources/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({hash:digest(JSON.stringify(this.store.getSource(file.doc.source_id!)))}),{mode:0o600});}
     return staged.map(f=>f.doc);
   }
   review(project:string,path:string,hash:string,status:'accepted'|'rejected') {const target=this.locate(project,path),doc=this.parse(project,path,readFileSync(target,'utf8'));if(doc.hash!==hash)fail('VERSION_CONFLICT');const file=this.internal(project,`.trash/markdown-reviews/${doc.id}.json`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify({hash,status,at:new Date().toISOString()}),{mode:0o600});return {...doc,status};}
