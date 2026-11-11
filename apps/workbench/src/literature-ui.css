@@ -18,7 +18,7 @@
 
 /* Paper identity, four documents, then state and the single analysis action. */
 .library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 154px 256px;gap:24px}
-.library-bibliography{display:flex!important;align-items:baseline;gap:11px;min-width:0}
+.library-bibliography{display:flex!important;align-items:baseline;gap:5px;min-width:0}
 .library-bibliography time{flex:none;font-variant-numeric:tabular-nums}
 .library-bibliography>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .library-document-modules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
