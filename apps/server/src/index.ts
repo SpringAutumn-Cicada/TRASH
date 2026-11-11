@@ -210,10 +210,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response,200,workspaces.cleanup(projectId,input.job_id));return;
     }
     if (subpath === "literature-analysis" && method === "GET") { sendJson(response, 200, { analysis: analysis.status(projectId) }); return; }
-    if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel") && method === "POST") {
+    if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel" || subpath === "literature-analysis/resume") && method === "POST") {
       const input=z.object({ confirm: z.literal(true),mode:z.enum(['all','missing','changed','synthesis','overview']).default('all'),source_ids:z.array(z.string().min(1)).max(1000).optional(),title:z.string().min(1).max(500).optional(),instructions:z.string().max(10000).optional() }).strict().parse(await readJson(request));
       if (subpath.endsWith("/cancel")) { sendJson(response, 200, { analysis: analysis.cancel(projectId) }); return; }
       if (codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
+      if(subpath.endsWith('/resume')){sendJson(response,202,{analysis:analysis.resume(projectId)});return;}
       sendJson(response, 202, { analysis: analysis.start(projectId,input.mode,input) }); return;
     }
     const deleteSourceRoute = subpath.match(/^sources\/([^/]+)$/);

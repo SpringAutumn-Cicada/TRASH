@@ -111,9 +111,10 @@ export class MarkdownKnowledge {
   }
   context(project:string,query:string,budget=16000){
     const docs=this.index(project).documents;
-    const terms=[...new Set(query.toLowerCase().split(/[\s，,。;；?？、]+/).filter(Boolean))].slice(0,30);
+    const terms=[...new Set([...new Intl.Segmenter('zh',{granularity:'word'}).segment(query.toLowerCase())].filter(item=>item.isWordLike&&item.segment.length>1).map(item=>item.segment))].slice(0,30);
     const score=(d:typeof docs[number])=>terms.reduce((n,t)=>n+Number((d.title+' '+(d.aliases??[]).join(' ')).toLowerCase().includes(t))*8,0);
-    const ranked=docs.map(d=>({d,score:score(d)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
+    const hits=terms.length?new Map((this.store.db.prepare(`SELECT path,(${terms.map(()=>"CASE WHEN instr(lower(text),?)>0 THEN 1 ELSE 0 END").join('+')}) AS score FROM knowledge_search_v2 WHERE project=?`).all(...terms,project) as {path:string;score:number}[]).map(row=>[row.path,row.score])):new Map<string,number>();
+    const ranked=docs.map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
     const selected=ranked.slice(0,6).map(v=>v.d);
     for(const d of [...selected])for(const path of [...(d.dependencies??[]).map(r=>r.path),...(d.links??[]).map(l=>l.path)]){
       const related=docs.find(item=>item.path===path);if(related&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
@@ -135,7 +136,7 @@ export class MarkdownKnowledge {
     const events=(this.store.db.prepare('SELECT id,at,operation,data FROM knowledge_memory_events WHERE project=? ORDER BY at DESC,id DESC LIMIT 30 OFFSET ?').all(project,(Math.max(1,page)-1)*30) as {id:string;at:string;operation:string;data:string}[]).map(row=>({...row,...JSON.parse(row.data),data:undefined}));
     return {events,total,page,limit:30};
   }
-  stamp(project:string,id:string,refs:{path:string;hash:string}[]){const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
+  stamp(project:string,id:string,refs:{path:string;hash:string}[],merge=false){const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});if(merge){try{const previous=JSON.parse(readFileSync(file,'utf8')) as {path:string;hash:string}[];refs=[...previous.filter(old=>!refs.some(ref=>ref.path===old.path)),...refs];}catch{/* First stamp. */}}writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
   private recover(project:string){
     const journal=this.internal(project,'.trash/markdown-transaction.json');if(!existsSync(journal))return;
     const batch=JSON.parse(readFileSync(journal,'utf8')) as {committed:boolean;files:{path:string;text:string;before:string|null}[]};
@@ -148,12 +149,13 @@ export class MarkdownKnowledge {
     if(!files.length||files.length>4||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const file={...original,text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
     for(const target of targets.filter(t=>t.doc.card_type==='basic'))parseBasicCard(target.text);
-    if(targets.length>1){
+    if(targets.length>1&&!targets.every(t=>t.doc.kind==='wiki-page')){
       const cards=targets.filter(t=>t.doc.kind==='literature-card'),wiki=targets.filter(t=>t.doc.kind==='wiki-page');
       const types=new Set(cards.map(t=>t.doc.card_type));
       if(!cards.length||!cards[0].doc.source_id||targets.some(t=>t.doc.source_id!==cards[0].doc.source_id)||types.size!==cards.length||!types.has('detail')||!types.has('key')||wiki.length>1||wiki.some(t=>t.doc.id!==`wiki-${cards[0].doc.source_id}`)||(targets.length===4&&!types.has('basic')))fail('INVALID_REQUEST',400);
     }
     // All checks and writes are synchronous: no other server request can interleave this commit.
+    const previousDependencies=new Map(this.index(project).documents.map(d=>[d.path,d.dependencies??[]]));
     const staged=targets.map(file=>{mkdirSync(dirname(file.target),{recursive:true});const temp=file.target+'.'+randomUUID()+'.tmp';writeFileSync(temp,file.text,{mode:0o600,flag:'wx'});return {...file,temp};});
     const journal=this.internal(project,'.trash/markdown-transaction.json');mkdirSync(dirname(journal),{recursive:true});
     const transaction={committed:false,files:targets.map(({path,text,before})=>({path,text,before}))};
@@ -165,7 +167,7 @@ export class MarkdownKnowledge {
     for(const file of staged.filter(f=>f.doc.card_type==='basic')){const source=this.store.getSource(file.doc.source_id!);if(source)this.store.db.transaction(()=>applyBasicCard(this.store,source,file.text,file.doc.hash,baselines[source.source_id]))();}
     const detail=staged.find(f=>f.doc.card_type==='detail'),key=staged.find(f=>f.doc.card_type==='key');if(detail&&key&&detail.doc.source_id===key.doc.source_id){const stamp=this.internal(project,`.trash/markdown-pairs/${key.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({detail:detail.doc.hash,key:key.doc.hash}),{mode:0o600});}
     for(const file of staged.filter(file=>file.doc.kind==='wiki-page')){
-      const refs=(file.doc.links??[]).filter(link=>link.evidence).flatMap(link=>{try{const target=this.locate(project,link.path);return existsSync(target)?[{path:link.path,hash:digest(readFileSync(target,'utf8'))}]:[];}catch{return [];}});
+      const refs=(file.doc.links??[]).filter(link=>link.evidence).flatMap(link=>{try{const target=this.locate(project,link.path);const old=previousDependencies.get(file.path)?.find(ref=>ref.path===link.path);return existsSync(target)?[old??{path:link.path,hash:digest(readFileSync(target,'utf8'))}]:[{path:link.path,hash:old?.hash??'missing'}];}catch{return [];}});
       this.stamp(project,file.doc.id,refs);
     }
     for(const file of staged.filter(f=>f.doc.source_id)){const stamp=this.internal(project,`.trash/knowledge-sources/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({hash:sourceContentHash(this.store.getSource(file.doc.source_id!))}),{mode:0o600});}

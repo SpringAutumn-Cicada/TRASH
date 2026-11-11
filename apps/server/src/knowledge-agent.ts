@@ -12,7 +12,7 @@ import { requestError, type TaskRunner } from "./knowledge.js";
 
 const redact = (s: string) => s.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+\b/g,"[REDACTED]").replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");
 export class KnowledgeAgent implements TaskRunner {
-  onTaskSettled?: (projectId: string) => void;
+  onTaskSettled?: (projectId: string, task?:KnowledgeTask) => void;
   private running = new Map<string, { child: ChildProcess; task: KnowledgeTask }>();
   private closed = false;
   private reserved = new Set<string>();
@@ -48,7 +48,7 @@ export class KnowledgeAgent implements TaskRunner {
       const targetPaths=part.kind==='literature-card'?[`literature/cards/card-${part.source_ids[0]}-basic.md`,`literature/cards/card-${part.source_ids[0]}-detail.md`,`literature/cards/card-${part.source_ids[0]}-key.md`,...(part.include_source_wiki?[`wiki/wiki-${part.source_ids[0]}.md`]:[])]:previous?[previous.path]:[];
       const expectedTargets=Object.fromEntries(targetPaths.map(path=>{const file=markdown.locate(projectId,path);return [path,existsSync(file)?createHash('sha256').update(readFileSync(file)).digest('hex'):null];}));
       const topicIndex=index.filter(doc=>doc.kind==='wiki-page'&&['topic','hypothesis'].includes(doc.level??''));
-      const snapshot={topic_index:part.wiki_level==='discovery'?topicIndex.slice(0,100).map(({id,title,level})=>({id,title,level})):undefined,topic_index_total:part.wiki_level==='discovery'?topicIndex.length:undefined,project:this.store.getProject(projectId),sources,dependencies,previous,documents,expectedTargets,bibliography_baselines:Object.fromEntries(sources.map(({source})=>[source.source_id,{authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date,revision:bibliographyState(this.store,source.source_id).revision??0,content_hash:sourceContentHash(source)}])),base_version:0,prompt_version:6,skill_hash:createHash('sha256').update(skillText()).digest('hex')};
+      const snapshot={topic_index:part.kind==='wiki-page'?topicIndex.slice(0,100).map(({id,title,level,summary,aliases})=>({id,title,level,summary,aliases})):undefined,topic_index_total:part.kind==='wiki-page'?topicIndex.length:undefined,project:this.store.getProject(projectId),sources,dependencies,previous,documents,expectedTargets,bibliography_baselines:Object.fromEntries(sources.map(({source})=>[source.source_id,{authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date,revision:bibliographyState(this.store,source.source_id).revision??0,content_hash:sourceContentHash(source)}])),base_version:0,prompt_version:6,skill_hash:createHash('sha256').update(skillText()).digest('hex'),reading_rule_version:1};
       const fingerprint=createHash("sha256").update(JSON.stringify({snapshot,input:{...part,regenerate:false}})).digest("hex");
       const existing=this.knowledge.tasks(projectId).find(t=>t.fingerprint===fingerprint && ["queued","running","completed"].includes(t.status));
       if (existing && !part.regenerate) return existing;
@@ -64,7 +64,7 @@ export class KnowledgeAgent implements TaskRunner {
     const tasks=this.knowledge.tasks(task.project_id), result:KnowledgeTask[]=[], seen=new Set<string>();
     let id=task.attempt_of;
     while(id&&!seen.has(id)){seen.add(id);const prior=tasks.find(t=>t.task_id===id);if(!prior)break;
-      if(prior.input.instructions===task.input.instructions&&(prior.snapshot as {skill_hash?:string}).skill_hash===(task.snapshot as {skill_hash?:string}).skill_hash)result.push(prior);
+      if(prior.input.instructions===task.input.instructions&&(((prior.snapshot as {reading_rule_version?:number}).reading_rule_version===1&&(task.snapshot as {reading_rule_version?:number}).reading_rule_version===1)||(prior.snapshot as {skill_hash?:string}).skill_hash===(task.snapshot as {skill_hash?:string}).skill_hash))result.push(prior);
       id=prior.attempt_of;
     }
     return result;
@@ -104,7 +104,7 @@ export class KnowledgeAgent implements TaskRunner {
     const wasQueued=task.status==="queued";
     task.status="cancelled"; this.knowledge.saveTask(task); this.knowledge.event(taskId,"用户取消任务");
     const active=this.running.get(projectId); if(active?.task.task_id===taskId) { active.task.status="cancelled"; this.terminate(active.child); }
-    if(wasQueued){try{this.onTaskSettled?.(projectId);}catch{/* Workflow records its own errors. */}}
+    if(wasQueued){try{this.onTaskSettled?.(projectId,task);}catch{/* Workflow records its own errors. */}}
   }
   private terminate(child: ChildProcess): void {
     try { if(process.platform!=="win32" && child.pid) process.kill(-child.pid,"SIGTERM"); else child.kill("SIGTERM"); } catch { /* Process already exited. */ }
@@ -142,7 +142,7 @@ export class KnowledgeAgent implements TaskRunner {
       const output=join(directory,'output');mkdirSync(output,{recursive:true});
       for(const doc of snapshot.documents??[]){const file=join(output,doc.path);mkdirSync(join(file,'..'),{recursive:true});writeFileSync(file,doc.text);}
       stageKnowledgeSkill(directory);
-      let prompt=`读取 literature-skill/SKILL.md 和 input.json，严格使用 trash-literature-knowledge skill。模式：${task.input.kind}。Wiki标题必须为“${task.input.title}”；卡片应按实际论文识别正式标题，不照抄可能是文件名的任务标题。直接生成 Markdown 文件到 output/ 下这些相对路径：${paths.join('、')}。frontmatter id 必须等于文件名去掉 .md，kind 为 ${task.input.kind}，knowledge_version: 2，Wiki level 为 ${task.input.wiki_level??'topic'}，卡片 source_id=${source??'不适用'}，三卡 card_type 分别为 basic/detail/key。不输出正文 JSON。其他文件仅供阅读，不修改。保留已有用户信息。卡片必须一次完成三份：基本信息basic、详细detail、关键key；基本信息严格按references/basic.md的固定Markdown字段和日期/源码规则填写，不编造月份，不联网自动核验仓库。Wiki 综合并拓展有来源的内容。用户要求：${task.input.instructions}。Wiki 面向后续Agent检索和推理，遵守references/wiki.md：主题正文800–1500字、总览500–1000字为软目标，中间总结遵守本次指定预算；候选、假设和事实不能混淆，关键认识就近引用。首先写“## 何时读取”，不要堆砌摘要或详细实验表格。完成后回读文件并报告路径。`;
+      let prompt=`读取 literature-skill/SKILL.md 和 input.json，严格使用 trash-literature-knowledge skill。模式：${task.input.kind}。Wiki标题必须为“${task.input.title}”；卡片应按实际论文识别正式标题，不照抄可能是文件名的任务标题。直接生成 Markdown 文件到 output/ 下这些相对路径：${paths.join('、')}。frontmatter id 必须等于文件名去掉 .md，kind 为 ${task.input.kind}，knowledge_version: 2，Wiki level 为 ${task.input.wiki_level??'topic'}，卡片 source_id=${source??'不适用'}，三卡 card_type 分别为 basic/detail/key。不输出正文 JSON。其他文件仅供阅读，不修改。保留已有用户信息。卡片必须一次完成三份：基本信息basic、详细detail、关键key；基本信息严格按references/basic.md的固定Markdown字段和日期/源码规则填写，不编造月份，不联网自动核验仓库。Wiki 综合并拓展有来源的内容。用户要求：${task.input.instructions}。Wiki 面向后续Agent检索和推理，遵守references/wiki.md：主题正文600–1200字、总览400–800字为软目标，中间总结遵守本次指定预算；候选、假设和事实不能混淆，关键认识就近引用。关联主题用“## 关联知识”并说明支持/限制/对比/分歧；证据依赖用“## 引用依据”或“依据：”标记。普通相关链接不作证据。保留稳定ID和人工补充，先查 topic_index 同义主题。首先写“## 何时读取”，不要堆砌摘要或详细实验表格。完成后回读文件并报告路径。`;
       if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 是300–600字的Agent单篇线索笔记，不重复双卡片：何时读取、重要机制/条件链接、候选主题、未知项，最后关联项目；主题不受项目题目限制，无线索明确写暂未发现。关联本篇双卡片；明确区分原文结论和推断，不声称综合了其他论文，不读取其他论文。卡片仍为 literature-card。单篇 Wiki level 必须为 single。含基本卡片共四份必须全部完成。`;
       writeFileSync(join(directory,'prompt.txt'),prompt);
       const cliVersion = await new Promise<string>((resolve,reject)=>execFile(this.cli.command,[...this.cli.prefix,"--version"],{timeout:10000,maxBuffer:65536},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
@@ -201,10 +201,10 @@ export class KnowledgeAgent implements TaskRunner {
       for(const ref of snapshot.dependencies??[]){const current=markdown.index(projectId).documents.find(d=>d.id===ref.id);if(!current||current.hash!==ref.hash)throw new Error('来源内容已变化，保留工作副本，请重新综合');}
       for(const [id,baseline] of Object.entries(snapshot.bibliography_baselines??{}))if(sourceContentHash(this.store.getSource(id))!==baseline.content_hash)throw new Error('论文原始内容已变化，保留工作副本，请重新分析');
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);
-      for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.kind==='literature-card').map(({path,hash})=>({path,hash}))]);
+      for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.kind==='literature-card'&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash}))],true);
       task.status="completed";task.output_id=records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${records.map(record=>record.path).join('、')}`);
 
     }catch(error){if(task.status==="running" && !this.closed){task.status="failed";task.error=redact(error instanceof Error?error.message:"任务失败");this.knowledge.saveTask(task);this.knowledge.event(task.task_id,task.error);}}
-    finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}
+    finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId,task);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}
   }
 }

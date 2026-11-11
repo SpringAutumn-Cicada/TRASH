@@ -1,6 +1,6 @@
 ---
 name: trash-literature-knowledge
-description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源码）、详细卡片和关键信息卡片，或从文献发现主题并形成面向 Agent 的精简研究记忆；直接写 Markdown 文件，不提交正文 JSON。不用于编造实验或修改论文原文。
+description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源码）、详细卡片和关键信息卡片，或增量整合文献主题、维护关联并形成面向 Agent 的精简研究记忆；直接写 Markdown 文件，不提交正文 JSON。不用于编造实验或修改论文原文。
 ---
 
 # TRASH 文献知识
@@ -9,7 +9,7 @@ description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源
 
 - 单篇/批量论文卡片：读取 references/cards.md；读取 references/basic.md；每篇生成 basic、detail、key 三份 Markdown，一次阅读后先详后简。
 - 单篇 Wiki：读取 references/wiki.md，只依据本篇论文与双卡片生成简短线索笔记，不重复详细解读；候选线索不等于正式主题。
-- 主题综合、研究拓展：读取 references/wiki.md；跨材料建立有来源的认识，不拼接摘要。
+- 主题综合、增量整合、关系维护和问答沉淀：读取 references/wiki.md；跨材料建立有来源的认识，不拼接摘要。
 
 专用生成任务的 input.json 提供资料、现有文件和目标；直接写指定 output 目录，不返回正文 JSON。聊天中先读取本项目 Markdown 文件，使用知识文件工作副本，通过 project_tool.py 的 publish 操作提交文件路径和预期 hash；正文不放进工具 JSON。只问问题时不要擅自生成文件。
 
@@ -31,10 +31,12 @@ description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源
 
 新文件 frontmatter 包含 `knowledge_version: 2`。Wiki 的 `level` 使用 single（单篇线索）、discovery（发现清单）、topic（知识主题）、hypothesis（待验证假设）或 overview（总览）。旧版本材料不接入新知识库，不能主动读取旧卡片或旧 Wiki 作为依据。
 
-先 list/search 读取轻量索引，再 get 读取相关关键卡片。需要方法细节、实验数字或验证证据时，读取详细卡片及原始 PDF 页。工具返回 offset、total、next_offset 时按需继续，不把部分正文说成全文。不得默认读取全项目文档。对话只在明确要求生成/更新时发布文件。
+先 navigation/list/search 读取轻量索引，用 relations 查看正反向关联，context 在预算内取得匹配页及一跳关联（返回遗漏项时按需 get）；再 get 读取相关关键卡片。需要方法细节、实验数字或验证证据时，读取详细卡片及原始 PDF 页。工具返回 offset、total、next_offset 时按需继续，不把部分正文说成全文。不得默认读取全项目文档。对话只在明确要求生成/更新时发布文件。
 
 全项目综合按字符预算分批覆盖全部符合条件的关键卡片，分组总结保留来源和证据，中间总结建议不超过3000字符并保留原始证据ID；主题遵循 references/wiki.md 的精简结构与软长度目标。先主题后项目总览。报告实际覆盖、失败与缺失材料。只按提供的依赖材料生成；不要绕过预算扫描工作区或旧任务。
 
 更新保留人工补充和稳定ID，通过 hash 检查并发变化。来源变化时下游标记待更新，不自动重写。单篇完整分析仍须覆盖论文全部图文页面。
 
 主题发现先开放提取、跨文献比较去重，再关联项目。知识价值不以是否符合项目题目决定；正式知识、候选线索和研究假设分开标记。索引优先使用“何时读取”段，帮助后续 Agent 判断是否需要深入。
+
+Wiki 增量维护、明确证据与导航关系、别名、问答沉淀及结构维护的具体约定见 references/wiki.md。平台自动维护索引与反向链接，Agent 只写正文及有理由的关系，不把导航链接当作证据依赖。

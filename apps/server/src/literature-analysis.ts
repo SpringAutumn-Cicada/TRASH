@@ -13,7 +13,7 @@ type Stage = "discovery" | "cards-only" | "cards" | "groups" | "wiki" | "complet
 export interface Analysis {
   analysis_id: string; project_id: string; stage: Stage; created_at: string; updated_at: string;
   source_count: number; skipped_count: number; card_tasks: string[]; group_tasks: string[]; wiki_tasks: string[];
-  discovery_tasks?:string[];topic_count?:number;candidate_count?:number;error?: string; reused_sources?:string[]; covered_sources?:string[]; missing_sources?:string[]; round?:number; overview?:boolean; group_history?:string[];card_documents?:string[];theme_title?:string;instructions?:string;
+  discovery_tasks?:string[];topic_count?:number;candidate_count?:number;error?: string; reused_sources?:string[]; covered_sources?:string[]; missing_sources?:string[]; round?:number; overview?:boolean; group_history?:string[];card_documents?:string[];theme_title?:string;instructions?:string;mode?:string;incremental?:boolean;integration_task?:string;
 }
 const active = (value: Analysis) => ["cards-only", "cards", "groups", "discovery", "wiki"].includes(value.stage);
 const pending = (task: KnowledgeTask) => ["queued", "running"].includes(task.status);
@@ -23,7 +23,47 @@ export class LiteratureAnalysis {
       const analysis = this.read(project.project_id);
       if (analysis && active(analysis)) { analysis.stage = "interrupted"; analysis.error = "服务重启，分析流程已中断；可重新点击分析，已保存内容保留。"; this.save(analysis); }
     }
-    agent.onTaskSettled = project => this.advance(project);
+    agent.onTaskSettled = (project,task) => {this.advance(project);this.integrate(project,task);};
+  }
+  // Persist only future standalone completions; do not enqueue historical content on startup.
+  private integrations(project:string){
+    const file=join(projectRuntime(this.store.root,project,'literature-integration'),'queue.json');
+    let entries:{task_id:string;source_id:string;analysis_id?:string;status:string;error?:string}[]=[];
+    try{entries=JSON.parse(readFileSync(file,'utf8'));}catch{/* New queue. */}
+    return {file,entries};
+  }
+  private integrate(project:string,task?:KnowledgeTask){
+    const queue=this.integrations(project),current=this.read(project);
+    if(task?.status==='completed'&&task.input.include_source_wiki&&!current?.card_tasks.includes(task.task_id)&&!queue.entries.some(e=>e.task_id===task.task_id))queue.entries.push({task_id:task.task_id,source_id:task.input.source_ids[0],status:'pending'});
+    for(const entry of queue.entries)if(entry.analysis_id===current?.analysis_id&&current&&active(current))entry.status='running';
+    for(const entry of queue.entries)if(entry.status==='running'&&current&&entry.analysis_id===current.analysis_id&&!active(current)){entry.status=current.stage==='completed'?'completed':'failed';entry.error=current.error;}
+    if(!current||!active(current)){
+      const next=queue.entries.find(e=>e.status==='pending');
+      if(next){
+        // Mark before enqueueing: callbacks may reenter after task settlement.
+        next.status='running';mkdirSync(join(queue.file,'..'),{recursive:true});writeFileSync(queue.file,JSON.stringify(queue.entries),{mode:0o600});
+        try{const result=this.start(project,'synthesis',{source_ids:[next.source_id],incremental:true,integration_task:next.task_id});next.analysis_id=result?.analysis_id;if(!result?.active){next.status=result?.stage==='completed'?'completed':'failed';next.error=result?.error;}}catch(error){next.status='failed';next.error=error instanceof Error?error.message:'增量整合失败';}
+      }
+    }
+    mkdirSync(join(queue.file,'..'),{recursive:true});const temp=queue.file+'.tmp';writeFileSync(temp,JSON.stringify(queue.entries),{mode:0o600});renameSync(temp,queue.file);
+  }
+  resume(project:string){
+    const value=this.read(project);if(!value)return null;if(active(value))return this.status(project);
+    if(value.stage==='completed')return this.status(project);
+    // Resume the earliest incomplete stage, then rebuild downstream summaries.
+    const stages=[{ids:value.card_tasks,stage:value.mode==='missing'||value.mode==='changed'?'cards-only':'cards'},
+      {ids:value.group_tasks,stage:'groups'},{ids:value.discovery_tasks??[],stage:'discovery'},{ids:value.wiki_tasks,stage:'wiki'}] as const;
+    const first=stages.find(group=>this.tasks(project,group.ids).some(t=>t.status!=='completed'));
+    if(!first)return this.status(project);
+    for(let i=0;i<first.ids.length;i++){
+      const task=this.tasks(project,[first.ids[i]])[0];
+      if(task&&['failed','cancelled','interrupted'].includes(task.status))first.ids[i]=this.agent.enqueue(project,{...task.input,regenerate:true},task.task_id)[0].task_id;
+    }
+    value.error=undefined;value.stage=first.stage;
+    if(['cards','cards-only'].includes(first.stage)){value.group_history=[...(value.group_history??[]),...value.group_tasks];value.group_tasks=[];}
+    if(['cards','cards-only','groups'].includes(first.stage))value.discovery_tasks=[];
+    if(first.stage!=='wiki'){value.wiki_tasks=[];value.overview=false;}
+    this.save(value);this.advance(project);return this.status(project);
   }
   private path(project: string) { return projectRuntime(this.store.root,project,'literature-analysis'); }
   private save(value: Analysis) {
@@ -38,14 +78,14 @@ export class LiteratureAnalysis {
     const summarize = (ids: string[]) => { const tasks = this.tasks(project, ids); return { total: ids.length, completed: tasks.filter(task => task.status === "completed").length, failed: ids.length - tasks.filter(task => task.status === "completed" || pending(task)).length, active: tasks.filter(pending).length }; };
     return { ...value, cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
   }
-  start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string}={}) {
+  start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string;incremental?:boolean;integration_task?:string}={}) {
     const current = this.read(project); if (current && active(current)) return this.status(project);
     const allSources=this.store.listSources(project);if(options.source_ids?.some(id=>!allSources.some(s=>s.source_id===id)))experimentError('SOURCE_NOT_FOUND',404);
     const sources=options.source_ids?.length?allSources.filter(s=>options.source_ids!.includes(s.source_id)):allSources;
     const eligible = sources.filter(source => this.store.listSourceSegments(source.source_id).some(segment => segment.text.trim()) || Boolean(source.abstract?.trim()) || source.source_type==='pdf');
     if (!eligible.length) experimentError("ANALYSIS_NO_READABLE_SOURCES", 422);
     const value: Analysis = { analysis_id: `analysis_${randomUUID()}`, project_id: project, stage: "cards", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), source_count: eligible.length, skipped_count: sources.length - eligible.length, card_tasks: [], group_tasks: [], wiki_tasks: [] };
-    value.card_documents=[];value.theme_title=options.title;value.instructions=options.instructions;value.reused_sources=[];value.covered_sources=[];value.missing_sources=[];
+    value.mode=mode;value.incremental=options.incremental;value.integration_task=options.integration_task;value.card_documents=[];value.theme_title=options.title;value.instructions=options.instructions;value.reused_sources=[];value.covered_sources=[];value.missing_sources=[];
     this.save(value);
     try {
       const markdown=new MarkdownKnowledge(this.store);const docs=markdown.index(project).documents;
@@ -55,7 +95,7 @@ export class LiteratureAnalysis {
         const pair=docs.filter(d=>d.source_id===source.source_id&&['basic','detail','key'].includes(d.card_type??''));
         if(same&&pair.length===3&&!pair.some(d=>d.stale)&&docs.some(d=>d.id===`wiki-${source.source_id}`&&!d.stale)){value.card_tasks.push(prior.task_id);value.reused_sources!.push(source.source_id);continue;}
         if(mode==='synthesis'||mode==='overview'||(mode==='missing'&&pair.length===3)||(mode==='changed'&&!pair.length)){if(pair.some(d=>d.card_type==='key')){if(prior)value.card_tasks.push(prior.task_id);else{value.card_documents!.push(`card-${source.source_id}-key`);value.reused_sources!.push(source.source_id);}}else value.missing_sources!.push(source.source_id);continue;}
-        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的基本信息卡片（含源码状态/地址）、详细卡片、关键卡片，以及面向Agent的简短单篇线索笔记。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。',timeout_seconds:3600,regenerate:false,include_source_wiki:true};
+        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的基本信息卡片（含源码状态/地址）、详细卡片、关键卡片，以及面向Agent的简短单篇线索笔记。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。'+(options.instructions??''),timeout_seconds:3600,regenerate:false,include_source_wiki:true};
         value.card_tasks.push(...this.agent.enqueue(project,input).map(t=>t.task_id));this.save(value);
       }
       if(mode==='missing'||mode==='changed'){value.stage='cards-only';}
@@ -71,7 +111,7 @@ export class LiteratureAnalysis {
   }
   private batches(records:KnowledgeVersion[]){const groups:KnowledgeVersion[][]=[];let current:KnowledgeVersion[]=[],size=0;for(const record of records){const length=JSON.stringify(record.content).length;if(length>30000)experimentError('KNOWLEDGE_INPUT_TOO_LARGE',422);if(current.length&&(size+length>30000||current.length>=40)){groups.push(current);current=[];size=0;}current.push(record);size+=length;}if(current.length)groups.push(current);return groups;}
   private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string,level?:'discovery'|'topic'|'hypothesis'|'overview') {
-    const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>record.title===title&&(!level||record.level===level));
+    const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>(record.title===title||record.aliases?.includes(title))&&(!level||record.level===level));
     const refs=records.map(r=>markdown.index(value.project_id).documents.find(d=>d.id===r.object_id)!);
     if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed'&&(t.snapshot as {prompt_version?:number}).prompt_version===6);if(old)return [old.task_id];}
     const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: [], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.id } : {}), instructions: `${instructions}。用户要求：${value.instructions??""}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。缺失来源ID：${(value.missing_sources??[]).join(",")||"无"}。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 3600, regenerate: false, wiki_level:level??(value.overview?"overview":"topic") };
@@ -87,16 +127,20 @@ export class LiteratureAnalysis {
         const discovery=this.records(project,value.discovery_tasks??[]);if(!discovery.length)throw new Error('主题发现没有有效清单，未自动创建主题');
         const base=this.records(project,value.card_tasks,value.card_documents),groups=this.records(project,value.group_tasks);
         const materials=[...base,...groups];
-        const candidates=discoverWikiTopics(String((discovery[0].content as {body:string}).body),materials);
+        const candidates=discoverWikiTopics(String((discovery[0].content as {body:string}).body),materials,new MarkdownKnowledge(this.store).index(project).documents.filter(d=>d.kind==='wiki-page').map(d=>d.id));
         const formal=candidates.filter(c=>c.eligible).slice(0,8);value.candidate_count=candidates.length-formal.length;value.topic_count=formal.length;
         value.stage='wiki';value.wiki_tasks=[];
-        for(const topic of formal)value.wiki_tasks.push(...this.enqueueWiki(value,topic.level==='hypothesis'?`待验证假设：${topic.title}`:topic.title,topic.evidence,`围绕从文献实际发现的问题“${topic.title}”整理Agent研究记忆，不围绕项目题目扩写。何时读取、核心认识、证据与分歧、未知与待验证、项目关联、深入阅读。项目关联可为暂无。${topic.level==='hypothesis'?'这是待验证研究假设，不能写成已证实事实。':''}发现依据：${topic.body}`,topic.level));
+        for(const topic of formal){
+          const wanted=topic.body.match(/已有主题ID[：:]\s*(wiki-[A-Za-z0-9_-]+)/)?.[1];
+          const prior=wanted?new MarkdownKnowledge(this.store).index(project).documents.find(d=>d.id===wanted&&d.level===topic.level):undefined;
+          if(prior)topic.title=prior.title.replace(/^待验证假设[：:]\s*/, '');
+          value.wiki_tasks.push(...this.enqueueWiki(value,topic.level==='hypothesis'?`待验证假设：${topic.title}`:topic.title,topic.evidence,`围绕从文献实际发现的问题“${topic.title}”整理Agent研究记忆，不围绕项目题目扩写。何时读取、核心认识、证据与分歧、未知与待验证、项目关联、深入阅读。项目关联可为暂无。${topic.level==='hypothesis'?'这是待验证研究假设，不能写成已证实事实。':''}发现依据：${topic.body}`,topic.level));}
         if(!value.wiki_tasks.length){const failed=this.tasks(project,[...value.card_tasks,...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]).some(t=>t.status!=='completed');value.stage=failed||(value.missing_sources?.length??0)>0?'partial':'completed';value.error=failed?'部分材料失败；仅保留候选线索清单，未生成正式主题。':undefined;}
         this.save(value);return;
       }
       if(value.stage==='wiki'&&!value.overview&&!value.theme_title){
         const records=[...this.records(project,value.wiki_tasks),...this.records(project,value.discovery_tasks??[])];if(!records.length)throw new Error('主题综合无成功结果');
-        value.overview=true;value.wiki_tasks.push(...this.enqueueWiki(value,'项目知识总览',records,'生成Agent研究记忆导航：何时读取、研究目标、关键认识、主题链接、候选线索与待验证假设、待解决问题。保留暂无直接项目关联的独立知识主题。500–1000字，不把假设写成事实，不替用户决定方向。'));this.save(value);return;
+        value.overview=true;value.wiki_tasks.push(...this.enqueueWiki(value,'项目知识总览',records,'增量修订Agent研究记忆导航，保留已有主题入口与人工方向，不删除本轮未提供的旧知识；本轮只更新直接相关认识：何时读取、研究目标、关键认识、主题链接、候选线索与待验证假设、待解决问题。保留暂无直接项目关联的独立知识主题。500–1000字，不把假设写成事实，不替用户决定方向。'));this.save(value);return;
       }
       if (value.stage === "wiki") {
         const tasks = this.tasks(project, [...value.card_tasks, ...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[]), ...value.wiki_tasks]);

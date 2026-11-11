@@ -33,10 +33,11 @@ except urllib.error.HTTPError as error:
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
+navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）返回匹配页与最多一跳关联，报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。
 list 使用 kind、page、limit（最多50）分页读取索引；search 使用 kind、query 查询标题与正文，返回片段。get 使用 kind、id、offset、length（最多16000字符）按需读取正文，返回 total/next_offset 和 hash。返回不完整必须继续读取，不能声称已读全文。
 Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，先提取比较、再关联项目，不能受项目题目限制。知识主题、候选线索、待验证假设分开，先读references/wiki.md。先索引后关键卡片，再按需详细卡片、Wiki、PDF；回答报告材料范围。全项目综合必须分批覆盖所有关键卡片，并记录缺失项。每次 get 在 knowledge-draft 创建该文件完整工作副本，只有实际读取部分才算已阅读。新文档先写 knowledge_version: 2；Wiki level 为 single/discovery/topic/hypothesis/overview，主题文件必须明确来源。
 卡片或 Wiki 必须先读取 literature-skill/SKILL.md，直接写 Markdown 到 knowledge-draft/literature/cards/ 或 knowledge-draft/wiki/。每篇卡片同时生成 card-<source_id>-basic.md、card-<source_id>-detail.md 和 card-<source_id>-key.md，frontmatter id 与文件名一致，kind=literature-card，source_id 保留真实来源，card_type 分别为 basic/detail/key。Wiki 使用 wiki-<稳定ID>.md，kind=wiki-page。
-先通过 get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"literature/cards/card-source-example-basic.md","expected":null},{"path":"literature/cards/card-source-example-detail.md","expected":null},{"path":"literature/cards/card-source-example-key.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；冲突保留副本，不重试覆盖。三卡片同时提交，基本卡片严格按literature-skill/references/basic.md填写。发布后平台回填标题和年月，人工修改冲突保留建议。
+先通过 get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"literature/cards/card-source-example-basic.md","expected":null},{"path":"literature/cards/card-source-example-detail.md","expected":null},{"path":"literature/cards/card-source-example-key.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；Wiki 使用 references/wiki.md 的明确证据与关系写法，引用依据中的文件须实际 get/context 读取；导航链接不作为证据；冲突保留副本，不重试覆盖。三卡片同时提交，基本卡片严格按literature-skill/references/basic.md填写。发布后平台回填标题和年月，人工修改冲突保留建议。
 实验结果仍使用 write，kind=experiment-result，input 为原结构化记录及 base_version。不能编造结果。
 不要修改正式知识目录、.trash、数据库、任务文件、原始论文或其他项目。论文草稿可写 manuscripts/。卡片/Wiki发布后直接可用，无人工采纳步骤；保留未知事实和待验证假设，不自动删除或发起实验。写入不代替用户验收。
 `);
@@ -44,7 +45,7 @@ Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，�
 }
 
 export async function projectChatTool(store: TrashStore, projectId: string, body: unknown, writable: boolean) {
-  const value = z.object({ operation: z.enum(["summary", "sources", "source", "list", "search", "get", "write", "publish", "pdf-pages", "pdf-page"]), page:z.number().int().positive().optional(),limit:z.number().int().min(1).max(50).optional(),query:z.string().max(500).optional(),offset:z.number().int().min(0).optional(),length:z.number().int().min(1).max(16000).optional(),scale:z.union([z.literal(2200),z.literal(4400)]).optional(),kind: knowledgeKindSchema.optional(), id: z.string().min(1).optional(), input: knowledgeWriteSchema.optional(), files:z.array(z.object({path:z.string(),expected:z.string().nullable()}).strict()).min(1).max(4).optional() }).strict().parse(body);
+  const value = z.object({ operation: z.enum(["summary", "sources", "source", "list", "search", "get", "write", "publish", "pdf-pages", "pdf-page", "navigation", "relations", "context", "maintenance", "memory-log"]), page:z.number().int().positive().optional(),limit:z.number().int().min(1).max(50).optional(),query:z.string().max(500).optional(),offset:z.number().int().min(0).optional(),length:z.number().int().min(1).max(16000).optional(),scale:z.union([z.literal(2200),z.literal(4400)]).optional(),kind: knowledgeKindSchema.optional(), id: z.string().min(1).optional(), input: knowledgeWriteSchema.optional(), files:z.array(z.object({path:z.string(),expected:z.string().nullable()}).strict()).min(1).max(4).optional() }).strict().parse(body);
   const knowledge = new KnowledgeStore(store.db);
   if (value.operation === "summary") return { project: store.getProject(projectId) };
   if (value.operation === "sources") return { sources: store.listSources(projectId) };
@@ -59,14 +60,32 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
     if(!value.page)experimentError('INVALID_REQUEST',400);const page=await pdf.page(projectId,value.id,value.page,value.scale??2200);return {...page,instruction:'必须使用图像查看工具实际打开 path 才能声称看过此页图像。',citation:`/api/v1/projects/${projectId}/sources/${value.id}/pdf-view?hash=${page.hash}#page=${value.page}`};
   }
   const markdown=new MarkdownKnowledge(store);
+  if(value.operation==='navigation')return markdown.navigation(projectId,{page:value.page,limit:value.limit,q:value.query});
+  if(value.operation==='relations')return markdown.relations(projectId,value.id??'');
+  if(value.operation==='maintenance')return markdown.health(projectId);
+  if(value.operation==='memory-log')return markdown.operations(projectId,value.page);
+  if(value.operation==='context'){
+    if(!value.query?.trim())experimentError('INVALID_REQUEST',400);
+    const result=markdown.context(projectId,value.query,value.length??16000);
+    const workspace=projectRuntime(store.root,projectId,'agent-workspace'),ledger=join(workspace,'knowledge-reads.json');
+    let reads:{path:string;hash:string}[]=[];try{reads=JSON.parse(readFileSync(ledger,'utf8'));}catch{/* First read. */}
+    for(const doc of result.documents)if(!reads.some(r=>r.path===doc.path&&r.hash===doc.hash))reads.push({path:doc.path,hash:doc.hash});
+    writeFileSync(ledger,JSON.stringify(reads),{mode:0o600});
+    if(writable)markdown.recordOperation(projectId,'query',result.documents.map(({id,path,hash})=>({id,path,hash})),`读取 ${result.documents.length} 页，${result.characters} 字符；遗漏 ${result.omitted.length} 页。`);
+    return result;
+  }
   if(value.operation==='publish'){
     if(!writable)experimentError('AGENT_READ_ONLY',403);if(!value.files)experimentError('INVALID_REQUEST',400);
     const files=value.files.map(file=>{markdown.locate(projectId,file.path);const draft=projectRuntime(store.root,projectId,'agent-workspace','knowledge-draft',file.path);let current=projectRuntime(store.root,projectId,'agent-workspace');for(const part of ['knowledge-draft',...file.path.split('/')]){current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())experimentError('KNOWLEDGE_PATH_INVALID',403);}if(lstatSync(draft).size>1024*1024)experimentError('KNOWLEDGE_FILE_INVALID',422);return {...file,text:readFileSync(draft,'utf8')};});
     if(files.some(file=>file.path.startsWith('literature/cards/'))&&!['basic','detail','key'].every(type=>files.some(file=>file.path.endsWith(`-${type}.md`))))experimentError('CARD_PAIR_REQUIRED',400);
     const ledger=projectRuntime(store.root,projectId,'agent-workspace','knowledge-reads.json');let refs:{path:string;hash:string}[]=[];try{refs=JSON.parse(readFileSync(ledger,'utf8'));}catch{/* No read dependencies. */}
-    const index=markdown.index(projectId).documents;for(const ref of refs)if(index.find(d=>d.path===ref.path)?.hash!==ref.hash)experimentError('VERSION_CONFLICT',409);
+    const index=markdown.index(projectId).documents;
+    const evidence=new Set(files.flatMap(file=>(markdown.parse(projectId,file.path,file.text).links??[]).filter(l=>l.evidence).map(l=>l.path)));
+    refs=refs.filter(ref=>evidence.has(ref.path));
+    for(const path of evidence){if(files.some(file=>file.path===path))continue;const current=index.find(d=>d.path===path);if(!current)experimentError('DEPENDENCY_NOT_FOUND',404);const read=refs.find(ref=>ref.path===path);if(!read||current.hash!==read.hash)experimentError('VERSION_CONFLICT',409);}
+
     const baselines=JSON.parse(readFileSync(projectRuntime(store.root,projectId,'agent-workspace','bibliography-baselines.json'),'utf8'));for(const file of files.filter(f=>f.path.endsWith('-basic.md'))){const id=markdown.parse(projectId,file.path,file.text).source_id!;if(!baselines[id]||baselines[id].content_hash!==sourceContentHash(store.getSource(id)))experimentError('VERSION_CONFLICT',409);}
-    const records=markdown.commit(projectId,files,baselines);for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...refs.filter(r=>r.path!==record.path&&!records.some(output=>output.path===r.path)),...records.filter(output=>output.kind==='literature-card').map(({path,hash})=>({path,hash}))]);
+    const records=markdown.commit(projectId,files,baselines);for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...refs.filter(r=>r.path!==record.path&&!records.some(output=>output.path===r.path)),...records.filter(output=>output.kind==='literature-card'&&evidence.has(output.path)).map(({path,hash})=>({path,hash}))],true);
     return {records};
   }
   if(value.kind&&value.kind!=='experiment-result'){
