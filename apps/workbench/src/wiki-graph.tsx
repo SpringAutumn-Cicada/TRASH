@@ -7,15 +7,17 @@ type Node={id:string;title:string;kind:string;level?:string;card_type?:string;su
 type Edge={id:string;source:string;target:string;relation:string;reason:string;evidence:boolean};
 type Graph={nodes:Node[];edges:Edge[];broken:unknown[];version:string};
 type Point={x:number;y:number;fixed?:boolean};
-const colors:Record<string,string>={single:'#83a8e8',topic:'#3572d8',hypothesis:'#d4a04e',overview:'#204b89',discovery:'#9b90b9',card:'#95b4aa'};
+const colors:Record<string,string>={single:'#2878f0',topic:'#8250df',hypothesis:'#d69a32',overview:'#16758a',discovery:'#8995a8',card:'#95b4aa'};
 const labels:Record<string,string>={single:'单篇 Wiki',topic:'知识主题',hypothesis:'待验证假设',overview:'项目总览',discovery:'发现清单',card:'证据卡片'};
+const scales:Record<string,number>={single:1,topic:1.5,hypothesis:1.2,overview:1.8,discovery:.8,card:.65};
+const nodeRadius=(node:Node,degree:number)=>12*(scales[type(node)]??1)*Math.min(1.2,1+Math.sqrt(degree)*.035);
 const type=(node:Node)=>node.kind==='literature-card'?'card':node.level??'topic';
 const short=(title:string)=>{const acronym=title.match(/^([A-Z][A-Za-z0-9-]{1,18})\s*[:：]/)?.[1];return acronym??(title.length>23?title.slice(0,22)+'…':title);};
 export function WikiGraph({projectId,onOpen,revision=0,focusId}:{projectId:string;onOpen:(id:string)=>void;revision?:number;focusId?:string}){
  const [data,setData]=useState<Graph>(),[error,setError]=useState(''),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[staleOnly,setStaleOnly]=useState(false),[navigation,setNavigation]=useState(true),[selected,setSelected]=useState<string>(),[selectedEdge,setSelectedEdge]=useState<string>(),[focus,setFocus]=useState(false),[evidence,setEvidence]=useState(false),[zoom,setZoom]=useState(1),[reset,setReset]=useState(0),[locating,setLocating]=useState<string>();
  const [appearance,setAppearance]=useState<'light'|'dark'>(()=>{try{return localStorage.getItem('trash:wiki-graph:appearance')==='dark'?'dark':'light';}catch{return 'light';}});
  const dark=appearance==='dark';
- const nodeColors=dark?{...colors,single:'#21c6f2',topic:'#5a9eff',hypothesis:'#e9b95d',overview:'#93c9ff',discovery:'#b9a0ed',card:'#71c5b6'}:colors;
+ const nodeColors=dark?{...colors,single:'#49c8f5',topic:'#b38aff',hypothesis:'#f2be58',overview:'#52d6bb',discovery:'#9f9bb7',card:'#71c5b6'}:colors;
  const palette=dark?{edge:'#304865',evidence:'#466589',accent:'#79bfff',relation:'#91b9e9',text:'#adc3dc',selected:'#eff7ff',badge:'#15283f'}:{edge:'#d6e1ef',evidence:'#adc4e5',accent:'#397ce3',relation:'#6180ab',text:'#516780',selected:'#173c70',badge:'#ffffff'};
  const changeAppearance=(value:'light'|'dark')=>{setAppearance(value);try{localStorage.setItem('trash:wiki-graph:appearance',value);}catch{/* Optional preference. */}};
  const inspector=useRef<HTMLElement>(null);
@@ -32,31 +34,35 @@ export function WikiGraph({projectId,onOpen,revision=0,focusId}:{projectId:strin
  const zoomAt=(factor:number,x=size.current.w/2,y=size.current.h/2)=>{const c=camera.current,k=Math.min(4,Math.max(.15,c.k*factor));camera.current={x:x-(x-c.x)*k/c.k,y:y-(y-c.y)*k/c.k,k};setZoom(k);draw.current();save();};
  useEffect(()=>{
   const element=canvas.current;if(!element)return;const context=element.getContext('2d');if(!context)return;
-  const radius=(n:Node)=>n.level==='overview'?18:n.kind==='literature-card'?7:Math.min(19,12+Math.sqrt(adjacency.get(n.id)?.size??0)*1.5);
+  const radius=(n:Node)=>nodeRadius(n,adjacency.get(n.id)?.size??0);
   draw.current=()=>{const {w,h}=size.current,c=camera.current,dpr=Math.min(window.devicePixelRatio||1,2);element.width=w*dpr;element.height=h*dpr;context.setTransform(dpr,0,0,dpr,0,0);context.clearRect(0,0,w,h);const occupied:{x:number;y:number;w:number;h:number}[]=[];
    const activeIds=new Set(selected?[selected,...(adjacency.get(selected)??[])]:[]);const screen=(p:Point)=>({x:p.x*c.k+c.x,y:p.y*c.k+c.y});
    for(const e of edges){const a=points.current.get(e.source),b=points.current.get(e.target);if(!a||!b)continue;const s=screen(a),t=screen(b),highlight=e.id===selectedEdge||selected===e.source||selected===e.target;context.globalAlpha=selected&&!highlight? .15:1;context.strokeStyle=highlight?palette.accent:e.evidence?palette.evidence:palette.edge;context.lineWidth=highlight?1.7:1;context.setLineDash(e.evidence?[]:[3,4]);context.beginPath();context.moveTo(s.x,s.y);context.lineTo(t.x,t.y);context.stroke();context.setLineDash([]);
     if(highlight){const dx=t.x-s.x,dy=t.y-s.y,len=Math.hypot(dx,dy);if(len>20){const tx=t.x-dx/len*16,ty=t.y-dy/len*16;context.fillStyle=palette.accent;context.beginPath();context.moveTo(tx,ty);context.lineTo(tx-dx/len*7+dy/len*3,ty-dy/len*7-dx/len*3);context.lineTo(tx-dx/len*7-dy/len*3,ty-dy/len*7+dx/len*3);context.fill();}if(c.k>.65){context.font='10px sans-serif';context.fillStyle=palette.relation;context.fillText(e.relation,(s.x+t.x)/2+4,(s.y+t.y)/2-5);}}
    }
-   for(const n of nodes){const p=points.current.get(n.id);if(!p)continue;const s=screen(p),r=Math.max(4,radius(n)*Math.sqrt(c.k)),chosen=n.id===selected,match=Boolean(query.trim()&&n.title.toLowerCase().includes(query.trim().toLowerCase()));context.globalAlpha=selected&&!activeIds.has(n.id)&&!match? .22:1;context.fillStyle=colors[type(n)]??colors.topic;
+   for(const n of nodes){const p=points.current.get(n.id);if(!p)continue;const s=screen(p),r=Math.max(4,radius(n)*Math.sqrt(c.k)),chosen=n.id===selected,match=Boolean(query.trim()&&n.title.toLowerCase().includes(query.trim().toLowerCase()));context.globalAlpha=selected&&!activeIds.has(n.id)&&!match? .55:1;context.fillStyle=colors[type(n)]??colors.topic;
     const color=nodeColors[type(n)]??nodeColors.topic;
     context.save();
     const outer=r*(chosen?2.3:1.9),coreRadius=r*(chosen?.83:.6);
     const halo=context.createRadialGradient(s.x,s.y,coreRadius,s.x,s.y,outer+12);
     halo.addColorStop(0,color+(dark?'35':'22'));halo.addColorStop(.55,color+(dark?'16':'12'));halo.addColorStop(1,color+'00');
     context.fillStyle=halo;context.beginPath();context.arc(s.x,s.y,outer+12,0,Math.PI*2);context.fill();
-    context.strokeStyle=dark?color:'#ffffff';context.lineWidth=dark?.7:1.3;
+    if(type(n)==='hypothesis')context.setLineDash([5,4]);
+    context.strokeStyle=dark?color:color+'80';context.lineWidth=dark?.7:1.3;
     context.beginPath();context.arc(s.x,s.y,outer,0,Math.PI*2);context.stroke();
-    context.strokeStyle=dark?color:chosen?'#397aff':'#b7ddff';context.lineWidth=chosen?1.2:.65;
+    context.strokeStyle=color;context.lineWidth=chosen?1.2:.65;
     context.beginPath();context.arc(s.x,s.y,outer-4,0,Math.PI*2);context.stroke();
+    context.setLineDash([]);
+    if(type(n)==='topic'||type(n)==='overview'){context.beginPath();context.arc(s.x,s.y,outer+4,0,Math.PI*2);context.lineWidth=.8;context.stroke();}
+    if(type(n)==='overview'){context.fillStyle=color;context.beginPath();context.moveTo(s.x,s.y-outer-10);context.lineTo(s.x+3,s.y-outer-5);context.lineTo(s.x-3,s.y-outer-5);context.fill();}
     if(dark){context.lineWidth=1.3;context.beginPath();context.arc(s.x,s.y,outer+3,-.65,.9);context.stroke();context.beginPath();context.arc(s.x,s.y,outer+3,2.45,3.8);context.stroke();
       for(const angle of [-.65,2.45]){context.fillStyle=color;context.beginPath();context.arc(s.x+Math.cos(angle)*(outer+3),s.y+Math.sin(angle)*(outer+3),1.3,0,Math.PI*2);context.fill();}}
     context.restore();
-    context.fillStyle=dark?color:type(n)==='discovery'?'#8650f5':type(n)==='hypothesis'?'#d8a13a':chosen?'#1254ff':'#1675ff';context.shadowColor=color;context.shadowBlur=dark?12:6;
+    context.fillStyle=color;context.shadowColor=color;context.shadowBlur=dark?12:6;
     context.beginPath();context.arc(s.x,s.y,coreRadius,0,Math.PI*2);context.fill();context.shadowBlur=0;
-    context.strokeStyle=dark?'#83e7ff':'#ffffff';context.lineWidth=dark?1:2;context.stroke();
-    if(n.stale){context.strokeStyle=dark?'#edbb65':'#cb8d31';context.lineWidth=1.2;context.beginPath();context.arc(s.x,s.y,outer+7,0,Math.PI*2);context.stroke();}
-    if(c.k<.55&&!chosen&&!match&&n.level!=='topic'&&n.level!=='overview')continue;const label=short(n.title),font=chosen?14:13;context.font=`${chosen?'600':'400'} ${font}px sans-serif`;const tw=context.measureText(label).width,box=dark?{x:s.x-tw/2-6,y:s.y+outer+10,w:tw+12,h:22}:{x:s.x+outer+5,y:s.y-12,w:tw+20,h:26};
+    context.strokeStyle=dark?color:'#ffffff';context.lineWidth=dark?1:2;context.stroke();
+    if(n.stale){context.strokeStyle=dark?'#edbb65':'#cb8d31';context.lineWidth=1.2;context.beginPath();context.arc(s.x,s.y,outer+8,-.4,Math.PI*1.6);context.stroke();context.fillStyle=dark?'#edbb65':'#cb8d31';context.beginPath();context.arc(s.x+outer+5,s.y-outer-4,2.5,0,Math.PI*2);context.fill();}
+    if(c.k<.55&&!chosen&&!match&&n.level!=='topic'&&n.level!=='overview')continue;const label=short(n.title),font=chosen?14:type(n)==='topic'?14:13;context.font=`${chosen||type(n)==='topic'?'600':'400'} ${font}px sans-serif`;const tw=context.measureText(label).width,box=dark?{x:s.x-tw/2-6,y:s.y+outer+10,w:tw+12,h:22}:{x:s.x+outer+5,y:s.y-12,w:tw+20,h:26};
     if(!chosen&&!match&&occupied.some(b=>box.x<b.x+b.w&&box.x+box.w>b.x&&box.y<b.y+b.h&&box.y+box.h>b.y))continue;occupied.push(box);
     if(!dark){context.shadowColor='#264b7d20';context.shadowBlur=9;context.shadowOffsetY=3;context.fillStyle='#ffffffed';context.beginPath();context.roundRect(box.x,box.y,box.w,box.h,9);context.fill();context.shadowBlur=0;context.shadowOffsetY=0;context.strokeStyle='#e5edf8';context.lineWidth=.6;context.stroke();}
     context.fillStyle=chosen?palette.selected:dark?'#a8cee9':'#243552';context.fillText(label,box.x+(dark?6:10),box.y+17);
@@ -85,7 +91,7 @@ export function WikiGraph({projectId,onOpen,revision=0,focusId}:{projectId:strin
  {!data?<div className="wg-empty">正在读取知识图谱…</div>:!nodes.length&&<div className="wg-empty">{data.nodes.length?'当前筛选下没有节点，可调整筛选条件。':'暂无 Wiki，分析文献后会在这里显示知识节点。'}</div>}
  {node&&<aside ref={inspector} className="wg-inspector wg-node-inspector"><button type="button" className="icon-button wg-close" aria-label="关闭节点信息" onClick={()=>{setSelected(undefined);setFocus(false);}}><X size={15}/></button><span className="wg-node-kind" style={{color:nodeColors[type(node)]}}>{labels[type(node)]}{node.stale?' · 待更新':''}</span><h3 title={node.title}>{short(node.title)}</h3><p>{node.summary||'打开内容查看详细认识与证据。'}</p><small>直接关联 {adjacency.get(node.id)?.size??0} 项</small><button type="button" className="primary-button" onClick={()=>onOpen(node.id)}>查看内容<ArrowUpRight size={13}/></button><div className="wg-inspector-actions"><button type="button" aria-pressed={focus} onClick={()=>setFocus(v=>!v)}>{focus?'返回全局':'聚焦关联'}</button><button type="button" aria-pressed={evidence} onClick={()=>setEvidence(v=>!v)}>{evidence?'收起证据':'展开证据'}</button></div></aside>}
  {edge&&<aside className="wg-inspector"><button type="button" className="icon-button wg-close" aria-label="关闭关系信息" onClick={()=>setSelectedEdge(undefined)}><X size={15}/></button><span className="wg-node-kind">{edge.evidence?'证据依赖':'知识关系'}</span><h3>{edge.relation}</h3><p>{edge.reason}</p>{[edge.source,edge.target].map(id=><button type="button" key={id} className="text-button" onClick={()=>locate(id)}>{data?.nodes.find(n=>n.id===id)?.title}</button>)}</aside>}
- <div className="wg-legend">{['single','topic','hypothesis'].map(key=><span key={key}><i style={{background:nodeColors[key]}}/>{labels[key]}</span>)}<small>{nodes.length} 个节点 · {edges.length} 条连线</small></div><div className="wg-controls"><button type="button" aria-label="缩小图谱" onClick={()=>zoomAt(1/1.2)}><Minus size={15}/></button><span>{Math.round(zoom*100)}%</span><button type="button" aria-label="放大图谱" onClick={()=>zoomAt(1.2)}><Plus size={15}/></button><button type="button" aria-label="查看全图" title="查看全图" onClick={fit}><Scan size={15}/></button><button type="button" aria-label="重置布局" title="重置当前显示节点布局" onClick={()=>{points.current.clear();initialized.current=false;setReset(v=>v+1);}}><RotateCcw size={14}/></button></div></div>
- <div className="wg-footnote">拖动画布平移 · 滚轮缩放 · 拖动节点固定位置 · 双击阅读{data&&data.nodes.length>500?' · 超过500个节点，采用稳定分布布局，可筛选聚焦':''}{Boolean(data?.broken.length)&&` · ${data!.broken.length} 处缺失引用，请查看知识状态`}</div>
+ <div className="wg-legend">{['single','topic','hypothesis',...['overview','discovery','card'].filter(key=>nodes.some(n=>type(n)===key))].map(key=><span key={key}><i className={`wg-legend-token wg-token-${key}`} style={{color:nodeColors[key],background:nodeColors[key]}}/>{labels[key]}</span>)}<small>{nodes.length} 个节点 · {edges.length} 条连线</small></div><div className="wg-controls"><button type="button" aria-label="缩小图谱" onClick={()=>zoomAt(1/1.2)}><Minus size={15}/></button><span>{Math.round(zoom*100)}%</span><button type="button" aria-label="放大图谱" onClick={()=>zoomAt(1.2)}><Plus size={15}/></button><button type="button" aria-label="查看全图" title="查看全图" onClick={fit}><Scan size={15}/></button><button type="button" aria-label="重置布局" title="重置当前显示节点布局" onClick={()=>{points.current.clear();initialized.current=false;setReset(v=>v+1);}}><RotateCcw size={14}/></button></div></div>
+ <div className="wg-footnote">拖动画布平移 · 滚轮缩放 · 拖动节点固定位置 · 双击阅读 · 大小表示知识层级与关联程度，不代表质量或可信度{data&&data.nodes.length>500?' · 超过500个节点，采用稳定分布布局，可筛选聚焦':''}{Boolean(data?.broken.length)&&` · ${data!.broken.length} 处缺失引用，请查看知识状态`}</div>
  </section>;
 }

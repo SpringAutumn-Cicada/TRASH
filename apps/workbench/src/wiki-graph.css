@@ -36,5 +36,15 @@
 .wg-controls{bottom:10px;right:14px;box-shadow:none}.wg-controls button{height:29px}.wg-controls span{min-width:48px}
 @media(max-width:700px){.wg-node-inspector{width:220px}.wg-legend{min-height:80px;align-content:flex-start;padding:10px 14px;gap:9px}.wg-controls{bottom:9px}.wg-node-inspector h3{font-size:14px}}
 .wg-node-inspector .wg-node-kind{display:inline-block;padding:3px 8px;margin-bottom:10px;border-radius:5px;background:#2677ea12}
-.wg-theme-dark .wg-node-inspector .wg-node-kind{background:#1d6b8f33;color:#93dfff!important}
+.wg-theme-dark .wg-node-inspector .wg-node-kind{background:#1d6b8f33}
 .wg-node-inspector .wg-inspector-actions{border-top:1px solid var(--line);padding-top:6px;margin-top:10px}
+
+.wg-legend .wg-legend-token{position:relative;width:7px;height:7px;margin:2px 4px;border-radius:50%;box-shadow:0 0 0 2px var(--surface),0 0 0 3px currentColor}
+.wg-legend .wg-token-topic{width:9px;height:9px;outline:1px solid currentColor;outline-offset:5px;margin-left:6px;margin-right:6px}
+.wg-legend .wg-token-hypothesis{box-shadow:none;outline:1px dashed currentColor;outline-offset:3px;width:8px;height:8px}
+.wg-legend .wg-token-overview{width:10px;height:10px;outline:1px solid currentColor;outline-offset:5px;margin-left:6px;margin-right:6px}
+.wg-legend .wg-token-discovery{width:5px;height:5px;opacity:.8}
+.wg-legend .wg-token-card{width:4px;height:4px;opacity:.8}
+.wg-node-inspector .wg-node-kind{background:transparent!important;border:1px solid currentColor}
+.wg-legend{padding-right:235px;flex-wrap:wrap}
+@media(max-width:700px){.wg-legend{padding-right:12px;padding-bottom:48px;min-height:96px}}
