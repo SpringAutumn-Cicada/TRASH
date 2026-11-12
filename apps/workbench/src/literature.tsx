@@ -223,7 +223,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                 const retry=['failed','interrupted','cancelled'].includes(item?.status??'');
                 const label=submitting.includes(source.source_id)?'正在提交':pending?'查看进度':retry?(item?.can_resume?'继续分析':'重试分析'):item?.hasOutputs?'重新分析':'开始分析';
                 const date=String(source.publication_date??source.year??'').replace('-','');
-                return <article className="library-row" key={source.source_id}>
+                return <article className={`library-row ${pending?'library-row-active':''}`} key={source.source_id}>
                   <button type="button" className="library-paper" onClick={()=>{if(source.source_type==='pdf')window.open(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/pdf-view`,'_blank','noopener,noreferrer');else void openSource(source);}} title={source.title}>
                     <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small className="library-bibliography" title={[date,source.authors.join(', ')].filter(Boolean).join(' · ')}>{date&&<><time>{date}</time><span aria-hidden="true">·</span></>}<span>{source.authors.join(', ')||'作者信息未提供'}</span></small></span>
                   </button>
@@ -232,7 +232,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                   </div>
                   <div className="library-row-controls">
                     <div className="library-state"><span className={`library-status ${tone}`}><i/>{status}</span>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div>
-                    <div className="library-row-actions"><button type="button" className="library-analyze" disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&item?.task_id)window.location.assign(projectPath(projectId,'tasks',{focus:item.task_id}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
+                    <div className="library-row-actions"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&item?.task_id)window.location.assign(projectPath(projectId,'tasks',{focus:item.task_id}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
                   </div>
                 </article>;
               })}

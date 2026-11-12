@@ -69,3 +69,16 @@
 .literature-regenerate-dialog>footer button{min-width:102px;justify-content:center}
 .literature-regenerate-dialog button:focus-visible{outline:2px solid var(--green);outline-offset:3px}
 @media(max-width:520px){#modal-root .literature-regenerate-dialog{padding:22px;border-radius:14px}.literature-regenerate-dialog h2{font-size:18px}.literature-regenerate-dialog>footer{gap:8px}.literature-regenerate-dialog>footer button{flex:1;min-width:0}}
+
+/* Active work remains easy to find among the quiet start-analysis actions. */
+.library-row.library-row-active{background:color-mix(in srgb,#2563eb 4%,var(--surface));box-shadow:inset 3px 0 0 #3b76df}
+.library-row.library-row-active:hover{background:color-mix(in srgb,#2563eb 7%,var(--surface))}
+.library-row-active .library-status.active{color:#2563eb}
+.library-analyze{box-sizing:border-box;width:104px;min-width:104px;flex:none;transition:background .15s,border-color .15s,box-shadow .15s}
+.library-analyze.library-analyze-progress{color:#fff;background:#2563eb;border-color:#2563eb;box-shadow:0 2px 6px rgb(37 99 235 / 18%);font-weight:550}
+.library-analyze.library-analyze-progress:hover:not(:disabled){background:#1d4ed8;border-color:#1d4ed8;box-shadow:0 3px 8px rgb(37 99 235 / 24%)}
+.library-analyze.library-analyze-progress:focus-visible{outline-color:#2563eb;outline-offset:3px}
+.library-analyze.library-analyze-submitting:disabled{color:#2563eb;background:color-mix(in srgb,#2563eb 10%,var(--surface));border-color:color-mix(in srgb,#2563eb 20%,var(--line));opacity:1;cursor:wait}
+.library-analyze.library-analyze-retry{color:#a85b19;background:color-mix(in srgb,#e6953d 10%,var(--surface));border-color:color-mix(in srgb,#e6953d 24%,var(--line))}
+.library-analyze.library-analyze-retry:hover:not(:disabled){background:color-mix(in srgb,#e6953d 17%,var(--surface));border-color:#d99a57}
+@media(prefers-reduced-motion:reduce){.library-analyze,.library-row{transition:none}.library-analyze .spin{animation:none}}
