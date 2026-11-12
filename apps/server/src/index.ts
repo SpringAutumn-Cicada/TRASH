@@ -221,8 +221,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const deleteSourceRoute = subpath.match(/^sources\/([^/]+)$/);
     if (deleteSourceRoute && method === "DELETE") {
       z.object({ confirm: z.literal(true) }).strict().parse(await readJson(request));
-      if (agent.isProjectBusy(projectId) || codeAgent.busy(projectId)) { sendJson(response, 409, { error: "PROJECT_HAS_ACTIVE_TASKS" }); return; }
-      sendJson(response, 200, store.deleteSource(projectId, decodeURIComponent(deleteSourceRoute[1]))); return;
+      // Unrelated analysis, code tasks and SSH sessions do not own this source.
+      // The storage transaction checks active tasks that actually reference it.
+      const sourceId=decodeURIComponent(deleteSourceRoute[1]);
+      const referenced=new MarkdownKnowledge(store).index(projectId).documents.some(doc=>doc.source_id===sourceId||(doc.links??[]).some(link=>link.path.includes(sourceId)));
+      if(referenced){sendJson(response,409,{error:'SOURCE_IN_USE'});return;}
+      sendJson(response, 200, store.deleteSource(projectId, sourceId)); return;
     }
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");

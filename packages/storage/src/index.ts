@@ -281,7 +281,9 @@ export class TrashStore {
     return this.db.transaction(() => {
       const source = this.getSource(sourceId);
       if (!source || source.project_id !== projectId) throw Object.assign(new Error("SOURCE_NOT_FOUND"), { statusCode: 404 });
-      if (this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(projectId)) throw Object.assign(new Error("PROJECT_HAS_ACTIVE_TASKS"), { statusCode: 409 });
+      // Task input and its captured dependencies are stored together in data.
+      // Keep this source-scoped check inside the deletion transaction.
+      if (this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') AND instr(data,?)>0 LIMIT 1").get(projectId,sourceId)) throw Object.assign(new Error("SOURCE_HAS_ACTIVE_TASKS"), { statusCode: 409 });
       const versions = this.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=?").all(projectId) as { data: string }[];
       const merged = this.db.prepare("SELECT 1 FROM source_details WHERE source_id<>? AND json_extract(data,'$.merged_into')=? LIMIT 1").get(sourceId, sourceId);
       // Preserve evidence references in every historical version, including Wiki text.
