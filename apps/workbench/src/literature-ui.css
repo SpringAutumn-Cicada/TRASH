@@ -82,3 +82,9 @@
 .library-analyze.library-analyze-retry{color:#a85b19;background:color-mix(in srgb,#e6953d 10%,var(--surface));border-color:color-mix(in srgb,#e6953d 24%,var(--line))}
 .library-analyze.library-analyze-retry:hover:not(:disabled){background:color-mix(in srgb,#e6953d 17%,var(--surface));border-color:#d99a57}
 @media(prefers-reduced-motion:reduce){.library-analyze,.library-row{transition:none}.library-analyze .spin{animation:none}}
+
+.library-analysis-action{position:relative;flex:none;width:82px}
+.library-row-controls .library-analysis-action .library-error{position:absolute;top:calc(100% + 5px);left:0;right:auto;min-width:0;width:100%;max-width:none;text-align:center;z-index:3}
+.library-row-controls .library-analysis-action .library-error[open]{width:100%;padding:0;border:0;background:transparent;box-shadow:none;border-radius:0}
+.library-analysis-action .library-error summary{white-space:nowrap;font-size:10px}
+.library-analysis-action .library-error p{position:absolute;top:100%;right:0;width:min(260px,calc(100vw - 60px));box-sizing:border-box;padding:12px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #10233c14}
