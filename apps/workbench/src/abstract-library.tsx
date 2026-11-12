@@ -1,0 +1,39 @@
+import React,{useEffect,useRef,useState} from 'react';
+import type {Source} from '@trash/protocol';
+import {BookOpen,LoaderCircle,Plus,Search,Sparkles,X} from 'lucide-react';
+import {api,uiError} from './api.js';
+import {ErrorNotice} from './error-notice.js';
+import {ChatMarkdown} from './chat-markdown.js';
+import {projectPath,useUnsavedChanges} from './navigation.js';
+import './abstract-library.css';
+type Item={source:Source;task?:{task_id:string;status:string;error?:string};has_note:boolean};
+const labels:Record<string,string>={queued:'排队中',running:'分析中',completed:'已整理',failed:'分析失败',interrupted:'已中断',cancelled:'已取消'};
+export function AbstractLibrary({projectId}:{projectId:string}){
+ const base=`/projects/${encodeURIComponent(projectId)}/abstract-library`;
+ const [items,setItems]=useState<Item[]>([]),[query,setQuery]=useState(''),[error,setError]=useState(''),[loading,setLoading]=useState(true),[adding,setAdding]=useState(false),[busy,setBusy]=useState('');
+ const [title,setTitle]=useState(''),[authors,setAuthors]=useState(''),[date,setDate]=useState(''),[doi,setDoi]=useState(''),[url,setUrl]=useState(''),[abstract,setAbstract]=useState('');
+ const [selected,setSelected]=useState<Item>(),[note,setNote]=useState(''),[noteBusy,setNoteBusy]=useState(false);
+ const alive=useRef(true),lock=useRef(false),noteRequest=useRef(0);
+ useUnsavedChanges(Boolean(title||abstract||authors||date||doi||url));
+ const refresh=async()=>{try{const data=await api<{sources:Item[]}>(base);if(alive.current){setItems(data.sources);setError('');}}catch(cause){if(alive.current)setError(uiError(cause,'无法读取摘要库。'));}finally{if(alive.current)setLoading(false);}};
+ useEffect(()=>{alive.current=true;void refresh();const timer=setInterval(()=>void refresh(),4000);return()=>{alive.current=false;noteRequest.current++;clearInterval(timer);};},[base]);
+ const add=async(event:React.FormEvent)=>{event.preventDefault();if(lock.current)return;lock.current=true;setBusy('add');setError('');try{
+  await api(base,{method:'POST',body:JSON.stringify({title,authors:authors.split(/[,，;；]/).map(value=>value.trim()).filter(Boolean),abstract,...(date?{publication_date:date}:{}),...(doi?{doi}:{}),...(url?{source_url:url}:{})})});
+  if(alive.current){setTitle('');setAuthors('');setDate('');setDoi('');setUrl('');setAbstract('');setAdding(false);await refresh();}
+ }catch(cause){if(alive.current)setError(uiError(cause,'摘要录入失败，请检查日期和链接格式。'));}finally{lock.current=false;if(alive.current)setBusy('');}};
+ const analyze=async(item:Item)=>{if(lock.current)return;lock.current=true;setBusy(item.source.source_id);setError('');try{await api(`${base}/${encodeURIComponent(item.source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true})});await refresh();}catch(cause){if(alive.current)setError(uiError(cause,'摘要分析提交失败。'));}finally{lock.current=false;if(alive.current)setBusy('');}};
+ const view=async(item:Item)=>{setSelected(item);setNote('');setNoteBusy(true);const request=++noteRequest.current;try{const data=await api<{text:string}>(`${base}/${encodeURIComponent(item.source.source_id)}/note`);if(alive.current&&noteRequest.current===request)setNote(data.text);}catch(cause){if(alive.current&&noteRequest.current===request)setError(uiError(cause,'无法读取摘要解读。'));}finally{if(alive.current&&noteRequest.current===request)setNoteBusy(false);}};
+ const filtered=items.filter(item=>(item.source.title+' '+item.source.authors.join(' ')+' '+(item.source.doi??'')).toLowerCase().includes(query.trim().toLowerCase()));
+ return <section className="abstract-library"><header className="library-heading"><div><h2>摘要库 <span>{items.length}</span></h2><p>独立存放、独立解读。摘要中的结论作为作者声明和研究线索。</p></div><button type="button" className="primary-button" onClick={()=>setAdding(value=>!value)}><Plus size={15}/>录入摘要</button></header>
+ {error&&<ErrorNotice>{error}</ErrorNotice>}
+ {adding&&<form className="abstract-entry" onSubmit={event=>void add(event)}><header><h3>添加仅摘要文献</h3><button type="button" className="icon-button" aria-label="收起录入表单（草稿保留）" onClick={()=>setAdding(false)}><X size={16}/></button></header>
+ <label className="abstract-wide">论文标题<input required maxLength={500} value={title} onChange={event=>setTitle(event.target.value)}/></label>
+ <label>作者<input value={authors} onChange={event=>setAuthors(event.target.value)} placeholder="多人用逗号分隔"/></label><label>发表年月<input value={date} onChange={event=>setDate(event.target.value)} pattern="[12][0-9]{3}(-((0[1-9])|(1[0-2])))?" placeholder="2025 或 2025-09（可留空）"/></label>
+ <label>DOI<input maxLength={500} value={doi} onChange={event=>setDoi(event.target.value)} placeholder="可留空"/></label><label>论文链接<input type="url" value={url} onChange={event=>setUrl(event.target.value)} placeholder="https://…（可留空）"/></label>
+ <label className="abstract-wide">原始摘要<textarea required maxLength={30000} rows={7} value={abstract} onChange={event=>setAbstract(event.target.value)} placeholder="粘贴摘要原文，不需要上传全文"/></label>
+ <footer className="abstract-wide"><small>不会自动启动分析，也不会加入全文主题综合。</small><button className="primary-button" disabled={Boolean(busy)}>{busy==='add'?'正在保存…':'保存摘要'}</button></footer></form>}
+ <label className="library-filter"><Search size={15}/><input aria-label="搜索摘要库" placeholder="搜索标题、作者或 DOI…" value={query} onChange={event=>setQuery(event.target.value)}/></label>
+ {selected&&<section className="abstract-reader"><header><div><span className="abstract-badge">仅摘要依据</span><h3>{selected.source.title}</h3></div><button type="button" className="icon-button" aria-label="关闭摘要解读" onClick={()=>{noteRequest.current++;setSelected(undefined);}}><X size={16}/></button></header><details><summary>查看原始摘要</summary><p>{selected.source.abstract}</p></details>{noteBusy?<p>正在读取…</p>:note?<ChatMarkdown text={note}/>:<p>尚未生成摘要解读，可点击“开始分析”。</p>}</section>}
+ {loading?<p className="abstract-empty">正在读取摘要库…</p>:!filtered.length?<div className="abstract-empty"><BookOpen size={25}/><p>{items.length?'没有匹配的摘要文献。':'暂无仅摘要文献，点击“录入摘要”开始。'}</p></div>:<div className="abstract-items">{filtered.map(item=>{const active=['queued','running'].includes(item.task?.status??'');return <article key={item.source.source_id}><div><strong>{item.source.title}</strong><p>{[item.source.publication_date,item.source.authors.join(', ')].filter(Boolean).join(' · ')||'基本信息待补充'}</p><span className="abstract-badge">仅摘要</span><span className={`abstract-status ${item.task?.status??''}`}>{labels[item.task?.status??'']??'未分析'}</span></div><div className="abstract-actions"><button type="button" className="secondary-button" onClick={()=>void view(item)}>{item.has_note?'查看解读':'查看摘要'}</button>{active&&item.task?<a href={projectPath(projectId,'tasks',{focus:item.task.task_id})}>查看进度</a>:<button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={()=>void analyze(item)}>{busy===item.source.source_id?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>} {item.has_note?'重新分析':'开始分析'}</button>}</div></article>;})}</div>}
+ </section>;
+}
