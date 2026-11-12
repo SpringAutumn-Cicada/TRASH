@@ -85,7 +85,11 @@ export class KnowledgeAgent implements TaskRunner {
   resumable(task:KnowledgeTask):boolean {
     if(!['failed','interrupted','cancelled'].includes(task.status))return false;
     const candidate={...task,attempt_of:task.task_id,snapshot:{...(task.snapshot as Record<string,unknown>),skill_hash:createHash('sha256').update(skillText()).digest('hex')}};
-    const sourceId=task.input.source_ids[0];if(!sourceId)return false;
+    const sourceId=task.input.source_ids[0];
+    const draftPaths=task.input.kind==='literature-card'&&sourceId?[`literature/cards/card-${sourceId}-basic.md`,`literature/cards/card-${sourceId}-detail.md`,`literature/cards/card-${sourceId}-key.md`,...(task.input.include_source_wiki?[`wiki/wiki-${sourceId}.md`]:[])]:task.input.target_id?[`wiki/${task.input.target_id}.md`]:[];
+    const draftOutput=join(projectRuntime(this.store.root,task.project_id,'tasks',task.task_id),'output');
+    if(existsSync(draftOutput)&&this.inspectOutputs(task,draftOutput,draftPaths).valid.some(file=>(task.snapshot as {documents?:{path:string;text:string}[]}).documents?.find(doc=>doc.path===file.path)?.text!==file.text))return true;
+    if(!sourceId)return false;
     try{
       let hash:string|undefined;
       for(const prior of this.readingAttempts(candidate)){try{
@@ -120,6 +124,30 @@ export class KnowledgeAgent implements TaskRunner {
     const completion=new Promise<void>((resolve,reject)=>{child.once('error',reject);child.once('close',code=>code===0&&!reportedFailure?resolve():reject(new Error(reportedFailure||`PDF 阅读批次退出 ${code}，未发布最终内容`)));});
     const timer=setTimeout(()=>this.terminate(child),timeout*1000);child.stdin.on('error',()=>{});child.stdin.end(prompt);try{await completion;}finally{clearTimeout(timer);}
     if(task.status!=='running'||this.closed)throw new Error('PDF 全文阅读已取消或中断');
+  }
+  private restoreDrafts(task:KnowledgeTask,output:string,paths:string[]) {
+    const fields=['sources','dependencies','expectedTargets','bibliography_baselines','skill_hash'];
+    for(const prior of this.readingAttempts(task)){
+      if(prior.input.kind!==task.input.kind||prior.input.include_source_wiki!==task.input.include_source_wiki)continue;
+      const old=prior.snapshot as Record<string,unknown>, current=task.snapshot as Record<string,unknown>;
+      if(fields.some(key=>JSON.stringify(old[key])!==JSON.stringify(current[key])))continue;
+      const oldOutput=join(projectRuntime(this.store.root,task.project_id,'tasks',prior.task_id),'output');
+      if(!existsSync(oldOutput))continue;
+      const checked=this.inspectOutputs(task,oldOutput,paths);
+      let recorded:Record<string,string>|undefined;
+      try{const check=JSON.parse(readFileSync(join(oldOutput,'..','output-check.json'),'utf8')) as {valid:{path:string;hash:string}[]};recorded=Object.fromEntries(check.valid.map(file=>[file.path,file.hash]));}catch{/* Legacy drafts are independently validated. */}
+      for(const draft of checked.valid){
+        if(recorded&&recorded[draft.path]!==draft.hash)continue;
+        const baseline=(old.documents as {path:string;text:string}[]|undefined)?.find(doc=>doc.path===draft.path);
+        if(baseline?.text===draft.text)continue;
+        const target=join(output,draft.path);
+        // The new task directory is private; never follow an existing unsafe output.
+        if(existsSync(target)&&(lstatSync(target).isSymbolicLink()||!realpathSync(target).startsWith(realpathSync(output)+sep)))continue;
+        if(this.inspectOutputs(task,output,[draft.path]).valid.some(file=>file.text!==baseline?.text))continue;
+        mkdirSync(join(target,'..'),{recursive:true});writeFileSync(target,draft.text,{mode:0o600});
+        this.knowledge.event(task.task_id,`恢复合格草稿：${draft.path}（来自 ${prior.task_id}）`);
+      }
+    }
   }
   private inspectOutputs(task:KnowledgeTask, output:string, paths:string[]) {
     const markdown=new MarkdownKnowledge(this.store);
@@ -203,21 +231,49 @@ export class KnowledgeAgent implements TaskRunner {
       writeFileSync(join(directory,'prompt.txt'),prompt);
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终卡片');
-      child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
-      this.running.set(projectId,{child,task});
-      this.knowledge.event(task.task_id,"启动本机 Codex CLI；隔离任务目录生成清单中的 Markdown 文件，提示词版本 6。");
-      let logBytes=0;
-      const log=(chunk:Buffer)=>{if(!this.closed && logBytes<1024*1024){const message=redact(chunk.toString());logBytes+=Buffer.byteLength(message);this.knowledge.event(task.task_id,message);}};
-      child.stdout?.on("data",log);child.stderr?.on("data",log);
-      let timedOut=false;
-      const timer=setTimeout(()=>{timedOut=true;if(child)this.terminate(child);},Math.max(1,deadline-Date.now()));
-      const completion=new Promise<void>((resolve,reject)=>{child!.once("error",reject);child!.once("close",code=>code===0?resolve():reject(new Error(timedOut?"任务超时":`CLI 退出码 ${code}`)));});
-      child.stdin?.on("error",()=>{});child.stdin?.end(prompt);
-      try {await completion;}finally{clearTimeout(timer);}
-      if(task.status!=="running")return;
+      this.restoreDrafts(task,output,paths);
+      const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
+        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues},null,2),{mode:0o600});
+      };
+      const runGeneration=async (instructions:string, protectedFiles:{path:string;text:string}[])=>{
+        if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
+        if(Date.now()>=deadline)throw new Error('生成阶段超时；草稿已保留，请继续分析');
+        child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
+        this.running.set(projectId,{child,task});
+        let logBytes=0, reportedFailure='', pending='';
+        const log=(chunk:Buffer)=>{if(!this.closed&&logBytes<1024*1024){const message=redact(chunk.toString());logBytes+=Buffer.byteLength(message);this.knowledge.event(task.task_id,message);}};
+        child.stdout?.on('data',(chunk:Buffer)=>{pending+=chunk.toString();let newline:number;while((newline=pending.indexOf('\n'))>=0){const line=pending.slice(0,newline);pending=pending.slice(newline+1);try{const event=JSON.parse(line);if(event.type==='turn.failed'||event.type==='error')reportedFailure=redact(String(event.error?.message??event.message??'生成失败'));}catch{/* Raw output remains in logs. */}}if(pending.length>1024*1024)pending='';});
+        child.stdout?.on('data',log);child.stderr?.on('data',log);
+        let timedOut=false;
+        const timer=setTimeout(()=>{timedOut=true;if(child)this.terminate(child);},Math.max(1,deadline-Date.now()));
+        const completion=new Promise<void>((resolve,reject)=>{child!.once('error',reject);child!.once('close',code=>code===0&&!reportedFailure?resolve():reject(new Error(timedOut?'生成阶段超时；草稿已保留':reportedFailure||`CLI 退出码 ${code}`)));});
+        child.stdin?.on('error',()=>{});child.stdin?.end(instructions);
+        try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
+        if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
+      };
+      let checked=this.inspectOutputs(task,output,paths);
+      // Pre-existing published files are reference material, not newly completed drafts.
+      const preserved=checked.valid.filter(file=>snapshot.documents?.find(doc=>doc.path===file.path)?.text!==file.text);
+      const needed=paths.filter(path=>!preserved.some(file=>file.path===path));
+      const preserveFiles=(files:{path:string;text:string}[])=>{
+        for(const file of files){
+          const target=join(output,file.path);
+          if(!existsSync(target)||lstatSync(target).isSymbolicLink()||!realpathSync(target).startsWith(realpathSync(output)+sep)||!statSync(target).isFile())throw new Error(`保留草稿路径异常：${file.path}`);
+          writeFileSync(target,file.text,{mode:0o600});
+        }
+      };
+      if(needed.length){
+        this.knowledge.event(task.task_id,`卡片生成：待生成 ${needed.length}/${paths.length} 份；已恢复 ${preserved.length} 份草稿`);
+        await runGeneration(prompt+`\n本次只生成或修复以下 output/ 相对路径：${needed.join('、')}。其余已合格文件禁止修改。每份必须落盘，不以最终回复替代文件。单文件硬上限1048576字节，不嵌入图片base64，不复制整篇原文。`,preserved);
+      }else this.knowledge.event(task.task_id,'全部目标草稿已恢复；无需再次调用模型生成');
       this.knowledge.event(task.task_id,'输出校验：逐项检查 Markdown 文件、大小、格式与来源');
-      const checked=this.inspectOutputs(task,output,paths);
-      writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:checked.valid.map(({path,hash})=>({path,hash})),issues:checked.issues},null,2),{mode:0o600});
+      checked=this.inspectOutputs(task,output,paths);saveCheck(checked);
+      if(checked.issues.length&&!checked.issues.some(item=>item.unsafe)){
+        const good=checked.valid;
+        this.knowledge.event(task.task_id,`自动补救（1/1）：${checked.issues.map(item=>`${item.path}：${item.reason}`).join('；')}`);
+        await runGeneration(prompt+`\n这是唯一一次输出补救。只修复以下文件：${JSON.stringify(checked.issues)}。已有合格文件禁止修改；缺失的补写，字段错误的修正，超限的压缩冗余并保留关键证据，不截断正文，不嵌入base64。不重新阅读PDF，使用 readings/ 笔记。完成后回读检查全部目标。`,good);
+        checked=this.inspectOutputs(task,output,paths);saveCheck(checked);
+      }
       if(checked.issues.length)throw new Error('Markdown 输出校验失败；已保留工作副本：'+checked.issues.map(item=>`${item.path}：${item.reason}`).join('；'));
       const commits=checked.valid.map(({path,text})=>{
         const before=snapshot.documents?.find(doc=>doc.path===path);
@@ -227,6 +283,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(task.input.include_source_wiki && commits.some(file=>markdown.parse(projectId,file.path,file.text).source_id!==source))throw new Error('生成文件来源与指定论文不一致');
       for(const ref of snapshot.dependencies??[]){const current=markdown.index(projectId).documents.find(d=>d.id===ref.id);if(!current||current.hash!==ref.hash)throw new Error('来源内容已变化，保留工作副本，请重新综合');}
       for(const [id,baseline] of Object.entries(snapshot.bibliography_baselines??{}))if(sourceContentHash(this.store.getSource(id))!==baseline.content_hash)throw new Error('论文原始内容已变化，保留工作副本，请重新分析');
+      this.knowledge.event(task.task_id,'发布阶段：全部输出校验合格，核对版本后整组发布');
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);
       for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.kind==='literature-card'&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash}))],true);
       task.status="completed";task.output_id=records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${records.map(record=>record.path).join('、')}`);
