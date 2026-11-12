@@ -81,6 +81,23 @@ export class MarkdownKnowledge {
     const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+(doc.aliases??[]).join(' ')+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
     const limit=Math.min(100,Math.max(1,options.limit??30)),page=Math.max(1,options.page??1);return {documents:docs.slice((page-1)*limit,page*limit).map(d=>({...d,...(matches[d.id]?{snippet:matches[d.id]}:{})})),total:docs.length,page,limit,errors:indexed.errors};
   }
+  graph(project:string){
+    const {documents,errors}=this.index(project);
+    const nodes=documents.map(d=>({id:d.id,path:d.path,title:d.title,kind:d.kind,level:d.level,source_id:d.source_id,card_type:d.card_type,summary:d.summary??'',stale:Boolean(d.stale)}));
+    const byPath=new Map(nodes.map(n=>[n.path,n]));
+    const edges:{id:string;source:string;target:string;relation:string;reason:string;evidence:boolean}[]=[],broken:{source:string;path:string}[]=[];
+    for(const doc of documents){
+      for(const link of doc.links??[]){const target=byPath.get(link.path);if(!target){broken.push({source:doc.id,path:link.path});continue;}if(target.id===doc.id)continue;
+        const evidence=link.evidence||Boolean(doc.dependencies?.some(ref=>ref.path===link.path));
+        const key=digest(JSON.stringify([doc.id,target.id,link.relation,link.reason,evidence])).slice(0,24);
+        if(!edges.some(e=>e.id===key))edges.push({id:key,source:doc.id,target:target.id,relation:evidence?'依据':link.relation,reason:link.reason,evidence});
+      }
+      for(const ref of doc.dependencies??[]){const target=byPath.get(ref.path);if(!target){broken.push({source:doc.id,path:ref.path});continue;}if(target.id===doc.id||edges.some(e=>e.source===doc.id&&e.target===target.id&&e.evidence))continue;
+        edges.push({id:digest(doc.id+':dependency:'+target.id).slice(0,24),source:doc.id,target:target.id,relation:'依据',reason:'生成或编辑时记录的依据',evidence:true});
+      }
+    }
+    return {nodes,edges,broken,errors,total:nodes.length,version:digest(JSON.stringify({nodes,edges,broken,errors})),note:'只呈现实际链接与历史依据；空间接近不代表语义关系，节点大小不表示质量。'};
+  }
   relations(project:string,id:string){
     const docs=this.index(project).documents,doc=docs.find(d=>d.id===id);if(!doc)fail('NOT_FOUND',404);
     const describe=(path:string)=>{const target=docs.find(d=>d.path===path);return {id:target?.id,path,title:target?.title??path,missing:!target,stale:target?.stale??false};};
