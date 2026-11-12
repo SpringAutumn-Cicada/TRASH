@@ -20,3 +20,21 @@
 .wg-theme-dark .wg-inspector>.primary-button:hover{background:#4389eb}
 .wg-theme-dark .wg-appearance button[aria-pressed=true]{background:#1b304d;color:#b7d8ff}
 @media(max-width:700px){.wg-appearance{margin-left:0}.wg-appearance button{padding:5px 9px}}
+
+/* D/E reference alignment: fine orbit tokens, light nameplates and a connected inspector. */
+.wg-theme-light .wg-canvas-host{background-color:#f6faff;background-image:radial-gradient(ellipse at 8% 40%,#d0eaff85,transparent 45%),radial-gradient(ellipse at 94% 19%,#c9f6fa70,transparent 39%),radial-gradient(ellipse at 83% 90%,#e1dcff65,transparent 42%),radial-gradient(#779eca45 .65px,transparent .65px);background-size:auto,auto,auto,26px 26px}
+.wg-theme-dark .wg-canvas-host{background-color:#0b1725;background-image:radial-gradient(ellipse at 45% 35%,#10466722,transparent 53%),radial-gradient(#67b4de75 .65px,transparent .65px);background-size:auto,29px 29px}
+.wg-node-inspector{width:290px;border-radius:11px;padding:20px;box-shadow:0 8px 24px #15375a20}
+.wg-node-inspector h3{font-size:17px;line-height:1.5;padding-right:15px;margin-bottom:12px}
+.wg-node-inspector>p{font-size:12px;line-height:1.7;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.wg-node-inspector>small{border-top:1px solid var(--line);padding-top:12px;margin-bottom:13px;font-size:11px}
+.wg-theme-dark .wg-node-inspector{border:1px solid #38c9ef;background:#0d2030e8;box-shadow:0 6px 28px #00000022}
+.wg-theme-dark .wg-node-inspector>.primary-button{background:linear-gradient(110deg,#378ff0,#1661d7);border-color:#398ce8}
+.wg-theme-light .wg-node-inspector>.primary-button{background:linear-gradient(110deg,#318cff,#0750fa);color:#fff;border-color:#2474ff}
+.wg-legend{left:0;bottom:0;max-width:none;right:0;min-height:42px;border-top:1px solid #e0e8f4;border-radius:0;padding:8px 22px;gap:18px;background:#f7faffc9;box-sizing:border-box}
+.wg-theme-dark .wg-legend{border-top-color:#284058;background:#101e2dd9}
+.wg-controls{bottom:10px;right:14px;box-shadow:none}.wg-controls button{height:29px}.wg-controls span{min-width:48px}
+@media(max-width:700px){.wg-node-inspector{width:220px}.wg-legend{min-height:80px;align-content:flex-start;padding:10px 14px;gap:9px}.wg-controls{bottom:9px}.wg-node-inspector h3{font-size:14px}}
+.wg-node-inspector .wg-node-kind{display:inline-block;padding:3px 8px;margin-bottom:10px;border-radius:5px;background:#2677ea12}
+.wg-theme-dark .wg-node-inspector .wg-node-kind{background:#1d6b8f33;color:#93dfff!important}
+.wg-node-inspector .wg-inspector-actions{border-top:1px solid var(--line);padding-top:6px;margin-top:10px}
