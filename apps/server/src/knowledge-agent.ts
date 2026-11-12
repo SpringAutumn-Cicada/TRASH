@@ -121,6 +121,30 @@ export class KnowledgeAgent implements TaskRunner {
     const timer=setTimeout(()=>this.terminate(child),timeout*1000);child.stdin.on('error',()=>{});child.stdin.end(prompt);try{await completion;}finally{clearTimeout(timer);}
     if(task.status!=='running'||this.closed)throw new Error('PDF 全文阅读已取消或中断');
   }
+  private inspectOutputs(task:KnowledgeTask, output:string, paths:string[]) {
+    const markdown=new MarkdownKnowledge(this.store);
+    const valid:{path:string;text:string;hash:string}[]=[], issues:{path:string;reason:string;unsafe:boolean}[]=[];
+    for(const path of paths){
+      const file=join(output,path);
+      try{
+        if(!existsSync(file)){issues.push({path,reason:'文件未生成',unsafe:false});continue;}
+        if(lstatSync(file).isSymbolicLink()||!realpathSync(file).startsWith(realpathSync(output)+sep)||!statSync(file).isFile()){
+          issues.push({path,reason:'输出路径不安全或不是普通文件',unsafe:true});continue;
+        }
+        const size=statSync(file).size;
+        if(size>1024*1024){issues.push({path,reason:`文件超限：${size} 字节，上限 1048576 字节`,unsafe:false});continue;}
+        const text=readFileSync(file,'utf8');
+        if(!text.trim()){issues.push({path,reason:'文件为空',unsafe:false});continue;}
+        try{
+          const doc=markdown.parse(task.project_id,path,text);
+          if((task.input.kind==='literature-card'||task.input.include_source_wiki)&&doc.source_id!==task.input.source_ids[0])throw new Error('来源与指定论文不一致');
+          if(!/^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??''))throw new Error('缺少 knowledge_version: 2');
+        }catch(error){issues.push({path,reason:`格式或必要字段不合格：${error instanceof Error?error.message:'未知格式错误'}`,unsafe:false});continue;}
+        valid.push({path,text,hash:createHash('sha256').update(text).digest('hex')});
+      }catch{issues.push({path,reason:'无法读取输出文件',unsafe:true});}
+    }
+    return {valid,issues};
+  }
   private async pump(projectId: string): Promise<void> {
     if(this.closed || this.running.has(projectId) || this.reserved.has(projectId))return;
     const task=this.knowledge.tasks(projectId).filter(t=>t.status==="queued").sort((a,b)=>a.created_at.localeCompare(b.created_at))[0];
@@ -142,8 +166,8 @@ export class KnowledgeAgent implements TaskRunner {
       const output=join(directory,'output');mkdirSync(output,{recursive:true});
       for(const doc of snapshot.documents??[]){const file=join(output,doc.path);mkdirSync(join(file,'..'),{recursive:true});writeFileSync(file,doc.text);}
       stageKnowledgeSkill(directory);
-      let prompt=`读取 literature-skill/SKILL.md 和 input.json，严格使用 trash-literature-knowledge skill。模式：${task.input.kind}。${task.input.include_source_wiki?'单篇 Wiki 的一级标题必须与同批基本信息卡识别的正式论文标题一致，不照抄旧文件名或任务标题。':task.input.wiki_level==='single'?'单篇 Wiki 沿用对应文献的正式论文标题；原始资料未核实时保留现有标题，不凭文件名猜测。':`主题/假设/总览 Wiki 标题为“${task.input.title}”，使用独立知识问题命名。`}卡片应按实际论文识别正式标题，不照抄可能是文件名的任务标题。直接生成 Markdown 文件到 output/ 下这些相对路径：${paths.join('、')}。frontmatter id 必须等于文件名去掉 .md，kind 为 ${task.input.kind}，knowledge_version: 2，Wiki level 为 ${task.input.wiki_level??'topic'}，卡片 source_id=${source??'不适用'}，三卡 card_type 分别为 basic/detail/key。不输出正文 JSON。其他文件仅供阅读，不修改。保留已有用户信息。卡片必须一次完成三份：基本信息basic、详细detail、关键key；基本信息严格按references/basic.md的固定Markdown字段和日期/源码规则填写，不编造月份，不联网自动核验仓库。Wiki 综合并拓展有来源的内容。用户要求：${task.input.instructions}。Wiki 面向后续Agent检索和推理，遵守references/wiki.md：主题正文600–1200字、总览400–800字为软目标，中间总结遵守本次指定预算；候选、假设和事实不能混淆，关键认识就近引用。关联主题用“## 关联知识”并说明支持/限制/对比/分歧；证据依赖用“## 引用依据”或“依据：”标记。普通相关链接不作证据。保留稳定ID和人工补充，先查 topic_index 同义主题。首先写“## 何时读取”，不要堆砌摘要或详细实验表格。完成后回读文件并报告路径。`;
-      if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 是300–600字的Agent单篇线索笔记，不重复双卡片：何时读取、重要机制/条件链接、候选主题、未知项，最后关联项目；主题不受项目题目限制，无线索明确写暂未发现。关联本篇双卡片；明确区分原文结论和推断，不声称综合了其他论文，不读取其他论文。卡片仍为 literature-card。单篇 Wiki level 必须为 single。含基本卡片共四份必须全部完成。`;
+      let prompt=`读取 literature-skill/SKILL.md 和 input.json，严格使用 trash-literature-knowledge skill。模式：${task.input.kind}。${task.input.include_source_wiki?'单篇 Wiki 的一级标题必须与同批基本信息卡识别的正式论文标题一致，不照抄旧文件名或任务标题。':task.input.wiki_level==='single'?'单篇 Wiki 沿用对应文献的正式论文标题；原始资料未核实时保留现有标题，不凭文件名猜测。':`主题/假设/总览 Wiki 标题为“${task.input.title}”，使用独立知识问题命名。`}卡片应按实际论文识别正式标题，不照抄可能是文件名的任务标题。直接生成 Markdown 文件到 output/ 下这些相对路径：${paths.join('、')}。frontmatter id 必须等于文件名去掉 .md，kind 为 ${task.input.kind}，knowledge_version: 2，Wiki level 为 ${task.input.wiki_level??'topic'}，卡片 source_id=${source??'不适用'}，三卡 card_type 分别为 basic/detail/key。不输出正文 JSON。其他文件仅供阅读，不修改。保留已有用户信息。若本次为卡片任务，输出清单中的三份卡片分别为基本信息basic、详细detail、关键key；基本信息严格按references/basic.md的固定Markdown字段和日期/源码规则填写，不编造月份，不联网自动核验仓库。Wiki 综合并拓展有来源的内容。用户要求：${task.input.instructions}。Wiki 面向后续Agent检索和推理，遵守references/wiki.md：主题正文600–1200字、总览400–800字为软目标，中间总结遵守本次指定预算；候选、假设和事实不能混淆，关键认识就近引用。关联主题用“## 关联知识”并说明支持/限制/对比/分歧；证据依赖用“## 引用依据”或“依据：”标记。普通相关链接不作证据。保留稳定ID和人工补充，先查 topic_index 同义主题。首先写“## 何时读取”，不要堆砌摘要或详细实验表格。完成后回读文件并报告路径。`;
+      if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 是300–600字的Agent单篇线索笔记，不重复三份卡片：何时读取、重要机制/条件链接、候选主题、未知项，最后关联项目；主题不受项目题目限制，无线索明确写暂未发现。关联本篇关键卡片与详细卡片；明确区分原文结论和推断，不声称综合了其他论文，不读取其他论文。卡片仍为 literature-card。单篇 Wiki level 必须为 single。含基本卡片共四份必须全部完成。`;
       writeFileSync(join(directory,'prompt.txt'),prompt);
       const cliVersion = await new Promise<string>((resolve,reject)=>execFile(this.cli.command,[...this.cli.prefix,"--version"],{timeout:10000,maxBuffer:65536},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
       writeFileSync(join(directory,"metadata.json"),JSON.stringify({adapter:"codex-cli",cli_version:cliVersion,prompt_version:6,skill:"trash-literature-knowledge",skill_hash:createHash("sha256").update(skillText()).digest("hex"),input_fingerprint:task.fingerprint,sandbox:"workspace-write"},null,2));
@@ -181,7 +205,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终卡片');
       child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
       this.running.set(projectId,{child,task});
-      this.knowledge.event(task.task_id,"启动本机 Codex CLI；隔离任务目录直接写双卡片/Wiki Markdown，提示词版本 6。");
+      this.knowledge.event(task.task_id,"启动本机 Codex CLI；隔离任务目录生成清单中的 Markdown 文件，提示词版本 6。");
       let logBytes=0;
       const log=(chunk:Buffer)=>{if(!this.closed && logBytes<1024*1024){const message=redact(chunk.toString());logBytes+=Buffer.byteLength(message);this.knowledge.event(task.task_id,message);}};
       child.stdout?.on("data",log);child.stderr?.on("data",log);
@@ -191,9 +215,12 @@ export class KnowledgeAgent implements TaskRunner {
       child.stdin?.on("error",()=>{});child.stdin?.end(prompt);
       try {await completion;}finally{clearTimeout(timer);}
       if(task.status!=="running")return;
-      const commits=paths.map(path=>{
-        const file=join(output,path);if(!existsSync(file)||lstatSync(file).isSymbolicLink()||!realpathSync(file).startsWith(realpathSync(output)+sep)||statSync(file).size>1024*1024)throw new Error('Markdown 输出缺失或过大；已保留工作副本');
-        const text=readFileSync(file,'utf8');const before=snapshot.documents?.find(doc=>doc.path===path);
+      this.knowledge.event(task.task_id,'输出校验：逐项检查 Markdown 文件、大小、格式与来源');
+      const checked=this.inspectOutputs(task,output,paths);
+      writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:checked.valid.map(({path,hash})=>({path,hash})),issues:checked.issues},null,2),{mode:0o600});
+      if(checked.issues.length)throw new Error('Markdown 输出校验失败；已保留工作副本：'+checked.issues.map(item=>`${item.path}：${item.reason}`).join('；'));
+      const commits=checked.valid.map(({path,text})=>{
+        const before=snapshot.documents?.find(doc=>doc.path===path);
         return {path,text,expected:snapshot.expectedTargets?.[path]??before?.hash??null};
       });
       if(commits.every(file=>snapshot.documents?.find(doc=>doc.path===file.path)?.text===file.text))throw new Error('输出未更新；未把已有文件误报为本次生成');
