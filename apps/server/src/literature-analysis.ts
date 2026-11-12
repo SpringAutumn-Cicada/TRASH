@@ -23,6 +23,19 @@ export class LiteratureAnalysis {
       const analysis = this.read(project.project_id);
       if (analysis && active(analysis)) { analysis.stage = "interrupted"; analysis.error = "服务重启，分析流程已中断；可重新点击分析，已保存内容保留。"; this.save(analysis); }
     }
+    agent.onTaskRetried=(project,previousId,task)=>{
+      const value=this.read(project);if(!value)return;
+      const stages=[{ids:value.card_tasks,stage:value.mode==='missing'||value.mode==='changed'?'cards-only':'cards'}, {ids:value.group_tasks,stage:'groups'}, {ids:value.discovery_tasks??[],stage:'discovery'}, {ids:value.wiki_tasks,stage:'wiki'}] as const;
+      const group=stages.find(group=>group.ids.includes(previousId));if(!group)return;
+      for(let i=0;i<group.ids.length;i++)if(group.ids[i]===previousId)group.ids[i]=task.task_id;
+      if(['interrupted','failed','partial'].includes(value.stage)&&pending(task)){
+        value.stage=group.stage;value.error=undefined;
+        if(group.stage==='cards'||group.stage==='cards-only'){value.group_history=[...(value.group_history??[]),...value.group_tasks];value.group_tasks=[];}
+        if(['cards','cards-only','groups'].includes(group.stage))value.discovery_tasks=[];
+        if(group.stage!=='wiki'){value.wiki_tasks=[];value.overview=false;}
+      }
+      this.save(value);
+    };
     agent.onTaskSettled = (project,task) => {this.advance(project);this.integrate(project,task);};
   }
   // Persist only future standalone completions; do not enqueue historical content on startup.

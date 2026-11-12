@@ -12,6 +12,7 @@ import { requestError, type TaskRunner } from "./knowledge.js";
 
 const redact = (s: string) => s.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+\b/g,"[REDACTED]").replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");
 export class KnowledgeAgent implements TaskRunner {
+  onTaskRetried?: (projectId:string, previousId:string, task:KnowledgeTask)=>void;
   onTaskSettled?: (projectId: string, task?:KnowledgeTask) => void;
   private running = new Map<string, { child: ChildProcess; task: KnowledgeTask }>();
   private closed = false;
@@ -22,6 +23,12 @@ export class KnowledgeAgent implements TaskRunner {
   }
   enqueue(projectId: string, input: KnowledgeTaskInput, retryOf?: string): KnowledgeTask[] {
     if (this.closed) requestError("SERVER_STOPPING",409);
+    if(retryOf){
+      const all=this.knowledge.tasks(projectId);
+      const descends=(candidate:KnowledgeTask)=>{const seen=new Set<string>();let id=candidate.attempt_of;while(id&&!seen.has(id)){if(id===retryOf)return true;seen.add(id);id=all.find(t=>t.task_id===id)?.attempt_of;}return false;};
+      const successors=all.filter(descends).sort((a,b)=>Number(['queued','running'].includes(b.status))-Number(['queued','running'].includes(a.status))||b.created_at.localeCompare(a.created_at));
+      if(successors[0]){this.onTaskRetried?.(projectId,retryOf,successors[0]);return [successors[0]];}
+    }
     if (input.kind === "literature-card" && !input.source_ids.length) requestError("SOURCES_REQUIRED");
     if (input.include_source_wiki && (input.kind !== 'literature-card' || input.source_ids.length !== 1 || input.dependencies.length || input.target_id)) requestError('INVALID_REQUEST',400);
     const active = input.include_source_wiki && this.knowledge.tasks(projectId).find(t=>t.input.include_source_wiki && t.input.source_ids[0]===input.source_ids[0] && ['queued','running'].includes(t.status));
@@ -51,11 +58,12 @@ export class KnowledgeAgent implements TaskRunner {
       const snapshot={topic_index:part.kind==='wiki-page'?topicIndex.slice(0,100).map(({id,title,level,summary,aliases})=>({id,title,level,summary,aliases})):undefined,topic_index_total:part.kind==='wiki-page'?topicIndex.length:undefined,project:this.store.getProject(projectId),sources,dependencies,previous,documents,expectedTargets,bibliography_baselines:Object.fromEntries(sources.map(({source})=>[source.source_id,{authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date,revision:bibliographyState(this.store,source.source_id).revision??0,content_hash:sourceContentHash(source)}])),base_version:0,prompt_version:6,skill_hash:createHash('sha256').update(skillText()).digest('hex'),reading_rule_version:1};
       const fingerprint=createHash("sha256").update(JSON.stringify({snapshot,input:{...part,regenerate:false}})).digest("hex");
       const existing=this.knowledge.tasks(projectId).find(t=>t.fingerprint===fingerprint && ["queued","running","completed"].includes(t.status));
-      if (existing && !part.regenerate) return existing;
+      if (existing && (!part.regenerate||["queued","running"].includes(existing.status))) return existing;
       return {task_id:`task_${randomUUID()}`,project_id:projectId,input:part,snapshot,fingerprint,status:"queued",created_at:new Date().toISOString(),...(retryOf?{attempt_of:retryOf}:{})} as KnowledgeTask;
     });
     // Validate the whole batch before persisting or starting any task.
     this.store.db.transaction(()=>{for(const task of tasks) this.knowledge.saveTask(task);})();
+    if(retryOf)for(const task of tasks)this.onTaskRetried?.(projectId,retryOf,task);
     void this.pump(projectId);
     return tasks;
   }
