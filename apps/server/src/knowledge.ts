@@ -149,10 +149,17 @@ export async function knowledgeRoute(
     }
   }
   if (parts[0] === "knowledge-tasks") {
-    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId).filter(task=>!(task as {archived_duplicate?:boolean}).archived_duplicate).map(task=>url.searchParams.get('summary')==='true'?taskSummary(store,task):task) }); return true; }
+    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId).filter(task=>!(task as {archived_duplicate?:boolean}).archived_duplicate&&!(task as {deleted_at?:string}).deleted_at).map(task=>url.searchParams.get('summary')==='true'?taskSummary(store,task):task) }); return true; }
     if (!parts[1] && method === "POST") { send(response, 201, { tasks: runner.enqueue(projectId, knowledgeTaskInputSchema.parse(await readJson(request))) }); return true; }
     const task = knowledge.tasks(projectId).find(t => t.task_id === parts[1]);
     if (!task) requestError("NOT_FOUND", 404);
+    if(!parts[2]&&method==='DELETE'){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      // Logical deletion preserves retry ancestry, workflow references and recovery files.
+      const result=store.db.prepare("UPDATE knowledge_tasks SET data=json_set(data,'$.deleted_at',?) WHERE task_id=? AND project_id=? AND status='failed'").run(new Date().toISOString(),task.task_id,projectId);
+      if(!result.changes)requestError('TASK_DELETE_FAILED_ONLY',409);
+      send(response,200,{deleted:true,files_preserved:true});return true;
+    }
     if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url),runner.resumable?.bind(runner)));return true;}
     if(parts[2]==='stream'&&method==='GET'){streamTaskEvents(store,task,request,response,url,runner.resumable?.bind(runner));return true;}
     if (parts[2] === "cancel" && method === "POST") { runner.cancel(projectId, task.task_id); send(response,200,{ok:true}); return true; }
