@@ -165,6 +165,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    if(!subpath&&method==='PATCH'){
+      const input=z.object({title:z.string().trim().min(1).max(120)}).strict().parse(await readJson(request));
+      const at=new Date().toISOString();
+      store.db.prepare("UPDATE projects SET data=json_set(data,'$.title',?,'$.updated_at',?),updated_at=? WHERE project_id=?").run(input.title,at,at,projectId);
+      sendJson(response,200,{project:store.getProject(projectId)});return;
+    }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
     const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
