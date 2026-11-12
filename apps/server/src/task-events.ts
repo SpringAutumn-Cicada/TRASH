@@ -11,7 +11,7 @@ export function taskSummary(store:TrashStore,task:KnowledgeTask){
  const latest=store.db.prepare('SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(task.task_id) as {seq:number;at:string;message:string}|undefined;
  const started=store.db.prepare("SELECT at FROM knowledge_task_events WHERE task_id=? AND message LIKE 'Agent 版本：%' ORDER BY seq LIMIT 1").get(task.task_id) as {at:string}|undefined;
  const latestProgress=store.db.prepare("SELECT at,message FROM knowledge_task_events WHERE task_id=? AND (message LIKE 'PDF %' OR message LIKE '复用已完成批次 %' OR message LIKE '启动本机 %' OR message LIKE 'Markdown 已发布：%') ORDER BY seq DESC LIMIT 1").get(task.task_id) as {at:string;message:string}|undefined;
- return {task_id:task.task_id,title:source?.title??task.input.title,input:{kind:task.input.kind,title:task.input.title,source_ids:task.input.source_ids,include_source_wiki:task.input.include_source_wiki,wiki_level:task.input.wiki_level},status:task.status,error:task.error,output_id:task.output_id,created_at:task.created_at,started_at:started?.at,attempt_of:task.attempt_of,last_at:latest?.at,last_seq:latest?.seq??0,progress:latestProgress?.message};
+ return {task_id:task.task_id,title:source?.title??task.input.title,input:{abstract_mode:task.input.abstract_mode,kind:task.input.kind,title:task.input.title,source_ids:task.input.source_ids,include_source_wiki:task.input.include_source_wiki,wiki_level:task.input.wiki_level},status:task.status,error:task.error,output_id:task.output_id,created_at:task.created_at,started_at:started?.at,attempt_of:task.attempt_of,last_at:latest?.at,last_seq:latest?.seq??0,progress:latestProgress?.message};
 }
 export function taskReadingProgress(store:TrashStore,task:KnowledgeTask){
  try{

@@ -259,7 +259,7 @@ export class TrashStore {
     for(const source of sources){
       const root=join(this.root,'projects',source.project_id);
       if(existsSync(join(root,'project.yaml'))){
-        const directory=join(root,'literature','parsed');mkdirSync(directory,{recursive:true});
+        const directory=join(root,source.material_scope==='abstract'?'abstract-library':'literature','parsed');mkdirSync(directory,{recursive:true});
         const path=join(directory,source.source_id+'.json');writeFileSync(path+'.tmp',JSON.stringify({source,segments:segmentsBySource.get(source.source_id)??[]},null,2));renameSync(path+'.tmp',path);
       }
     }
@@ -267,9 +267,9 @@ export class TrashStore {
     for (const projectId of new Set(sources.map(source => source.project_id))) this.db.prepare("UPDATE projects SET updated_at=?,data=json_set(data,'$.updated_at',?) WHERE project_id=?").run(at,at,projectId);
   }
 
-  listSources(projectId: string): Source[] {
+  listSources(projectId: string, includeAbstract=false): Source[] {
     const rows = this.db.prepare("SELECT data FROM sources WHERE project_id = ? ORDER BY imported_at DESC, source_id").all(projectId) as Array<{ data: string }>;
-    return rows.map((row) => sourceSchema.parse(JSON.parse(row.data)));
+    return rows.map((row) => sourceSchema.parse(JSON.parse(row.data))).filter(source=>includeAbstract||source.material_scope!=='abstract');
   }
 
   getSource(sourceId: string): Source | undefined {

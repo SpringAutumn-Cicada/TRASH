@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {api,uiError} from './api.js';
-export type TaskItem={task_id:string;title:string;input:{kind:string;source_ids:string[];include_source_wiki?:boolean;wiki_level?:string};status:string;created_at:string;started_at?:string;last_at?:string;last_seq:number;error?:string;progress?:string;output_id?:string;attempt_of?:string;can_resume?:boolean};
+export type TaskItem={task_id:string;title:string;input:{abstract_mode?:boolean;kind:string;source_ids:string[];include_source_wiki?:boolean;wiki_level?:string};status:string;created_at:string;started_at?:string;last_at?:string;last_seq:number;error?:string;progress?:string;output_id?:string;attempt_of?:string;can_resume?:boolean};
 export type TaskEvent={seq:number;at:string;message:string};
 type Page={task:TaskItem;reading?:{total:number;completed:number};events:TaskEvent[];first_seq:number|null;last_seq:number;has_older:boolean;has_more:boolean};
 export function useTaskFeed(projectId:string,id:string|undefined,onTask:(task:TaskItem)=>void){

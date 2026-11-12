@@ -1,3 +1,4 @@
+import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
 import {bibliographyState} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
@@ -9,7 +10,7 @@ import { directoryRepairBusy } from "./experiment/directory-repair.js";
 import { ProjectWorkspaces, workspaceError } from "./project-workspace.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./experiment/directories.js";
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -363,6 +364,31 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (!subpath && method === "GET") {
       sendJson(response, 200, { project, sources: store.listSources(projectId) });
       return;
+    }
+    if(subpath==='abstract-library'&&method==='GET'){
+      const tasks=knowledge.tasks(projectId).filter(task=>task.input.abstract_mode);
+      sendJson(response,200,{sources:store.listSources(projectId,true).filter(source=>source.material_scope==='abstract').map(source=>{
+        const candidates=tasks.filter(task=>task.input.source_ids[0]===source.source_id).sort((a,b)=>Number(['queued','running'].includes(b.status))-Number(['queued','running'].includes(a.status))||b.created_at.localeCompare(a.created_at));
+        return {source,task:candidates[0]?{task_id:candidates[0].task_id,status:candidates[0].status,error:candidates[0].error}:undefined,has_note:Boolean(abstractText(store,projectId,source.source_id))};
+      })});return;
+    }
+    if(subpath==='abstract-library'&&method==='POST'){
+      const input=z.object({title:z.string().trim().min(1).max(500),authors:z.array(z.string().trim().min(1).max(200)).max(200).default([]),publication_date:z.string().regex(/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/).optional(),doi:z.string().trim().max(500).optional(),source_url:z.string().url().optional(),abstract:z.string().trim().min(1).max(30000)}).strict().parse(await readJson(request));
+      const duplicate=store.listSources(projectId,true).find(source=>source.material_scope==='abstract'&&((input.doi&&source.doi===input.doi)||(source.title===input.title&&source.abstract===input.abstract)));
+      if(duplicate){sendJson(response,200,{source:duplicate});return;}
+      const source=sourceSchema.parse({...input,material_scope:'abstract',source_type:'markdown',source_id:makeId('source'),project_id:projectId,protocol_version:'v1',parse_status:'metadata_only',imported_at:now()});
+      // Abstract originals never enter full-text FTS or full-text parsed directories.
+      writeFileSync(abstractFile(store,projectId,source.source_id,'materials'),`# ${source.title}\n\n材料范围：仅摘要\nsource_id=${source.source_id}\n\n${source.abstract}\n`,{mode:0o600});
+      store.createSources([source],new Map());sendJson(response,201,{source});return;
+    }
+    const abstractRoute=subpath.match(/^abstract-library\/(source_[A-Za-z0-9_-]+)\/(analyze|note)$/);
+    if(abstractRoute){
+      const source=store.getSource(abstractRoute[1]);if(!source||source.project_id!==projectId||source.material_scope!=='abstract'){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
+      if(abstractRoute[2]==='note'&&method==='GET'){sendJson(response,200,{text:abstractText(store,projectId,source.source_id)});return;}
+      if(abstractRoute[2]==='analyze'&&method==='POST'){
+        z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+        const tasks=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',abstract_mode:true,source_ids:[source.source_id],title:source.title,regenerate:true}));sendJson(response,202,{tasks});return;
+      }
     }
     if (subpath === "sources" && method === "GET") {
       sendJson(response, 200, { sources: store.listSources(projectId) });
