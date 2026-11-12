@@ -86,10 +86,27 @@ export class LiteratureAnalysis {
   }
   private read(project: string): Analysis | undefined { try { return JSON.parse(readFileSync(join(this.path(project), "current.json"), "utf8")) as Analysis; } catch { return undefined; } }
   private tasks(project: string, ids: string[]) { const all = this.knowledge.tasks(project); return ids.map(id => all.find(task => task.task_id === id)).filter((task): task is KnowledgeTask => Boolean(task)); }
+  private reconcile(project:string){
+    const value=this.read(project);if(!value)return;
+    const all=this.knowledge.tasks(project);let changed=false;
+    const stages=[{ids:value.card_tasks,stage:value.mode==='missing'||value.mode==='changed'?'cards-only':'cards'},{ids:value.group_tasks,stage:'groups'},{ids:value.discovery_tasks??[],stage:'discovery'},{ids:value.wiki_tasks,stage:'wiki'}] as const;
+    for(const group of stages)for(let i=0;i<group.ids.length;i++){
+      const previous=group.ids[i];
+      const candidates=all.filter(task=>{const seen=new Set<string>();let id=task.attempt_of;while(id&&!seen.has(id)){if(id===previous)return true;seen.add(id);id=all.find(t=>t.task_id===id)?.attempt_of;}return false;}).sort((a,b)=>Number(pending(b))-Number(pending(a))||b.created_at.localeCompare(a.created_at));
+      const next=candidates[0];if(!next)continue;
+      group.ids[i]=next.task_id;changed=true;
+      if(['failed','partial','interrupted','cancelled'].includes(value.stage)){
+        value.stage=group.stage;value.error=undefined;
+        if(group.stage!=='wiki'){value.wiki_tasks=[];value.overview=false;}
+      }
+    }
+    if(changed)this.save(value);
+    return value;
+  }
   status(project: string) {
-    const value = this.read(project); if (!value) return null;
+    const value = this.reconcile(project); if (!value) return null;
     const summarize = (ids: string[]) => { const tasks = this.tasks(project, ids); return { total: ids.length, completed: tasks.filter(task => task.status === "completed").length, failed: ids.length - tasks.filter(task => task.status === "completed" || pending(task)).length, active: tasks.filter(pending).length }; };
-    return { ...value, can_resume:!active(value)&&[...value.card_tasks,...value.group_tasks,...(value.discovery_tasks??[]),...value.wiki_tasks].some(id=>['failed','interrupted','cancelled'].includes(this.tasks(project,[id])[0]?.status??'')), cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
+    return { ...value, active_tasks:this.knowledge.tasks(project).filter(pending).map(t=>({task_id:t.task_id,title:t.input.title,status:t.status})), can_resume:!active(value)&&[...value.card_tasks,...value.group_tasks,...(value.discovery_tasks??[]),...value.wiki_tasks].some(id=>['failed','interrupted','cancelled'].includes(this.tasks(project,[id])[0]?.status??'')), cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
   }
   start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string;incremental?:boolean;integration_task?:string}={}) {
     const current = this.read(project); if (current && active(current)) return this.status(project);
@@ -131,7 +148,7 @@ export class LiteratureAnalysis {
     return this.agent.enqueue(value.project_id, input).map(task => task.task_id);
   }
   advance(project: string) {
-    const value = this.read(project); if (!value || !active(value)) return;
+    const value = this.reconcile(project); if (!value || !active(value)) return;
     try {
       const ids = ["cards","cards-only"].includes(value.stage) ? value.card_tasks : value.stage === "groups" ? value.group_tasks : value.stage==='discovery' ? value.discovery_tasks??[] : value.wiki_tasks;
       if (this.tasks(project, ids).some(pending)) return;

@@ -149,7 +149,7 @@ export async function knowledgeRoute(
     }
   }
   if (parts[0] === "knowledge-tasks") {
-    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId).map(task=>url.searchParams.get('summary')==='true'?taskSummary(store,task):task) }); return true; }
+    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId).filter(task=>!(task as {archived_duplicate?:boolean}).archived_duplicate).map(task=>url.searchParams.get('summary')==='true'?taskSummary(store,task):task) }); return true; }
     if (!parts[1] && method === "POST") { send(response, 201, { tasks: runner.enqueue(projectId, knowledgeTaskInputSchema.parse(await readJson(request))) }); return true; }
     const task = knowledge.tasks(projectId).find(t => t.task_id === parts[1]);
     if (!task) requestError("NOT_FOUND", 404);

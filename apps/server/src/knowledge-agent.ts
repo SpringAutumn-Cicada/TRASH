@@ -29,6 +29,10 @@ export class KnowledgeAgent implements TaskRunner {
       const successors=all.filter(descends).sort((a,b)=>Number(['queued','running'].includes(b.status))-Number(['queued','running'].includes(a.status))||b.created_at.localeCompare(a.created_at));
       if(successors[0]){this.onTaskRetried?.(projectId,retryOf,successors[0]);return [successors[0]];}
     }
+    if(input.kind==='wiki-page'){
+      const current=this.knowledge.tasks(projectId).find(task=>['queued','running'].includes(task.status)&&task.input.kind==='wiki-page'&&task.input.target_id===input.target_id&&task.input.title===input.title&&task.input.wiki_level===input.wiki_level&&task.input.instructions===input.instructions&&JSON.stringify(task.input.dependencies)===JSON.stringify(input.dependencies)&&JSON.stringify(task.input.source_ids)===JSON.stringify(input.source_ids));
+      if(current){if(retryOf)this.onTaskRetried?.(projectId,retryOf,current);return [current];}
+    }
     if (input.kind === "literature-card" && !input.source_ids.length) requestError("SOURCES_REQUIRED");
     if (input.include_source_wiki && (input.kind !== 'literature-card' || input.source_ids.length !== 1 || input.dependencies.length || input.target_id)) requestError('INVALID_REQUEST',400);
     const active = input.include_source_wiki && this.knowledge.tasks(projectId).find(t=>t.input.include_source_wiki && t.input.source_ids[0]===input.source_ids[0] && ['queued','running'].includes(t.status));
