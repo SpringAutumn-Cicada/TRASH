@@ -88,3 +88,7 @@
 .library-row-controls .library-analysis-action .library-error[open]{width:100%;padding:0;border:0;background:transparent;box-shadow:none;border-radius:0}
 .library-analysis-action .library-error summary{white-space:nowrap;font-size:10px}
 .library-analysis-action .library-error p{position:absolute;top:100%;right:0;width:min(260px,calc(100vw - 60px));box-sizing:border-box;padding:12px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #10233c14}
+
+/* Completed literature has a compact, clearly recognizable success badge. */
+.library-status.done{gap:5px;padding:5px 8px;border:1px solid color-mix(in srgb,#19956e 25%,var(--line));border-radius:7px;background:color-mix(in srgb,#19956e 10%,var(--surface));color:color-mix(in srgb,#14815f 85%,var(--ink));font-weight:600;line-height:1.2}
+.library-status.done>svg{flex:none}

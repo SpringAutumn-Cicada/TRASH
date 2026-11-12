@@ -4,7 +4,7 @@ import "./literature-ui.css";
 import { LiteratureDocumentDialog } from "./literature-document-dialog.js";
 import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
-import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, Trash2, X, ChevronDown, BookOpen } from "lucide-react";
+import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, Trash2, X, ChevronDown, BookOpen, CircleCheck } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
@@ -231,7 +231,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     {[['basic','基础信息',item?.hasBasic],['key','关键卡片',item?.hasKey],['detail','详细卡片',item?.hasDetail],['wiki','Wiki',item?.hasWiki]].map(([type,name,available])=><button type="button" key={String(type)} disabled={!available} title={available?String(name):'分析生成后可查看'} onClick={()=>setDocumentTarget({source,type:String(type)})}>{name}</button>)}
                   </div>
                   <div className="library-row-controls">
-                    <div className="library-state"><span className={`library-status ${tone}`}><i/>{status}</span></div>
+                    <div className="library-state"><span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
                     <div className="library-row-actions"><div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&item?.task_id)window.location.assign(projectPath(projectId,'tasks',{focus:item.task_id}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
                   </div>
                 </article>;
