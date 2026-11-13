@@ -48,3 +48,6 @@
 .wg-node-inspector .wg-node-kind{background:transparent!important;border:1px solid currentColor}
 .wg-legend{padding-right:235px;flex-wrap:wrap}
 @media(max-width:700px){.wg-legend{padding-right:12px;padding-bottom:48px;min-height:96px}}
+.wg-dynamic-toggle{border:1px solid var(--wg-line,var(--line));border-radius:6px;padding:5px 8px;background:var(--wg-surface,var(--surface));color:var(--wg-text,var(--muted));font-size:10px;cursor:pointer}.wg-dynamic-toggle[aria-pressed=true]{background:var(--wg-accent-soft,#e7f0ff);border-color:var(--wg-accent,#397ce3);color:var(--wg-accent,#397ce3)}
+.wg-view-3d canvas{transform:perspective(1100px) rotateX(5deg) rotateY(-4deg);transform-origin:center;transition:transform .35s ease}.wg-view-3d{background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--wg-accent,#397ce3) 10%,transparent),transparent 55%),var(--wg-canvas,var(--surface))}
+@media(prefers-reduced-motion:reduce){.wg-view-3d canvas{transition:none}}
