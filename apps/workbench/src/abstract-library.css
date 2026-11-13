@@ -13,3 +13,7 @@
 .abstract-row-state .library-status.done>svg{flex:none}.abstract-row-state .library-status.done>i{display:none}
 .abstract-reader>header{position:sticky;top:-22px;z-index:4;margin:-22px -22px 0;padding:18px 22px 14px;background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
 @media(max-width:700px){.abstract-reader>header{top:-16px;margin:-16px -16px 0;padding:14px 16px 12px}}
+/* Abstract reader is a centered dialog, independent of the library page scroll. */
+.abstract-reader{position:fixed;z-index:80;left:50%;top:50%;transform:translate(-50%,-50%);width:min(920px,calc(100vw - 48px));max-height:min(82dvh,760px);box-sizing:border-box;border-radius:16px;box-shadow:0 24px 80px rgb(15 35 65 / 28%),0 0 0 100vmax rgb(15 35 65 / 24%)}
+.abstract-reader>header{top:-22px}
+@media(max-width:700px){.abstract-reader{width:calc(100vw - 24px);max-height:86dvh;border-radius:13px}.abstract-reader>header{top:-16px}}
