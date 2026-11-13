@@ -49,3 +49,4 @@
 .wg-legend{padding-right:235px;flex-wrap:wrap}
 @media(max-width:700px){.wg-legend{padding-right:12px;padding-bottom:48px;min-height:96px}}
 .wg-view-toggle{border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:var(--surface);color:var(--muted);font-size:10px;cursor:pointer}.wg-view-toggle[aria-pressed=true]{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,var(--line));background:var(--green-soft)}.wg-view-3d canvas{transform:perspective(1000px) rotateX(7deg);transform-origin:center;transition:transform .3s ease}@media(prefers-reduced-motion:reduce){.wg-view-3d canvas{transition:none}}
+.wg-organize{border:1px solid var(--line);border-radius:6px;padding:5px 9px;background:var(--surface);color:var(--green);font-size:10px;cursor:pointer}.wg-organize:hover{background:var(--green-soft)}
