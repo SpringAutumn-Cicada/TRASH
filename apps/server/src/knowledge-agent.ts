@@ -56,7 +56,18 @@ export class KnowledgeAgent implements TaskRunner {
       const previous=part.target_id?index.find(doc=>doc.id===part.target_id):part.kind==='literature-card'?index.find(doc=>doc.source_id===part.source_ids[0]&&doc.card_type==='detail'):undefined;
       if(part.target_id&&!previous)requestError('NOT_FOUND',404);
       const documents=[...new Set([...selected.map(d=>d.id),...(previous?[previous.id]:[])])].map(id=>markdown.read(projectId,id));
-      if(documents.reduce((n,d)=>n+d.text.length,0)>60000)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
+      const inputChars=documents.reduce((n,d)=>n+d.text.length,0);
+      if(inputChars>60000){
+        if(part.kind!=='wiki-page')requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
+        // Wiki synthesis uses card evidence, not full documents. Keep frontmatter, headings and a bounded body.
+        const budget=Math.max(8000,Math.floor(56000/Math.max(1,documents.length)));
+        for(const doc of documents){
+          if(doc.text.length<=budget)continue;
+          const lines=doc.text.split('\n'),kept:string[]=[];let used=0;
+          for(const line of lines){if(used+line.length+1>budget)break;kept.push(line);used+=line.length+1;}
+          doc.text=kept.join('\n')+'\n\n> 内容已按综合预算压缩；原始卡片仍保留在文献库。';
+        }
+      }
       const dependencies=selected.map(d=>({id:d.id,path:d.path,hash:d.hash}));
       if(part.kind==='literature-card'&&sources[0])part={...part,title:sources[0].source.title};
       const targetPaths=part.kind==='literature-card'?[`literature/cards/card-${part.source_ids[0]}-basic.md`,`literature/cards/card-${part.source_ids[0]}-detail.md`,`literature/cards/card-${part.source_ids[0]}-key.md`,...(part.include_source_wiki?[`wiki/wiki-${part.source_ids[0]}.md`]:[])]:previous?[previous.path]:[];
