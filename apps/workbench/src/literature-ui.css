@@ -98,3 +98,7 @@
 /* Keep the search field flat inside its outer control. */
 .library-filter input,.library-filter input:focus,.library-filter input:focus-visible{border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important;-webkit-appearance:none}
 .library-filter{overflow:hidden}
+/* Keep Wiki/status/action columns compact and stable across states. */
+.library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 128px 198px;gap:18px}
+.library-document-modules{grid-template-columns:repeat(2,56px);justify-content:start;gap:6px}.library-document-modules button{width:56px;padding:0 4px;font-size:10px}.library-row-controls{gap:12px}.library-row-controls .library-state{min-width:58px}.library-row-controls .library-analysis-action{width:82px}
+@media(max-width:850px) and (min-width:601px){.library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 112px 170px;gap:12px}}
