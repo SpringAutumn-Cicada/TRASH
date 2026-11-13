@@ -1,0 +1,42 @@
+/* Literature workspace: a technical header above a quiet reading surface. */
+.literature-workspace>.data-heading{
+ position:relative;isolation:isolate;overflow:hidden;padding:24px 28px;border:1px solid #294568;border-radius:16px;
+ background:radial-gradient(ellipse at 93% 0%,#245892 0%,transparent 52%),linear-gradient(115deg,#13243c,#1c3454);
+ color:#f1f6ff;box-shadow:0 8px 24px rgb(20 42 73 / 12%);gap:18px
+}
+.literature-workspace>.data-heading::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background-image:linear-gradient(#91baff0b 1px,transparent 1px),linear-gradient(90deg,#91baff0b 1px,transparent 1px);background-size:24px 24px;mask-image:linear-gradient(90deg,transparent,#000)}
+.literature-workspace>.data-heading h2{color:#f1f6ff;letter-spacing:.02em}
+.literature-workspace>.data-heading p{color:#b5c8e2}
+.literature-workspace>.data-heading .data-symbol{background:#72aaff1c;color:#9dc8ff;border:1px solid #94bcff42;border-radius:13px;box-shadow:inset 0 0 18px #77adff0d}
+.literature-workspace>.data-module-tabs{gap:6px;border-bottom:1px solid var(--line);padding:8px 0 12px}
+.literature-workspace>.data-module-tabs>button{border-radius:8px;color:var(--muted);transition:background .16s,color .16s}
+.literature-workspace>.data-module-tabs>button.active{background:linear-gradient(135deg,#245ebc,#397ce3);border-color:#397ce3;color:#fff;box-shadow:0 3px 9px #2864c32b}
+.literature-workspace .abstract-library-tabs{display:inline-flex;align-self:flex-start;gap:4px;padding:4px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--line) 25%,var(--surface));margin-bottom:20px}
+.literature-workspace .abstract-library-tabs button{margin:0;border:1px solid transparent;background:transparent;border-radius:7px;padding:7px 14px;font-weight:500}
+.literature-workspace .abstract-library-tabs button[aria-pressed=true]{color:#245ebc;background:var(--surface);border-color:color-mix(in srgb,#397ce3 28%,var(--line));box-shadow:0 2px 5px #193b6410}
+.literature-workspace .library-heading h2{color:var(--ink);font-weight:700}
+.literature-workspace .library-heading h2>span{color:#245ebc;background:color-mix(in srgb,#397ce3 10%,var(--surface));border:1px solid color-mix(in srgb,#397ce3 15%,var(--line));font-variant-numeric:tabular-nums}
+.literature-workspace .library-filter{height:40px;border-color:color-mix(in srgb,#6b85a6 35%,var(--line));background:var(--surface);box-shadow:0 2px 5px #193b6405;transition:border-color .16s,box-shadow .16s}
+.literature-workspace .library-filter:focus-within{border-color:#397ce3;box-shadow:0 0 0 3px #397ce319}
+.literature-workspace .library-filter input{border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important}
+.literature-workspace .library-toolbar .primary-button,.literature-workspace .abstract-library>.library-heading .primary-button{background:linear-gradient(135deg,#245ebc,#397ce3);border-color:#2b68cd;color:white;box-shadow:0 3px 8px #2864c324}
+.literature-workspace .library-table{overflow:visible;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 5px 20px #193b6406}
+.literature-workspace .library-table-heading{margin:0;padding:12px 16px;border-radius:11px 11px 0 0;background:color-mix(in srgb,#6882a8 9%,var(--surface));color:var(--ink);font-size:11px;font-weight:600;border-bottom:1px solid var(--line)}
+.literature-workspace .library-row{position:relative;padding:18px 16px;margin:0;transition:background .16s,box-shadow .16s}
+.literature-workspace .library-row:last-child{border-bottom:0;border-radius:0 0 11px 11px}
+.literature-workspace .library-row:hover{background:color-mix(in srgb,#397ce3 4%,var(--surface));box-shadow:inset 3px 0 #397ce3}
+.literature-workspace .library-row-active{background:color-mix(in srgb,#397ce3 5%,var(--surface));box-shadow:inset 3px 0 #397ce3}
+.literature-workspace .library-paper{align-items:center}
+.literature-workspace .library-paper strong{color:var(--ink);font-weight:600}
+.literature-workspace .library-paper:hover strong{color:#245ebc}
+.literature-workspace .library-document-modules button:not(:disabled){color:#34567f;border-color:color-mix(in srgb,#6b85a6 40%,var(--line));background:linear-gradient(var(--surface),color-mix(in srgb,#6882a8 4%,var(--surface)));box-shadow:0 1px 3px #193b6407}
+.literature-workspace .library-document-modules button:not(:disabled):hover{border-color:#397ce3;color:#245ebc;background:color-mix(in srgb,#397ce3 7%,var(--surface))}
+.literature-workspace .library-document-modules button:disabled{opacity:.65;color:var(--muted);background:color-mix(in srgb,var(--line) 17%,var(--surface));box-shadow:none}
+.literature-workspace .library-wiki-analyze{border-color:color-mix(in srgb,#8d6dd6 45%,var(--line));color:#7654bb}
+.literature-workspace .library-analyze:not(.library-analyze-progress):not(.library-analyze-retry){border-color:color-mix(in srgb,#397ce3 20%,var(--line));background:color-mix(in srgb,#397ce3 5%,var(--surface));color:#245ebc}
+.literature-workspace .abstract-items{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+.literature-workspace .abstract-items>article{padding:18px 16px;transition:background .16s,box-shadow .16s}
+.literature-workspace .abstract-items>article:last-child{border-bottom:0}
+.literature-workspace .abstract-items>article:hover{background:color-mix(in srgb,#397ce3 4%,var(--surface));box-shadow:inset 3px 0 #397ce3}
+@media(max-width:700px){.literature-workspace>.data-heading{padding:20px 18px;border-radius:12px}.literature-workspace .library-row,.literature-workspace .abstract-items>article{padding:16px 12px}.literature-workspace .library-table-heading{padding:12px}.literature-workspace>.data-module-tabs{gap:4px}}
+@media(prefers-reduced-motion:reduce){.literature-workspace .library-row,.literature-workspace .abstract-items>article,.literature-workspace .library-filter,.literature-workspace>.data-module-tabs>button{transition:none}}

@@ -2,6 +2,7 @@ import {AbstractLibrary} from './abstract-library.js';
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import "./literature-ui.css";
+import "./literature-visual.css";
 import { LiteratureDocumentDialog } from "./literature-document-dialog.js";
 import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
