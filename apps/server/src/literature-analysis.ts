@@ -115,6 +115,10 @@ export class LiteratureAnalysis {
     const eligible = sources.filter(source => this.store.listSourceSegments(source.source_id).some(segment => segment.text.trim()) || Boolean(source.abstract?.trim()) || source.source_type==='pdf');
     if (!eligible.length) experimentError("ANALYSIS_NO_READABLE_SOURCES", 422);
     const value: Analysis = { analysis_id: `analysis_${randomUUID()}`, project_id: project, stage: "cards", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), source_count: eligible.length, skipped_count: sources.length - eligible.length, card_tasks: [], group_tasks: [], wiki_tasks: [] };
+    const existingDocs=new MarkdownKnowledge(this.store).index(project).documents;
+    const plan={reuse:0,补齐:0,重读:0,综合:0};
+    for(const source of eligible){const pair=existingDocs.filter(d=>d.source_id===source.source_id&&['basic','detail','key'].includes(d.card_type??''));const complete=pair.length===3&&existingDocs.some(d=>d.source_id===source.source_id&&d.kind==='wiki-page');if(mode==='synthesis'||mode==='overview'){if(complete)plan.reuse++;else plan.补齐++;plan.综合++;}else if(complete&&mode!=='changed')plan.reuse++;else if(pair.length)plan.补齐++;else plan.重读++;}
+    value.plan=plan;
     value.mode=mode;value.incremental=options.incremental;value.integration_task=options.integration_task;value.card_documents=[];value.theme_title=options.title;value.instructions=options.instructions;value.reused_sources=[];value.covered_sources=[];value.missing_sources=[];
     this.save(value);
     try {

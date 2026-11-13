@@ -94,3 +94,4 @@
 .library-status.done>svg{flex:none}
 .library-keep-original{border:1px solid color-mix(in srgb,#168168 28%,var(--line));border-radius:6px;padding:6px 8px;background:color-mix(in srgb,#168168 7%,var(--surface));color:#168168;font-size:11px;white-space:nowrap;cursor:pointer;flex:none}
 .library-keep-original:hover:not(:disabled){background:color-mix(in srgb,#168168 14%,var(--surface))}
+.library-analysis-plan{display:block;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:color-mix(in srgb,var(--green-soft) 35%,var(--surface));color:var(--ink)}
