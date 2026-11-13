@@ -13,7 +13,7 @@ type Stage = "discovery" | "cards-only" | "cards" | "groups" | "wiki" | "complet
 export interface Analysis {
   analysis_id: string; project_id: string; stage: Stage; created_at: string; updated_at: string;
   source_count: number; skipped_count: number; card_tasks: string[]; group_tasks: string[]; wiki_tasks: string[];
-  discovery_tasks?:string[];topic_count?:number;candidate_count?:number;error?: string; reused_sources?:string[]; covered_sources?:string[]; missing_sources?:string[]; round?:number; overview?:boolean; group_history?:string[];card_documents?:string[];theme_title?:string;instructions?:string;mode?:string;incremental?:boolean;integration_task?:string;
+  discovery_tasks?:string[];topic_count?:number;candidate_count?:number;error?: string; reused_sources?:string[]; covered_sources?:string[]; missing_sources?:string[]; round?:number; overview?:boolean; plan?:{reuse:number;补齐:number;重读:number;综合:number}; group_history?:string[];card_documents?:string[];theme_title?:string;instructions?:string;mode?:string;incremental?:boolean;integration_task?:string;
 }
 const active = (value: Analysis) => ["cards-only", "cards", "groups", "discovery", "wiki"].includes(value.stage);
 const pending = (task: KnowledgeTask) => ["queued", "running"].includes(task.status);
