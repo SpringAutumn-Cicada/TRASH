@@ -20,3 +20,4 @@
 .abstract-wiki-entry{align-self:flex-start;border:1px solid color-mix(in srgb,#8d6dd6 35%,var(--line));border-radius:7px;padding:8px 12px;background:color-mix(in srgb,#8d6dd6 8%,var(--surface));color:#7654bb;cursor:pointer;font-size:11px}.abstract-wiki-preview{padding:14px;border-left:3px solid #8d6dd6;background:color-mix(in srgb,#8d6dd6 5%,var(--surface));border-radius:0 8px 8px 0}.abstract-wiki-preview h1{font-size:16px}
 .abstract-wiki-inline{border:0;background:transparent;color:#7654bb;font-size:11px;padding:4px 6px;cursor:pointer}.abstract-wiki-inline:hover{text-decoration:underline}.abstract-row-state{gap:8px}
 .abstract-edit{margin-left:10px;font-size:11px}
+.abstract-wiki-inline:disabled,.abstract-wiki-entry:disabled{opacity:.42;cursor:not-allowed;color:var(--muted);border-color:var(--line);background:var(--surface)}

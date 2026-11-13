@@ -386,7 +386,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const tasks=knowledge.tasks(projectId).filter(task=>task.input.abstract_mode);
       sendJson(response,200,{sources:store.listSources(projectId,true).filter(source=>source.material_scope==='abstract').map(source=>{
         const candidates=tasks.filter(task=>task.input.source_ids[0]===source.source_id).sort((a,b)=>Number(['queued','running'].includes(b.status))-Number(['queued','running'].includes(a.status))||b.created_at.localeCompare(a.created_at));
-        return {source,task:candidates[0]?{task_id:candidates[0].task_id,status:candidates[0].status,error:candidates[0].error}:undefined,has_note:Boolean(abstractText(store,projectId,source.source_id))};
+        return {source,task:candidates[0]?{task_id:candidates[0].task_id,status:candidates[0].status,error:candidates[0].error}:undefined,has_note:Boolean(abstractText(store,projectId,source.source_id)),has_wiki:Boolean(abstractText(store,projectId,source.source_id,'wiki'))};
       })});return;
     }
     if(subpath==='abstract-library'&&method==='POST'){
