@@ -14,7 +14,7 @@ export function abstractFile(store:TrashStore,project:string,source:string,area:
   if(existsSync(target)&&lstatSync(target).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');
   return target;
 }
-export function abstractText(store:TrashStore,project:string,source:string){const file=abstractFile(store,project,source);return existsSync(file)?readFileSync(file,'utf8'):'';}
+export function abstractText(store:TrashStore,project:string,source:string,area:'notes'|'wiki'='notes'){const file=abstractFile(store,project,source,area);return existsSync(file)?readFileSync(file,'utf8'):'';}
 export function publishAbstract(store:TrashStore,project:string,source:string,text:string,expected:string|null){
   const target=abstractFile(store,project,source),before=existsSync(target)?readFileSync(target,'utf8'):null;
   const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -22,3 +22,5 @@ export function publishAbstract(store:TrashStore,project:string,source:string,te
   if(before!==null)writeFileSync(abstractFile(store,project,source,'history',hash(before)),before,{mode:0o600});
   const temp=join(dirname(target),'.'+source+'-'+Date.now()+'.tmp');writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,target);
 }
+
+export function publishAbstractWiki(store:TrashStore,project:string,source:string,text:string){const target=abstractFile(store,project,source,'wiki');const temp=join(dirname(target),'.'+source+'-'+Date.now()+'.tmp');writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,target);}

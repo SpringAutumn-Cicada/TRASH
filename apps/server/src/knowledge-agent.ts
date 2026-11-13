@@ -1,4 +1,4 @@
-import {abstractSkill,abstractText,publishAbstract} from './abstract-library.js';
+import {abstractSkill,abstractText,publishAbstract,publishAbstractWiki} from './abstract-library.js';
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
 import { projectRuntime } from "./project-layout.js";
@@ -220,14 +220,14 @@ export class KnowledgeAgent implements TaskRunner {
       const markdown=new MarkdownKnowledge(this.store);
       const source=task.input.source_ids[0];
       const id=task.input.kind==='literature-card'?`card-${source}`:snapshot.previous?.id??(task.input.wiki_level==='overview'?'wiki-project-overview':`wiki-${randomUUID()}`);
-      const paths=task.input.abstract_mode?[`abstract-library/notes/${source}.md`]:task.input.kind==='literature-card'?[`literature/cards/${id}-detail.md`,`literature/cards/${id}-basic.md`,`literature/cards/${id}-key.md`]:[`wiki/${id}.md`];
+      const paths=task.input.abstract_mode?[`abstract-library/notes/${source}.md`,`abstract-library/wiki/${source}.md`]:task.input.kind==='literature-card'?[`literature/cards/${id}-detail.md`,`literature/cards/${id}-basic.md`,`literature/cards/${id}-key.md`]:[`wiki/${id}.md`];
       if(task.input.include_source_wiki)paths.push(`wiki/wiki-${source}.md`);
       const output=join(directory,'output');mkdirSync(output,{recursive:true});
       for(const doc of snapshot.documents??[]){const file=join(output,doc.path);mkdirSync(join(file,'..'),{recursive:true});writeFileSync(file,doc.text);}
       if(task.input.abstract_mode){mkdirSync(join(directory,'abstract-skill'),{recursive:true});writeFileSync(join(directory,'abstract-skill','SKILL.md'),abstractSkill(),{mode:0o600});}else stageKnowledgeSkill(directory);
       let prompt=`读取 literature-skill/SKILL.md 和 input.json，严格使用 trash-literature-knowledge skill。模式：${task.input.kind}。${task.input.include_source_wiki?'单篇 Wiki 的一级标题必须与同批基本信息卡识别的正式论文标题一致，不照抄旧文件名或任务标题。':task.input.wiki_level==='single'?'单篇 Wiki 沿用对应文献的正式论文标题；原始资料未核实时保留现有标题，不凭文件名猜测。':`主题/假设/总览 Wiki 标题为“${task.input.title}”，使用独立知识问题命名。`}卡片应按实际论文识别正式标题，不照抄可能是文件名的任务标题。直接生成 Markdown 文件到 output/ 下这些相对路径：${paths.join('、')}。frontmatter id 必须等于文件名去掉 .md，kind 为 ${task.input.kind}，knowledge_version: 2，Wiki level 为 ${task.input.wiki_level??'topic'}，卡片 source_id=${source??'不适用'}，三卡 card_type 分别为 basic/detail/key。不输出正文 JSON。其他文件仅供阅读，不修改。保留已有用户信息。若本次为卡片任务，输出清单中的三份卡片分别为基本信息basic、详细detail、关键key；基本信息严格按references/basic.md的固定Markdown字段和日期/源码规则填写，不编造月份，不联网自动核验仓库。Wiki 综合并拓展有来源的内容。用户要求：${task.input.instructions}。Wiki 面向后续Agent检索和推理，遵守references/wiki.md：主题正文600–1200字、总览400–800字为软目标，中间总结遵守本次指定预算；候选、假设和事实不能混淆，关键认识就近引用。关联主题用“## 关联知识”并说明支持/限制/对比/分歧；证据依赖用“## 引用依据”或“依据：”标记。普通相关链接不作证据。保留稳定ID和人工补充，先查 topic_index 同义主题。首先写“## 何时读取”，不要堆砌摘要或详细实验表格。完成后回读文件并报告路径。`;
       if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 是300–600字的Agent单篇线索笔记，不重复三份卡片：何时读取、重要机制/条件链接、候选主题、未知项，最后关联项目；主题不受项目题目限制，无线索明确写暂未发现。关联本篇关键卡片与详细卡片；明确区分原文结论和推断，不声称综合了其他论文，不读取其他论文。卡片仍为 literature-card。单篇 Wiki level 必须为 single。含基本卡片共四份必须全部完成。`;
-      if(task.input.abstract_mode)prompt=`读取 abstract-skill/SKILL.md 和 input.json，仅分析指定摘要。直接写 Markdown 到 output/${paths[0]}，一级标题使用提供的论文标题，必须标明 材料范围：仅摘要 和 source_id=${source}。不要生成全文卡片、正式主题或Wiki。用户要求：${task.input.instructions}`;
+      if(task.input.abstract_mode)prompt=`读取 abstract-skill/SKILL.md 和 input.json，仅分析指定摘要。直接写两份 Markdown 到 output/${paths[0]} 和 output/${paths[1]}：第一份给人看的摘要解读，第二份给 Agent 的摘要 Wiki。一级标题使用提供的论文标题，必须标明 材料范围：仅摘要 和 source_id=${source}。不要生成全文卡片、正式主题或Wiki。用户要求：${task.input.instructions}`;
       writeFileSync(join(directory,'prompt.txt'),prompt);
       const cliVersion = await new Promise<string>((resolve,reject)=>execFile(this.cli.command,[...this.cli.prefix,"--version"],{timeout:10000,maxBuffer:65536},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
       writeFileSync(join(directory,"metadata.json"),JSON.stringify({adapter:"codex-cli",cli_version:cliVersion,prompt_version:6,skill:task.input.abstract_mode?"trash-abstract-literature":"trash-literature-knowledge",skill_hash:createHash("sha256").update(task.input.abstract_mode?abstractSkill():skillText()).digest("hex"),input_fingerprint:task.fingerprint,sandbox:"workspace-write"},null,2));
@@ -318,6 +318,7 @@ export class KnowledgeAgent implements TaskRunner {
       this.knowledge.event(task.task_id,'发布阶段：全部输出校验合格，核对版本后整组发布');
       if(task.input.abstract_mode){
         publishAbstract(this.store,projectId,source,commits[0].text,(task.snapshot as {abstract_expected:string|null}).abstract_expected);
+        publishAbstractWiki(this.store,projectId,source,commits[1].text);
         task.status='completed';task.output_id=`abstract-${source}`;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${paths[0]}（仅摘要，独立存放）`);return;
       }
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);

@@ -398,10 +398,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       writeFileSync(abstractFile(store,projectId,source.source_id,'materials'),`# ${source.title}\n\n材料范围：仅摘要\nsource_id=${source.source_id}\n\n${source.abstract}\n`,{mode:0o600});
       store.createSources([source],new Map());sendJson(response,201,{source});return;
     }
-    const abstractRoute=subpath.match(/^abstract-library\/(source_[A-Za-z0-9_-]+)\/(analyze|note)$/);
+    const abstractRoute=subpath.match(/^abstract-library\/(source_[A-Za-z0-9_-]+)\/(analyze|note|wiki)$/);
     if(abstractRoute){
       const source=store.getSource(abstractRoute[1]);if(!source||source.project_id!==projectId||source.material_scope!=='abstract'){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       if(abstractRoute[2]==='note'&&method==='GET'){sendJson(response,200,{text:abstractText(store,projectId,source.source_id)});return;}
+      if(abstractRoute[2]==='wiki'&&method==='GET'){sendJson(response,200,{text:abstractText(store,projectId,source.source_id,'wiki')});return;}
       if(abstractRoute[2]==='analyze'&&method==='POST'){
         z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
         const tasks=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',abstract_mode:true,source_ids:[source.source_id],title:source.title,regenerate:true}));sendJson(response,202,{tasks});return;
