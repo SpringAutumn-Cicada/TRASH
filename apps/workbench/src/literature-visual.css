@@ -25,7 +25,7 @@
 .literature-workspace .library-filter input{border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important}
 .literature-workspace .library-toolbar .primary-button,.literature-workspace .abstract-library>.library-heading .primary-button{background:linear-gradient(135deg,#245ebc,#397ce3);border-color:#2b68cd;color:white;box-shadow:0 3px 8px #2864c324}
 .literature-workspace .library-table{overflow:visible;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 5px 20px #193b6406}
-.literature-workspace .library-table-heading{margin:0;padding:12px 16px;border-radius:11px 11px 0 0;background:color-mix(in srgb,#6882a8 9%,var(--surface));color:var(--ink);font-size:11px;font-weight:600;border-bottom:1px solid var(--line)}
+.literature-workspace .library-table-heading{margin:0;padding:12px 16px;border-radius:11px 11px 0 0;background:linear-gradient(110deg,color-mix(in srgb,#397ce3 9%,var(--surface)),color-mix(in srgb,#5caacb 5%,var(--surface)));color:#315c91;font-size:11px;font-weight:600;border-bottom:1px solid color-mix(in srgb,#397ce3 22%,var(--line))}
 .literature-workspace .library-row{position:relative;padding:18px 16px;margin:0;transition:background .16s,box-shadow .16s}
 .literature-workspace .library-row:last-child{border-bottom:0;border-radius:0 0 11px 11px}
 .literature-workspace .library-row:hover{background:color-mix(in srgb,#397ce3 4%,var(--surface));box-shadow:inset 3px 0 #397ce3}
@@ -49,8 +49,8 @@
 .literature-workspace .library-row .library-status,
 .literature-workspace .abstract-items .library-status{
  display:inline-flex;align-items:center;justify-content:center;gap:5px;box-sizing:border-box;
- min-width:76px;height:28px;padding:5px 8px;border:1px solid #bdcbdc;border-radius:7px;
- background:#edf2f8;color:#4b607a;font-size:11px;font-weight:600;line-height:1.2;white-space:nowrap;
+ min-width:76px;height:28px;padding:5px 8px;border:1px solid #c5b6e8;border-radius:7px;
+ background:#f3effb;color:#65458f;font-size:11px;font-weight:600;line-height:1.2;white-space:nowrap;
  font-variant-numeric:tabular-nums
 }
 .literature-workspace .library-row .library-status.done,
@@ -65,3 +65,10 @@
 .literature-workspace .abstract-items .library-status>i{display:block;flex:none;width:5px;height:5px;margin:0;border-radius:50%;background:currentColor;opacity:1}
 .literature-workspace .library-row .library-status>svg,
 .literature-workspace .abstract-items .library-status>svg{flex:none;width:13px;height:13px}
+
+/* Hidden desktop headings must leave no border or padding in the compact list. */
+.literature-workspace .library-table-heading+.library-row{border-top:0}
+@media(max-width:1050px){
+ .literature-workspace .library-table-heading{display:none;height:0;min-height:0;padding:0;margin:0;border:0;background:none;box-shadow:none}
+ .literature-workspace .library-table-heading+.library-row{border-top:0;border-top-left-radius:11px;border-top-right-radius:11px}
+}
