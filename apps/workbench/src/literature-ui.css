@@ -121,16 +121,14 @@
 .wiki-task-notice a{flex:none;color:#7654bb;text-underline-offset:3px}
 @media(max-width:600px){.wiki-task-notice{align-items:flex-start;flex-wrap:wrap}}
 
-/* Paper status replaces the file-format tile beside the title. */
-.library-paper>.library-paper-status{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:none;width:72px;min-width:72px;max-width:none;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--line) 25%,var(--surface));color:var(--muted);font-size:10px;font-weight:500;line-height:1.4;white-space:nowrap;box-sizing:border-box}
-.library-paper-status>svg{flex:none}
-.library-paper-status>i{width:4px;height:4px;flex:none;border-radius:50%;background:currentColor;opacity:.65}
-.library-paper>.library-paper-status.idle{border-color:transparent;background:transparent;color:color-mix(in srgb,#647b99 85%,var(--ink));font-weight:400}
-.library-paper-status.idle>i{width:4px;height:4px;color:#7d91ad;opacity:1}
-.library-paper>.library-paper-status.done{color:#14815f;border-color:transparent;border-radius:6px;background:color-mix(in srgb,#19956e 6%,var(--surface));font-weight:500}
-.library-paper>.library-paper-status.active{color:#2563eb;border-color:color-mix(in srgb,#2563eb 24%,var(--line));background:color-mix(in srgb,#2563eb 6%,var(--surface))}
-.library-paper>.library-paper-status.failed{color:#b54d3d;border-color:color-mix(in srgb,#b54d3d 25%,var(--line));background:color-mix(in srgb,#b54d3d 6%,var(--surface))}
-.library-paper>.library-paper-status.warning{color:#a37422;border-color:color-mix(in srgb,#a37422 25%,var(--line));background:color-mix(in srgb,#a37422 6%,var(--surface))}
+/* Compact status tile follows the original PDF format icon silhouette. */
+.library-paper>.library-paper-status{display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;min-width:44px;height:44px;max-width:none;padding:4px;border:0;border-radius:8px;background:color-mix(in srgb,#6b85a6 11%,var(--surface));color:#61758f;font-size:10px;font-weight:600;line-height:1.4;text-align:center;white-space:normal;box-sizing:border-box}
+.library-paper-status>svg,.library-paper-status>i{display:none}
+.library-paper>.library-paper-status.idle{color:#61758f;background:color-mix(in srgb,#6b85a6 11%,var(--surface))}
+.library-paper>.library-paper-status.done{color:#14815f;background:color-mix(in srgb,#19956e 12%,var(--surface))}
+.library-paper>.library-paper-status.active{color:#2563eb;background:color-mix(in srgb,#2563eb 10%,var(--surface))}
+.library-paper>.library-paper-status.failed{color:#b54d3d;background:color-mix(in srgb,#b54d3d 10%,var(--surface))}
+.library-paper>.library-paper-status.warning{color:#a37422;background:color-mix(in srgb,#a37422 10%,var(--surface))}
 .library-row-controls .library-state{min-width:82px;grid-template-columns:82px}
 @media(min-width:1051px){.library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 180px 240px}}
-@media(max-width:760px){.library-document-modules{margin-left:0}.library-paper>.library-paper-status{width:66px;min-width:66px;padding:6px 7px}}
+@media(max-width:760px){.library-document-modules{margin-left:0}.library-paper>.library-paper-status{width:44px;min-width:44px;padding:4px}}
