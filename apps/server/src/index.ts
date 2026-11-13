@@ -309,8 +309,25 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if(subpath==='source-analyses' && method==='GET'){
       const docs=new MarkdownKnowledge(store).index(projectId).documents;
-      const tasks=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
+      const tasks=knowledge.tasks(projectId).filter(t=>!(t as {dismissed_reanalysis?:boolean}).dismissed_reanalysis&&t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
       sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);return {source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
+    }
+    const keepOriginal=subpath.match(/^sources\/([^/]+)\/keep-original$/);
+    if(keepOriginal&&method==='POST'){
+      const input=z.object({confirm:z.literal(true),task_id:z.string()}).strict().parse(await readJson(request));
+      const sourceId=decodeURIComponent(keepOriginal[1]),source=store.getSource(sourceId);
+      if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
+      const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===sourceId);
+      if(!['basic','key','detail'].every(type=>docs.some(doc=>doc.card_type===type))||!docs.some(doc=>doc.kind==='wiki-page')){sendJson(response,409,{error:'ORIGINAL_ANALYSIS_REQUIRED'});return;}
+      const tasks=knowledge.tasks(projectId).filter(task=>task.input.include_source_wiki&&task.input.source_ids[0]===sourceId);
+      const latest=tasks.sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
+      if(!latest||latest.task_id!==input.task_id||latest.status==='completed'){sendJson(response,409,{error:'TASK_FINISHED'});return;}
+      if(['queued','running'].includes(latest.status))agent.cancel(projectId,latest.task_id);
+      for(const task of tasks.filter(task=>task.created_at<=latest.created_at&&['failed','interrupted','cancelled'].includes(task.status))){
+        store.db.prepare("UPDATE knowledge_tasks SET data=json_set(data,'$.dismissed_reanalysis',json('true')) WHERE task_id=?").run(task.task_id);
+      }
+      knowledge.event(latest.task_id,'用户退出重新分析，保留当前已整理版本；日志与草稿保留');
+      sendJson(response,200,{preserved:true});return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
     if(sourceAnalysis && method==='POST'){

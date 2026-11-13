@@ -92,3 +92,5 @@
 /* Completed literature has a compact, clearly recognizable success badge. */
 .library-status.done{gap:5px;padding:5px 8px;border:1px solid color-mix(in srgb,#19956e 25%,var(--line));border-radius:7px;background:color-mix(in srgb,#19956e 10%,var(--surface));color:color-mix(in srgb,#14815f 85%,var(--ink));font-weight:600;line-height:1.2}
 .library-status.done>svg{flex:none}
+.library-keep-original{border:1px solid color-mix(in srgb,#168168 28%,var(--line));border-radius:6px;padding:6px 8px;background:color-mix(in srgb,#168168 7%,var(--surface));color:#168168;font-size:11px;white-space:nowrap;cursor:pointer;flex:none}
+.library-keep-original:hover:not(:disabled){background:color-mix(in srgb,#168168 14%,var(--surface))}
