@@ -129,7 +129,7 @@ export class LiteratureAnalysis {
         const pair=docs.filter(d=>d.source_id===source.source_id&&['basic','detail','key'].includes(d.card_type??''));
         if(same&&pair.length===3&&!pair.some(d=>d.stale)&&docs.some(d=>d.id===`wiki-${source.source_id}`&&!d.stale)){value.card_tasks.push(prior.task_id);value.reused_sources!.push(source.source_id);continue;}
         if(mode==='synthesis'||mode==='overview'||(mode==='missing'&&pair.length===3)||(mode==='changed'&&!pair.length)){if(pair.some(d=>d.card_type==='key')){if(prior)value.card_tasks.push(prior.task_id);else{value.card_documents!.push(`card-${source.source_id}-key`);value.reused_sources!.push(source.source_id);}}else value.missing_sources!.push(source.source_id);continue;}
-        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的基本信息卡片（含源码状态/地址）、详细卡片、关键卡片，以及面向Agent的简短单篇线索笔记。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。'+(options.instructions??''),timeout_seconds:3600,regenerate:false,include_source_wiki:true};
+        const input:KnowledgeTaskInput={kind:'literature-card',source_ids:[source.source_id],dependencies:[],title:source.title,instructions:'完整阅读本篇全文图文，生成面向人的基本信息卡片（含源码状态/地址）、详细卡片、关键卡片，以及面向Agent的可独立理解的单篇研究记忆。开放提取候选主题、机制、异常和边界，最后再关联项目；不为项目题目限制主题或凑线索。数字保留真实原文定位。'+(options.instructions??''),timeout_seconds:3600,regenerate:false,include_source_wiki:true};
         value.card_tasks.push(...this.agent.enqueue(project,input).map(t=>t.task_id));this.save(value);
       }
       if(mode==='missing'||mode==='changed'){value.stage='cards-only';}
@@ -144,7 +144,7 @@ export class LiteratureAnalysis {
     const idsToRead=[...documentIds,...this.tasks(project,ids).filter(t=>t.status==='completed').flatMap(task=>task.input.kind==='literature-card'?[`card-${task.input.source_ids[0]}-key`]:task.output_id?[task.output_id]:[])];return [...new Set(idsToRead)].flatMap(id=>{const meta=docs.find(d=>d.id===id);if(!meta)return [];const doc=markdown.read(project,meta.id);return [{object_id:doc.id,project_id:project,kind:doc.kind,version:1,status:'accepted' as const,title:doc.title,content:doc.kind==='wiki-page'?{title:doc.title,tags:[],body:doc.text,dependencies:[]}:{source_id:doc.source_id!,title:doc.title,tags:[],question:doc.text,method:'',contributions:'',limitations:'',datasets:[],baselines:[],metrics:[],reported_results:'',experimental_conditions:'',ideas:'',relevance:'',open_questions:'',evidence:[]},created_by:'agent' as const,created_at:doc.modified}];});
   }
   private batches(records:KnowledgeVersion[]){const groups:KnowledgeVersion[][]=[];let current:KnowledgeVersion[]=[],size=0;for(const record of records){const length=JSON.stringify(record.content).length;if(length>30000)experimentError('KNOWLEDGE_INPUT_TOO_LARGE',422);if(current.length&&(size+length>30000||current.length>=40)){groups.push(current);current=[];size=0;}current.push(record);size+=length;}if(current.length)groups.push(current);return groups;}
-  private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string,level?:'discovery'|'topic'|'hypothesis'|'overview') {
+  private enqueueWiki(value: Analysis, title: string, records: KnowledgeVersion[], instructions: string,level?:'summary'|'discovery'|'topic'|'hypothesis'|'overview') {
     const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>(record.title===title||record.aliases?.includes(title))&&(!level||record.level===level));
     const refs=records.map(r=>markdown.index(value.project_id).documents.find(d=>d.id===r.object_id)!);
     if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed'&&(t.snapshot as {prompt_version?:number}).prompt_version===6);if(old)return [old.task_id];}
@@ -189,7 +189,7 @@ export class LiteratureAnalysis {
       if (batches.length > 1) {
         value.stage = "groups"; value.group_history=[...(value.group_history??[]),...value.group_tasks];value.group_tasks = [];
         value.round=(value.round??0)+1;if(value.round>8)throw new Error('分层综合超过8层，请缩小主题范围');
-        for(const [i,batch] of batches.entries())value.group_tasks.push(...this.enqueueWiki(value,`文献知识第${value.round}层分组${i+1}`,batch,'按实际提供来源归纳证据、共识、分歧和缺失，生成不超过3000字符的主题线索中间总结：开放提取共同假设、分歧、异常、机制和边界，不按项目题目筛掉主题。必须保留原始关键卡片ID及链接、覆盖ID，区分事实和推断，避免逐篇重复摘要。'));
+        for(const [i,batch] of batches.entries())value.group_tasks.push(...this.enqueueWiki(value,`文献知识第${value.round}层分组${i+1}`,batch,'按实际提供来源归纳证据、共识、分歧和缺失，生成不超过3000字符的主题线索中间总结：开放提取共同假设、分歧、异常、机制和边界，不按项目题目筛掉主题。必须保留原始关键卡片ID及链接、覆盖ID，区分事实和推断，避免逐篇重复摘要。按 summary 分批总结规范生成有内容的展示标题、何时读取、覆盖方向和材料范围；批次编号只记录在批次标识，不作为标题。','summary'));
         this.save(value); return;
       }
       if(value.theme_title){value.stage='wiki';value.wiki_tasks.push(...this.enqueueWiki(value,value.theme_title,records,`按用户明确主题“${value.theme_title}”生成精简Agent研究记忆。何时读取、核心认识、证据与分歧、未知与待验证、项目关联和深入阅读；不把假设写成事实。`));}

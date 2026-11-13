@@ -29,7 +29,7 @@ description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源
 
 ## 按需知识版本 2
 
-新文件 frontmatter 包含 `knowledge_version: 2`。Wiki 的 `level` 使用 single（单篇研究记忆）、discovery（发现清单）、topic（知识主题）、hypothesis（待验证假设）或 overview（总览）。旧版本材料不接入新知识库，不能主动读取旧卡片或旧 Wiki 作为依据。
+新文件 frontmatter 包含 `knowledge_version: 2`。Wiki 的 `level` 使用 single（单篇研究记忆）、summary（分批总结）、discovery（发现清单）、topic（知识主题）、hypothesis（待验证假设）或 overview（总览）。旧版本材料不接入新知识库，不能主动读取旧卡片或旧 Wiki 作为依据。
 
 先 navigation/list/search 读取轻量索引，用 relations 查看正反向关联，context 在预算内取得匹配页及一跳关联（返回遗漏项时按需 get）；再 get 读取相关关键卡片。需要方法细节、实验数字或验证证据时，读取详细卡片及原始 PDF 页。工具返回 offset、total、next_offset 时按需继续，不把部分正文说成全文。不得默认读取全项目文档。对话只在明确要求生成/更新时发布文件。
 
