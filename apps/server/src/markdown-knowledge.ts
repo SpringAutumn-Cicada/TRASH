@@ -8,7 +8,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[]};
+export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];coverage?:string;directions?:string;batch_label?:string};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
@@ -40,7 +40,8 @@ export class MarkdownKnowledge {
     const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
-    return {links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    const section=(heading:string)=>match[2].match(new RegExp('^## '+heading+'\\s*\\n([\\s\\S]*?)(?=^## |$(?![\\s\\S]))','m'))?.[1]?.trim();
+    return {coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
@@ -77,9 +78,11 @@ export class MarkdownKnowledge {
   }
   read(project:string,id:string){const entry=this.index(project).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash)fail('VERSION_CONFLICT');return {...entry,text};}
   list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.read(project,d.id))};}
-  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean}={}){
+  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean;include_summaries?:boolean}={}){
     const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level));
+    if(options.kind==='wiki-page'&&!options.level&&!q&&!options.include_summaries)docs=docs.filter(doc=>doc.level!=='summary');
     const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+(doc.aliases??[]).join(' ')+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
+    const rank:Record<string,number>={overview:0,topic:1,hypothesis:2,discovery:3,single:4,summary:5};docs.sort((a,b)=>(rank[a.level??'']??4)-(rank[b.level??'']??4)||b.modified.localeCompare(a.modified));
     const limit=Math.min(100,Math.max(1,options.limit??30)),page=Math.max(1,options.page??1);return {documents:docs.slice((page-1)*limit,page*limit).map(d=>({...d,...(matches[d.id]?{snippet:matches[d.id]}:{})})),total:docs.length,page,limit,errors:indexed.errors};
   }
   graph(project:string){

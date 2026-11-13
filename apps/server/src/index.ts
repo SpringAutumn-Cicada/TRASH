@@ -255,7 +255,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
       const markdown=new MarkdownKnowledge(store);
-      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true'}));return;}
+      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true'}));return;}
       if(subpath==='markdown-knowledge/graph'&&method==='GET'){sendJson(response,200,markdown.graph(projectId));return;}
       if(subpath==='markdown-knowledge/relations'&&method==='GET'){sendJson(response,200,markdown.relations(projectId,url.searchParams.get('id')??''));return;}
       if(subpath==='markdown-knowledge/health'&&method==='GET'){sendJson(response,200,markdown.health(projectId));return;}
