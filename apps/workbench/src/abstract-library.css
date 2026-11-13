@@ -11,3 +11,5 @@
 .abstract-library .library-filter:focus-within{border-color:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 9%,transparent)}
 .abstract-row-state .library-status.done{gap:5px;padding:5px 8px;border:1px solid color-mix(in srgb,#19956e 25%,var(--line));border-radius:7px;background:color-mix(in srgb,#19956e 10%,var(--surface));color:#14815f;font-weight:600}
 .abstract-row-state .library-status.done>svg{flex:none}.abstract-row-state .library-status.done>i{display:none}
+.abstract-reader>header{position:sticky;top:-22px;z-index:4;margin:-22px -22px 0;padding:18px 22px 14px;background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+@media(max-width:700px){.abstract-reader>header{top:-16px;margin:-16px -16px 0;padding:14px 16px 12px}}
