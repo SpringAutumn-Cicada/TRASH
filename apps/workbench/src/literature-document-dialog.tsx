@@ -8,6 +8,7 @@ import {ChatMarkdown} from './chat-markdown.js';
 import {ErrorNotice} from './error-notice.js';
 import {useUnsavedChanges} from './navigation.js';
 import './markdown-knowledge.css';
+import './wiki-reading.css';
 
 type Document={id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
 const tabs=[['basic','基础信息'],['key','关键卡片'],['detail','详细卡片'],['wiki','Wiki']];
@@ -42,7 +43,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
   const change=(next:string)=>{if(busy||dirty&&!window.confirm('放弃未保存的修改？'))return;setLinked('');setType(next);};
   const run=async(fn:()=>Promise<void>)=>{if(acting.current)return;acting.current=true;setBusy(true);setError('');try{await fn();}catch(e){setError(uiError(e,'操作失败，当前草稿已保留。'));}finally{acting.current=false;setBusy(false);}};
   return <ModalLayer><div className="modal-backdrop library-document-backdrop" onClick={event=>{if(event.currentTarget===event.target)close();}}>
-    <div ref={root} className="library-document-dialog" role="dialog" aria-modal="true" aria-labelledby="literature-document-title" onKeyDown={event=>{
+    <div ref={root} className={`library-document-dialog ${(doc?doc.kind==='wiki-page':type==='wiki')?'wiki-reading-surface':''}`} role="dialog" aria-modal="true" aria-labelledby="literature-document-title" onKeyDown={event=>{
       if(event.key==='Escape'){event.stopPropagation();close();}
       if(event.key==='Tab'){const nodes=Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')??[]).filter(node=>node.getClientRects().length);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
     }}>
@@ -52,7 +53,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       <div className="library-document-scroll">
         {(loading||!directoryLoaded)?<p role="status"><LoaderCircle className="spin" size={16}/> 正在读取内容…</p>:doc?<>
           {linked&&<p>关联文档：{doc.title}</p>}{doc.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}
-          {editing?<><p className="mk-form-note">保留顶部标识与固定字段。保存基础信息后，文献库会同步可确认的标题、作者与发表年月。</p><textarea className="mk-editor" aria-label="编辑 Markdown" value={draft} onChange={event=>setDraft(event.target.value)}/></>:<div className="mk-body" onClick={event=>{
+          {editing?<><p className="mk-form-note">保留顶部标识与固定字段。保存基础信息后，文献库会同步可确认的标题、作者与发表年月。</p><textarea className="mk-editor" aria-label="编辑 Markdown" value={draft} onChange={event=>setDraft(event.target.value)}/></>:<div className={`mk-body ${doc.kind==='wiki-page'?'wiki-reading-content':''}`} onClick={event=>{
             const anchor=(event.target as HTMLElement).closest('a');const href=anchor?.getAttribute('href');if(!href||/^(https?:|#)/i.test(href))return;
             event.preventDefault();const url=new URL(href,'https://knowledge.local/'+doc.path);
             if(url.pathname.startsWith(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/`)&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
