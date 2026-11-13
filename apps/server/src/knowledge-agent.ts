@@ -201,6 +201,9 @@ export class KnowledgeAgent implements TaskRunner {
         }
         try{
           const doc=markdown.parse(task.project_id,path,text);
+          if(task.input.wiki_level==='summary'){
+            if(doc.level!=='summary'||/^文献知识第\d+层分组\d+$/.test(doc.title)||!doc.coverage||!doc.directions||!doc.batch_label)throw new Error('分批总结需要内容标题、summary层级、覆盖方向、材料范围及批次标识');
+          }
           if((task.input.kind==='literature-card'||task.input.include_source_wiki)&&doc.source_id!==task.input.source_ids[0])throw new Error('来源与指定论文不一致');
           if(!/^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??''))throw new Error('缺少 knowledge_version: 2');
         }catch(error){issues.push({path,reason:`格式或必要字段不合格：${error instanceof Error?error.message:'未知格式错误'}`,unsafe:false});continue;}

@@ -1,0 +1,15 @@
+.summary-name-dialog{width:min(850px,100%);max-height:84dvh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 80px #10233c30;color:var(--ink);overflow:hidden;outline:none}
+.summary-name-dialog>header{display:flex;justify-content:space-between;gap:16px;padding:20px 24px;border-bottom:1px solid var(--line)}
+.summary-name-dialog h3,.summary-name-dialog h4{margin:0}
+.summary-name-dialog p{font-size:12px;line-height:1.7}
+.summary-name-dialog>header p,.summary-name-dialog small{color:var(--muted)}
+.summary-name-dialog>main{overflow:auto;padding:20px 24px;scrollbar-width:thin}
+.summary-name-dialog article{display:flex;flex-direction:column;gap:12px;padding:18px;border:1px solid var(--line);border-radius:9px;margin-bottom:16px}
+.summary-name-dialog label{font-size:12px;display:flex;flex-direction:column;gap:8px}
+.summary-name-dialog input{padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
+.summary-name-dialog code{font-size:10px;overflow-wrap:anywhere;color:var(--muted)}
+.summary-name-dialog article>button{align-self:flex-end}
+.summary-name-dialog details{font-size:12px;line-height:1.8}
+.mk-summary-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap}
+@media(max-width:600px){.summary-name-dialog>header,.summary-name-dialog>main{padding:16px}.summary-name-dialog article{padding:12px}}
+.mk-summary-description{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;line-height:1.6;font-weight:400}
