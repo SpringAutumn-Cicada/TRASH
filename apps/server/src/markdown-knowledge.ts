@@ -1,3 +1,4 @@
+import {abstractText} from './abstract-library.js';
 import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
 import {parseBasicCard,applyBasicCard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
 import type { KnowledgeVersion } from "@trash/protocol";
@@ -84,6 +85,14 @@ export class MarkdownKnowledge {
   graph(project:string){
     const {documents,errors}=this.index(project);
     const nodes=documents.map(d=>({id:d.id,path:d.path,title:d.title,kind:d.kind,level:d.level,source_id:d.source_id,card_type:d.card_type,summary:d.summary??'',stale:Boolean(d.stale)}));
+    // Abstract Wiki stays outside the full-text index and synthesis evidence pool.
+    for(const source of this.store.listSources(project,true).filter(source=>source.material_scope==='abstract')){
+      try{
+        const text=abstractText(this.store,project,source.source_id,'wiki');
+        if(!text.trim())continue;
+        nodes.push({id:`abstract-wiki-${source.source_id}`,path:`abstract-library/wiki/${source.source_id}.md`,title:source.title,kind:'wiki-page',level:'abstract',source_id:source.source_id,card_type:undefined,summary:text.replace(/^---[\s\S]*?---\s*/,'').replace(/^#+[^\n]*$/gm,'').replace(/\s+/g,' ').trim().slice(0,180),stale:false});
+      }catch(error){errors.push({path:`abstract-library/wiki/${source.source_id}.md`,error:error instanceof Error?error.message:'KNOWLEDGE_FILE_INVALID'});}
+    }
     const byPath=new Map(nodes.map(n=>[n.path,n]));
     const edges:{id:string;source:string;target:string;relation:string;reason:string;evidence:boolean}[]=[],broken:{source:string;path:string}[]=[];
     for(const doc of documents){
