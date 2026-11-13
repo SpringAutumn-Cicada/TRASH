@@ -159,7 +159,7 @@ export class LiteratureAnalysis {
       if(value.stage==='cards-only'){value.missing_sources=[...new Set([...(value.missing_sources??[]),...this.tasks(project,value.card_tasks).filter(t=>t.status!=='completed').map(t=>t.input.source_ids[0])])];value.stage=this.tasks(project,value.card_tasks).some(t=>t.status!=='completed')?'partial':'completed';value.covered_sources=this.tasks(project,value.card_tasks).filter(t=>t.status==='completed').map(t=>t.input.source_ids[0]);this.save(value);return;}
       if(value.stage==='discovery'){
         const discovery=this.records(project,value.discovery_tasks??[]);if(!discovery.length)throw new Error('主题发现没有有效清单，未自动创建主题');
-        const base=this.records(project,value.card_tasks,value.card_documents),groups=this.records(project,value.group_tasks);
+        const base=this.records(project,value.card_tasks,value.card_documents),groups=this.records(project,[...(value.group_history??[]),...value.group_tasks]);
         const materials=[...base,...groups];
         const candidates=discoverWikiTopics(String((discovery[0].content as {body:string}).body),materials,new MarkdownKnowledge(this.store).index(project).documents.filter(d=>d.kind==='wiki-page').map(d=>d.id));
         const formal=candidates.filter(c=>c.eligible).slice(0,8);value.candidate_count=candidates.length-formal.length;value.topic_count=formal.length;
