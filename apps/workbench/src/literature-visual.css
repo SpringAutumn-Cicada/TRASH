@@ -44,3 +44,24 @@
 .literature-workspace .abstract-items>article:hover{background:color-mix(in srgb,#397ce3 4%,var(--surface));box-shadow:inset 3px 0 #397ce3}
 @media(max-width:700px){.literature-workspace>.data-heading{padding:20px 18px;border-radius:12px}.literature-workspace .library-row,.literature-workspace .abstract-items>article{padding:16px 12px}.literature-workspace .library-table-heading{padding:12px}.literature-workspace>.data-module-tabs{gap:4px}}
 @media(prefers-reduced-motion:reduce){.literature-workspace .library-row,.literature-workspace .abstract-items>article,.literature-workspace .library-filter,.literature-workspace>.data-module-tabs>button{transition:none}}
+
+/* Both libraries share the same compact, high-contrast status language. */
+.literature-workspace .library-row .library-status,
+.literature-workspace .abstract-items .library-status{
+ display:inline-flex;align-items:center;justify-content:center;gap:5px;box-sizing:border-box;
+ min-width:76px;height:28px;padding:5px 8px;border:1px solid #bdcbdc;border-radius:7px;
+ background:#edf2f8;color:#4b607a;font-size:11px;font-weight:600;line-height:1.2;white-space:nowrap;
+ font-variant-numeric:tabular-nums
+}
+.literature-workspace .library-row .library-status.done,
+.literature-workspace .abstract-items .library-status.done{color:#086448;background:#e2f4ec;border-color:#8bc8af}
+.literature-workspace .library-row .library-status.active,
+.literature-workspace .abstract-items .library-status.active{color:#1f54b2;background:#e8f0ff;border-color:#9bbaf0}
+.literature-workspace .library-row .library-status.failed,
+.literature-workspace .abstract-items .library-status.failed{color:#a32d36;background:#fff0f0;border-color:#e7a1a6}
+.literature-workspace .library-row .library-status.warning,
+.literature-workspace .abstract-items .library-status.warning{color:#87540f;background:#fff3db;border-color:#dfbe78}
+.literature-workspace .library-row .library-status>i,
+.literature-workspace .abstract-items .library-status>i{display:block;flex:none;width:5px;height:5px;margin:0;border-radius:50%;background:currentColor;opacity:1}
+.literature-workspace .library-row .library-status>svg,
+.literature-workspace .abstract-items .library-status>svg{flex:none;width:13px;height:13px}
