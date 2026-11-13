@@ -107,3 +107,13 @@
 .library-paper{min-width:0;max-width:100%}.library-paper>span:last-child{min-width:0;max-width:100%}.library-paper strong{max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis}
 .library-document-modules{grid-template-columns:repeat(2,76px);gap:7px;justify-content:start}.library-document-modules button{width:76px;height:30px;border:1px solid #cbd7e6;border-radius:7px;background:var(--surface);color:#536b8b;font-size:11px;box-shadow:0 1px 2px rgb(30 60 100 / 4%)}.library-document-modules button:hover:not(:disabled){border-color:#397ce3;background:#f2f7ff;color:#2563eb}.library-document-modules button:disabled{opacity:.45;background:color-mix(in srgb,var(--surface) 70%,var(--line))}
 @media(max-width:850px) and (min-width:601px){.library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 160px 220px;gap:14px}}
+
+/* Wiki regeneration has its own action and never shares the full-analysis trigger. */
+.library-wiki-analyze{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:6px 9px;border:1px solid color-mix(in srgb,#8d6dd6 35%,var(--line));border-radius:7px;background:color-mix(in srgb,#8d6dd6 6%,var(--surface));color:#7654bb;font-size:11px;white-space:nowrap;cursor:pointer}
+.library-wiki-analyze:hover:not(:disabled){border-color:#8d6dd6;background:color-mix(in srgb,#8d6dd6 12%,var(--surface))}
+.library-state{display:flex;align-items:center;justify-content:flex-end;gap:18px}
+.library-row-controls .library-state{min-width:180px;display:grid;grid-template-columns:82px 80px;gap:18px;align-items:center;justify-content:end}
+.library-row-controls .library-state>.library-status{grid-column:2;white-space:nowrap}
+.library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 180px 340px}
+@media(max-width:1050px){.library-table-heading{display:none}.library-row{grid-template-columns:minmax(0,1fr) 160px}.library-row-controls{grid-column:1/-1}}
+@media(max-width:760px){.library-row{grid-template-columns:minmax(0,1fr)}.library-row-controls{flex-wrap:wrap}.library-document-modules{grid-column:1}.library-row-controls .library-state{min-width:180px;flex-direction:row}}

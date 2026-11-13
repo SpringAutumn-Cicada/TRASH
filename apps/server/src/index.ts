@@ -329,6 +329,22 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       knowledge.event(latest.task_id,'用户退出重新分析，保留当前已整理版本；日志与草稿保留');
       sendJson(response,200,{preserved:true});return;
     }
+    const sourceWiki=subpath.match(/^sources\/(source_[A-Za-z0-9_-]+)\/analyze-wiki$/);
+    if(sourceWiki&&method==='POST'){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      const source=store.getSource(sourceWiki[1]);
+      if(!source||source.project_id!==projectId||source.material_scope==='abstract'){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
+      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
+      const active=knowledge.tasks(projectId).find(task=>['queued','running'].includes(task.status)&&task.input.source_ids.includes(source.source_id));
+      if(active){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+      const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===source.source_id);
+      const cards=docs.filter(doc=>doc.kind==='literature-card');
+      if(!['key','detail'].every(type=>cards.some(doc=>doc.card_type===type))){sendJson(response,409,{error:'KNOWLEDGE_MATERIALS_REQUIRED'});return;}
+      const wiki=docs.find(doc=>doc.kind==='wiki-page'&&doc.level==='single');
+      if(!wiki){sendJson(response,409,{error:'NOT_FOUND'});return;}
+      const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:[source.source_id],dependencies:cards.map(doc=>({kind:'literature-card',object_id:doc.id,version:1})),target_id:wiki.id,wiki_level:'single',title:source.title,regenerate:true,instructions:'仅使用本篇已有卡片更新单篇研究记忆，不重新分析PDF，不改写卡片，保留人工补充。source_id 必须保持为 '+source.source_id}));
+      sendJson(response,202,{task_id:task.task_id,status:task.status});return;
+    }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
     if(sourceAnalysis && method==='POST'){
       const input=z.object({confirm:z.literal(true),regenerate:z.boolean().default(false),resume:z.boolean().default(false)}).strict().parse(await readJson(request));
@@ -404,14 +420,15 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const input=z.object({title:z.string().trim().min(1).max(500),authors:z.array(z.string().trim().min(1).max(200)).max(200),publication_date:z.string().regex(/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/).optional(),doi:z.string().trim().max(500).optional(),source_url:z.string().url().optional(),abstract:z.string().trim().min(1).max(30000)}).strict().parse(await readJson(request));
       const updated=sourceSchema.parse({...source,...input,publication_date:input.publication_date,doi:input.doi,source_url:input.source_url,material_scope:'abstract',source_type:'markdown',parse_status:'metadata_only'});writeFileSync(abstractFile(store,projectId,source.source_id,'materials'),`# ${updated.title}\n\n材料范围：仅摘要\nsource_id=${updated.source_id}\n\n${updated.abstract}\n`,{mode:0o600});store.db.prepare('UPDATE sources SET data=? WHERE source_id=?').run(JSON.stringify(updated),source.source_id);sendJson(response,200,{source:updated});return;
     }
-    const abstractRoute=subpath.match(/^abstract-library\/(source_[A-Za-z0-9_-]+)\/(analyze|note|wiki)$/);
+    const abstractRoute=subpath.match(/^abstract-library\/(source_[A-Za-z0-9_-]+)\/(analyze|analyze-wiki|note|wiki)$/);
     if(abstractRoute){
       const source=store.getSource(abstractRoute[1]);if(!source||source.project_id!==projectId||source.material_scope!=='abstract'){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       if(abstractRoute[2]==='note'&&method==='GET'){sendJson(response,200,{text:abstractText(store,projectId,source.source_id)});return;}
       if(abstractRoute[2]==='wiki'&&method==='GET'){sendJson(response,200,{text:abstractText(store,projectId,source.source_id,'wiki')});return;}
-      if(abstractRoute[2]==='analyze'&&method==='POST'){
+      if(['analyze','analyze-wiki'].includes(abstractRoute[2])&&method==='POST'){
         z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
-        const tasks=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',abstract_mode:true,source_ids:[source.source_id],title:source.title,regenerate:true}));sendJson(response,202,{tasks});return;
+        if(abstractRoute[2]==='analyze-wiki'&&knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)&&task.input.source_ids.includes(source.source_id))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+        const tasks=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',abstract_mode:true,abstract_wiki_only:abstractRoute[2]==='analyze-wiki',source_ids:[source.source_id],title:source.title,regenerate:true}));sendJson(response,202,{tasks,task_id:tasks[0]?.task_id});return;
       }
     }
     if (subpath === "sources" && method === "GET") {

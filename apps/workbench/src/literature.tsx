@@ -62,6 +62,14 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
 
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
+  const [wikiSubmitting,setWikiSubmitting]=useState<string>();
+  const wikiLock=useRef(false);
+  const analyzeWiki=async(source:Source)=>{
+    if(wikiLock.current)return;wikiLock.current=true;setWikiSubmitting(source.source_id);setError('');
+    try{const result=await api<{task_id:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze-wiki`,{method:'POST',body:JSON.stringify({confirm:true})});window.location.assign(projectPath(projectId,'tasks',{focus:result.task_id}));}
+    catch(cause){setError(uiError(cause,'无法单独更新 Wiki，请确认已有关键、详细卡片及 Wiki，且没有进行中的分析。'));}
+    finally{wikiLock.current=false;setWikiSubmitting(undefined);}
+  };
   const submissionLock=useRef(new Set<string>());
   const completedAnalysis=useRef('');
   useEffect(()=>{
@@ -242,7 +250,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     {[['basic','基础信息',item?.hasBasic],['key','关键卡片',item?.hasKey],['detail','详细卡片',item?.hasDetail],['wiki','Wiki',item?.hasWiki]].map(([type,name,available])=><button type="button" key={String(type)} disabled={!available} title={available?String(name):'分析生成后可查看'} onClick={()=>setDocumentTarget({source,type:String(type)})}>{name}</button>)}
                   </div>
                   <div className="library-row-controls">
-                    <div className="library-state"><span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
+                    <div className="library-state">{item?.hasCards&&item?.hasWiki&&<button type="button" className="library-wiki-analyze" disabled={pending||Boolean(wikiSubmitting)||Boolean(deleting)} onClick={()=>void analyzeWiki(source)} title="仅更新 Wiki，复用已有卡片"><Sparkles size={13}/>{wikiSubmitting===source.source_id?'提交中…':'分析 Wiki'}</button>}<span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
                     <div className="library-row-actions">{item?.hasCards&&item?.hasBasic&&item?.hasWiki&&(retry||pending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&item?.task_id)window.location.assign(projectPath(projectId,'tasks',{focus:item.task_id}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
                   </div>
                 </article>;
