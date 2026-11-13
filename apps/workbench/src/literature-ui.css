@@ -117,3 +117,6 @@
 .library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 180px 340px}
 @media(max-width:1050px){.library-table-heading{display:none}.library-row{grid-template-columns:minmax(0,1fr) 160px}.library-row-controls{grid-column:1/-1}}
 @media(max-width:760px){.library-row{grid-template-columns:minmax(0,1fr)}.library-row-controls{flex-wrap:wrap}.library-document-modules{grid-column:1}.library-row-controls .library-state{min-width:180px;flex-direction:row}}
+.wiki-task-notice{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 14px;border:1px solid color-mix(in srgb,#8d6dd6 30%,var(--line));border-radius:8px;background:color-mix(in srgb,#8d6dd6 7%,var(--surface));color:var(--ink);font-size:12px;line-height:1.6}
+.wiki-task-notice a{flex:none;color:#7654bb;text-underline-offset:3px}
+@media(max-width:600px){.wiki-task-notice{align-items:flex-start;flex-wrap:wrap}}

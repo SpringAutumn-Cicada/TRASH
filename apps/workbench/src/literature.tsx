@@ -10,7 +10,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
+interface SourceAnalysisState {wiki_task?:{task_id:string;status:string;error?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -64,9 +64,10 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [submitting,setSubmitting]=useState<string[]>([]);
   const [wikiSubmitting,setWikiSubmitting]=useState<string>();
   const wikiLock=useRef(false);
+  const [wikiNotice,setWikiNotice]=useState<{sourceId:string;taskId:string}>();
   const analyzeWiki=async(source:Source)=>{
-    if(wikiLock.current)return;wikiLock.current=true;setWikiSubmitting(source.source_id);setError('');
-    try{const result=await api<{task_id:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze-wiki`,{method:'POST',body:JSON.stringify({confirm:true})});window.location.assign(projectPath(projectId,'tasks',{focus:result.task_id}));}
+    if(wikiLock.current||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.wiki_task?.status??'')))return;wikiLock.current=true;setWikiSubmitting(source.source_id);setError('');
+    try{const result=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze-wiki`,{method:'POST',body:JSON.stringify({confirm:true})});setAnalyses(previous=>previous.map(item=>item.source_id===source.source_id?{...item,wiki_task:{task_id:result.task_id,status:result.status}}:item));setWikiNotice({sourceId:source.source_id,taskId:result.task_id});}
     catch(cause){setError(uiError(cause,'无法单独更新 Wiki，请确认已有关键、详细卡片及 Wiki，且没有进行中的分析。'));}
     finally{wikiLock.current=false;setWikiSubmitting(undefined);}
   };
@@ -218,6 +219,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     {regenerateTarget&&<RegenerateSourceDialog source={regenerateTarget} busy={submitting.includes(regenerateTarget.source_id)} error={regenerateError} onClose={()=>{if(!submissionLock.current.has(regenerateTarget.source_id))setRegenerateTarget(undefined);}} onConfirm={()=>{void analyzeSource(regenerateTarget,true).then(ok=>{if(ok&&alive.current)setRegenerateTarget(undefined);});}}/>}
     {documentTarget&&<LiteratureDocumentDialog key={documentTarget.source.source_id} projectId={projectId} source={documentTarget.source} initialType={documentTarget.type} onClose={()=>setDocumentTarget(undefined)} onSaved={()=>{void refresh(true);onChanged();}}/>}
     {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
+    {wikiNotice&&(()=>{const task=analyses.find(item=>item.source_id===wikiNotice.sourceId)?.wiki_task;const status=task?.task_id===wikiNotice.taskId?task.status:'queued';return <div className="wiki-task-notice" role="status"><span>{status==='completed'?'Wiki 分析已完成。':status==='failed'?'Wiki 分析失败，可重试。':status==='interrupted'||status==='cancelled'?'Wiki 分析已停止，可重新提交。':status==='running'?'Wiki 正在分析，完成前无法重复提交。':'Wiki 分析已提交，正在排队，完成前无法重复提交。'}</span><a href={projectPath(projectId,'tasks',{focus:wikiNotice.taskId})}>查看任务</a></div>;})()}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
           <section className="literature-main" hidden={searchOnly}>
@@ -236,8 +238,10 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               <div className="library-table-heading"><span>标题 / 作者</span><span>内容</span><span>状态 / 操作</span></div>
               {detail.sources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
                 const item=analyses.find(entry=>entry.source_id===source.source_id);
-                const pending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
-                const status=pending?(item?.status==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasCards&&item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
+                const wikiPending=['queued','running'].includes(item?.wiki_task?.status??'');
+                const activeTaskId=wikiPending?item?.wiki_task?.task_id:item?.task_id;
+                const pending=submitting.includes(source.source_id)||wikiSubmitting===source.source_id||wikiPending||['queued','running'].includes(item?.status??'');
+                const status=pending?((wikiPending?item?.wiki_task?.status:item?.status)==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasCards&&item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
                 const tone=pending?'active':item?.status==='failed'?'failed':item?.stale?'warning':item?.hasCards&&item?.hasWiki?'done':'idle';
                 const retry=['failed','interrupted','cancelled'].includes(item?.status??'');
                 const label=submitting.includes(source.source_id)?'正在提交':pending?'查看进度':retry?(item?.can_resume?'继续分析':'重试分析'):item?.hasOutputs?'重新分析':'开始分析';
@@ -250,8 +254,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     {[['basic','基础信息',item?.hasBasic],['key','关键卡片',item?.hasKey],['detail','详细卡片',item?.hasDetail],['wiki','Wiki',item?.hasWiki]].map(([type,name,available])=><button type="button" key={String(type)} disabled={!available} title={available?String(name):'分析生成后可查看'} onClick={()=>setDocumentTarget({source,type:String(type)})}>{name}</button>)}
                   </div>
                   <div className="library-row-controls">
-                    <div className="library-state">{item?.hasCards&&item?.hasWiki&&<button type="button" className="library-wiki-analyze" disabled={pending||Boolean(wikiSubmitting)||Boolean(deleting)} onClick={()=>void analyzeWiki(source)} title="仅更新 Wiki，复用已有卡片"><Sparkles size={13}/>{wikiSubmitting===source.source_id?'提交中…':'分析 Wiki'}</button>}<span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
-                    <div className="library-row-actions">{item?.hasCards&&item?.hasBasic&&item?.hasWiki&&(retry||pending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&item?.task_id)window.location.assign(projectPath(projectId,'tasks',{focus:item.task_id}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
+                    <div className="library-state">{item?.hasCards&&item?.hasWiki&&<button type="button" className="library-wiki-analyze" disabled={pending||Boolean(wikiSubmitting)||Boolean(deleting)} onClick={()=>void analyzeWiki(source)} title="仅更新 Wiki，复用已有卡片">{wikiPending||wikiSubmitting===source.source_id?<LoaderCircle size={13} className="spin"/>:<Sparkles size={13}/>}{wikiSubmitting===source.source_id?'提交中…':wikiPending?(item?.wiki_task?.status==='running'?'分析中':'排队中'):'分析 Wiki'}</button>}<span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
+                    <div className="library-row-actions">{item?.hasCards&&item?.hasBasic&&item?.hasWiki&&!wikiPending&&(retry||pending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&activeTaskId)window.location.assign(projectPath(projectId,'tasks',{focus:activeTaskId}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
                   </div>
                 </article>;
               })}
