@@ -87,7 +87,7 @@ export class MarkdownKnowledge {
   }
   graph(project:string){
     const {documents,errors}=this.index(project);
-    const nodes=documents.map(d=>({id:d.id,path:d.path,title:d.title,kind:d.kind,level:d.level,source_id:d.source_id,card_type:d.card_type,summary:d.summary??'',stale:Boolean(d.stale)}));
+    const nodes=documents.map(d=>({id:d.id,path:d.path,title:d.title,kind:d.kind,level:d.level,source_id:d.source_id,card_type:d.card_type,batch_label:d.batch_label,coverage:d.coverage,directions:d.directions,summary:d.summary??'',stale:Boolean(d.stale)}));
     // Abstract Wiki stays outside the full-text index and synthesis evidence pool.
     for(const source of this.store.listSources(project,true).filter(source=>source.material_scope==='abstract')){
       try{
