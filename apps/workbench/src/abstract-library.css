@@ -39,19 +39,20 @@
 @media(max-width:700px){.abstract-items>article{grid-template-columns:minmax(0,1fr) 82px;gap:16px 20px}.abstract-items>article>.abstract-paper{grid-column:1/-1}.abstract-items>article>.abstract-row-state{grid-column:1;grid-row:2;width:100%;grid-template-columns:54px minmax(0,100px);column-gap:24px}.abstract-items>article>.abstract-actions{grid-column:2;grid-row:2}}
 
 /* Portal dialogs share a centered frame; only their contents scroll. */
-#modal-root>.abstract-dialog-backdrop{padding:24px;background:rgb(15 35 65 / 32%);backdrop-filter:blur(3px)}
-.abstract-dialog-backdrop>.abstract-reader{position:relative;inset:auto;transform:none;z-index:auto;width:min(920px,100%);max-height:min(82dvh,760px);margin:auto;padding:0;gap:0;overflow:auto;overscroll-behavior:contain;box-shadow:0 24px 80px rgb(15 35 65 / 24%);background:var(--surface);outline:none}
-.abstract-dialog-backdrop .abstract-reader>header{position:sticky;top:0;margin:0;padding:22px 26px 18px;background:var(--surface);backdrop-filter:none;gap:20px}
+#modal-root>.abstract-dialog-backdrop{padding:24px;background:rgb(15 35 65 / 24%)}
+.abstract-dialog-backdrop>.abstract-reader{position:relative;inset:auto;transform:none;z-index:auto;width:min(920px,100%);max-height:min(82dvh,760px);margin:auto;padding:22px;gap:18px;overflow:auto;overscroll-behavior:contain;box-shadow:0 24px 80px rgb(15 35 65 / 28%);outline:none}
+.abstract-dialog-backdrop .abstract-reader>header{position:sticky;top:-22px;margin:-22px -22px 0;padding:18px 22px 14px;background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(12px)}
 .abstract-dialog-backdrop .abstract-reader>header>div{min-width:0}
 .abstract-dialog-backdrop .abstract-reader>header>.icon-button{flex:none}
-.abstract-dialog-backdrop .abstract-reader h3{margin:0 0 8px}
-.abstract-dialog-backdrop .abstract-meta{margin:0 0 14px}
 .abstract-header-action{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 11px;margin-right:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:11px;font-weight:500;line-height:1.5;text-decoration:none;cursor:pointer;transition:background .15s,border-color .15s}
 .abstract-header-action:hover:not(:disabled){color:var(--green);border-color:var(--green);background:var(--green-soft)}
 .abstract-header-action:disabled{cursor:default}
-.abstract-dialog-backdrop .abstract-original,.abstract-dialog-backdrop .abstract-analysis,.abstract-dialog-backdrop .abstract-wiki-content{margin:0 26px;padding:22px 0}
-.abstract-dialog-backdrop .abstract-original{border-top:0}
-.abstract-dialog-backdrop .abstract-edit-form{margin:0;padding:22px 26px}
+.abstract-dialog-backdrop .abstract-original,.abstract-dialog-backdrop .abstract-analysis,.abstract-dialog-backdrop .abstract-wiki-content{margin:0;padding:15px 0 0}
+.abstract-dialog-backdrop .abstract-edit-form{margin:0;padding:18px 0}
 .abstract-dialog-backdrop .abstract-edit-form footer{bottom:-22px}
 .abstract-wiki-content{font-size:12px;line-height:1.8;overflow-wrap:anywhere}
-@media(max-width:700px){#modal-root>.abstract-dialog-backdrop{padding:12px}.abstract-dialog-backdrop>.abstract-reader{max-height:86dvh;width:100%}.abstract-dialog-backdrop .abstract-reader>header{padding:18px}.abstract-dialog-backdrop .abstract-original,.abstract-dialog-backdrop .abstract-analysis,.abstract-dialog-backdrop .abstract-wiki-content{margin:0 18px;padding:18px 0}.abstract-dialog-backdrop .abstract-edit-form{padding:18px}}
+/* Wiki keeps its own purple visual identity rather than the abstract blue. */
+.abstract-dialog-backdrop>.abstract-reader-wiki{border-color:color-mix(in srgb,#8d6dd6 35%,var(--line));background:linear-gradient(145deg,color-mix(in srgb,#8d6dd6 5%,var(--surface)),var(--surface))}
+.abstract-reader-wiki>header h3{color:#7654bb}
+.abstract-dialog-backdrop .abstract-reader-wiki .abstract-wiki-content{padding:14px;border-left:3px solid #8d6dd6;background:color-mix(in srgb,#8d6dd6 5%,var(--surface));border-radius:0 8px 8px 0}
+@media(max-width:700px){#modal-root>.abstract-dialog-backdrop{padding:12px}.abstract-dialog-backdrop>.abstract-reader{max-height:86dvh;width:100%;padding:16px}.abstract-dialog-backdrop .abstract-reader>header{top:-16px;margin:-16px -16px 0;padding:14px 16px 12px}}
