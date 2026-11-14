@@ -196,3 +196,5 @@ export * from "./environment.js";
 export * from "./evaluation.js";
 
 export * from './execution.js';
+
+export * from './knowledge-paths.js';
