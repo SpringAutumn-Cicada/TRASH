@@ -7,11 +7,11 @@ type Node={id:string;title:string;kind:string;level?:string;batch_label?:string;
 type Edge={id:string;source:string;target:string;relation:string;reason:string;evidence:boolean};
 type Graph={nodes:Node[];edges:Edge[];broken:unknown[];version:string};
 type Point={x:number;y:number;z?:number};
-const colors:Record<string,string>={summary:'#588b91',abstract:'#db7b25',single:'#2878f0',topic:'#8250df',hypothesis:'#d69a32',overview:'#16758a',discovery:'#8995a8',card:'#95b4aa'};
-const labels:Record<string,string>={summary:'分批总结',abstract:'摘要 Wiki',single:'单篇 Wiki',topic:'知识主题',hypothesis:'待验证假设',overview:'项目总览',discovery:'发现清单',card:'证据卡片'};
-const scales:Record<string,number>={abstract:1,single:1,topic:1.5,hypothesis:1.2,overview:1.8,discovery:.8,card:.65};
+const colors:Record<string,string>={paper_index:'#2363cb',paper_page:'#1397a2',summary:'#588b91',abstract:'#db7b25',single:'#2878f0',topic:'#8250df',hypothesis:'#d69a32',overview:'#16758a',discovery:'#8995a8',card:'#95b4aa'};
+const labels:Record<string,string>={paper_index:'论文索引',paper_page:'论文知识页',summary:'分批总结',abstract:'摘要 Wiki',single:'单篇 Wiki',topic:'知识主题',hypothesis:'待验证假设',overview:'项目总览',discovery:'发现清单',card:'证据卡片'};
+const scales:Record<string,number>={paper_index:1.6,paper_page:.85,abstract:1,single:1,topic:1.5,hypothesis:1.2,overview:1.8,discovery:.8,card:.65};
 const nodeRadius=(node:Node,degree:number)=>12*(scales[type(node)]??1)*Math.min(1.2,1+Math.sqrt(degree)*.035);
-const type=(node:Node)=>node.kind==='literature-card'?'card':node.level??'topic';
+const type=(node:Node)=>node.kind==='literature-card'?'card':node.id.includes('--')?(node.id.endsWith('--index')&&!node.id.slice(node.id.indexOf('--')+2).includes('--')?'paper_index':'paper_page'):node.level??'topic';
 const short=(title:string)=>{const acronym=title.match(/^([A-Z][A-Za-z0-9-]{1,18})\s*[:：]/)?.[1];return acronym??(title.length>23?title.slice(0,22)+'…':title);};
 export function WikiGraph({projectId,onOpen,revision=0,focusId}:{projectId:string;onOpen:(id:string)=>void;revision?:number;focusId?:string}){
  const [showCards,setShowCards]=useState(false);
@@ -19,7 +19,7 @@ export function WikiGraph({projectId,onOpen,revision=0,focusId}:{projectId:strin
  const [data,setData]=useState<Graph>(),[error,setError]=useState(''),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[staleOnly,setStaleOnly]=useState(false),[navigation,setNavigation]=useState(true),[selected,setSelected]=useState<string>(),[selectedEdge,setSelectedEdge]=useState<string>(),[focus,setFocus]=useState(false),[evidence,setEvidence]=useState(false),[zoom,setZoom]=useState(1),[reset,setReset]=useState(0),[locating,setLocating]=useState<string>(),[view3d,setView3d]=useState(false);
  const [appearance,setAppearance]=useState<'light'|'dark'>(()=>{try{return localStorage.getItem('trash:wiki-graph:appearance')==='dark'?'dark':'light';}catch{return 'light';}});
  const dark=appearance==='dark';
- const nodeColors=dark?{...colors,abstract:'#ffb568',single:'#49c8f5',topic:'#b38aff',hypothesis:'#f2be58',overview:'#52d6bb',discovery:'#9f9bb7',card:'#71c5b6'}:colors;
+ const nodeColors=dark?{...colors,paper_index:'#79adff',paper_page:'#54d4cf',abstract:'#ffb568',single:'#49c8f5',topic:'#b38aff',hypothesis:'#f2be58',overview:'#52d6bb',discovery:'#9f9bb7',card:'#71c5b6'}:colors;
  const palette=dark?{edge:'#304865',evidence:'#466589',accent:'#79bfff',relation:'#91b9e9',text:'#adc3dc',selected:'#eff7ff',badge:'#15283f'}:{edge:'#d6e1ef',evidence:'#adc4e5',accent:'#397ce3',relation:'#6180ab',text:'#516780',selected:'#173c70',badge:'#ffffff'};
  const changeAppearance=(value:'light'|'dark')=>{setAppearance(value);try{localStorage.setItem('trash:wiki-graph:appearance',value);}catch{/* Optional preference. */}};
  const inspector=useRef<HTMLElement>(null);

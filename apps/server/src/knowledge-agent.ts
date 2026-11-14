@@ -67,7 +67,8 @@ export class KnowledgeAgent implements TaskRunner {
       if(part.target_id&&!previous)requestError('NOT_FOUND',404);
       const documents=[...new Set([...selected.map(d=>d.id),...(previous?[previous.id]:[])])].map(id=>markdown.read(projectId,id));
       const inputChars=documents.reduce((n,d)=>n+d.text.length,0);
-      if(inputChars>60000){
+      if(paperBundle&&inputChars>400000)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
+      if(inputChars>60000&&!paperBundle){
         if(part.kind!=='wiki-page'&&!paperBundle)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
         // Wiki synthesis uses card evidence, not full documents. Keep frontmatter, headings and a bounded body.
         const budget=Math.max(8000,Math.floor(56000/Math.max(1,documents.length)));

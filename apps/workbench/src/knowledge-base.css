@@ -24,3 +24,5 @@
 @media(max-width:800px){.kb-layout{grid-template-columns:minmax(0,1fr)}.kb-layout>aside{max-height:38dvh;border-right:0;border-bottom:1px solid var(--line)}.kb-layout>article{max-height:none}.kb-layout article>header{flex-wrap:wrap;padding:18px}.kb-body{padding:18px}}
 .kb-layout details>summary::before{content:'›';display:inline-block;flex:none;width:10px;color:var(--muted);transform-origin:center}
 .kb-layout details[open]>summary::before{transform:rotate(90deg)}
+
+.kb-paper-folder{margin-left:12px;border-left:1px solid color-mix(in srgb,#397ce3 17%,var(--line));padding-left:10px!important}.kb-paper-folder>summary{color:var(--muted);font-size:11px}.kb-source-group>button[aria-current=page]{font-weight:600}

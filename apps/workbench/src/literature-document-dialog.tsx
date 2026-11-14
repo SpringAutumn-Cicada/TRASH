@@ -35,7 +35,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       }catch(e){if(active){setLoading(false);setDirectoryLoaded(true);setError(uiError(e,'无法读取文档目录。'));}}
     })();return()=>{active=false;};
   },[base,reload]);
-  const selected=linked||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
+  const selected=linked||(type==='wiki'&&source?documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/index.md`)?.id:undefined)||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
   useEffect(()=>{
     let active=true;setDoc(undefined);setEditing(false);setHistory(undefined);setError('');setLoading(Boolean(selected));
     if(selected)void api<{document:Document}>(base+'/document?id='+encodeURIComponent(selected)).then(data=>{if(active){setDoc(data.document);setDraft(data.document.text);}}).catch(e=>{if(active)setError(uiError(e,'无法读取文档。'));}).finally(()=>{if(active)setLoading(false);});
@@ -48,7 +48,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       if(event.key==='Escape'){event.stopPropagation();close();}
       if(event.key==='Tab'){const nodes=Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')??[]).filter(node=>node.getClientRects().length);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
     }}>
-      <header><div><small>论文内容</small><h3 id="literature-document-title">{source?.title??doc?.title??'关联知识'}</h3></div><button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button></header>
+      <header><div><small>论文内容</small><h3 id="literature-document-title">{doc?.id.includes('--')?doc.title:source?.title??doc?.title??'关联知识'}</h3></div><button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button></header>
       {source&&<nav className="library-document-tabs" aria-label="内容类型">{tabs.map(([value,label])=><button type="button" key={value} aria-pressed={!linked&&type===value} disabled={busy||!documents.some(d=>Boolean(source)&&d.source_id===source?.source_id&&(value==='wiki'?d.kind==='wiki-page':d.card_type===value))} onClick={()=>change(value)}>{label}</button>)}</nav>}
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       <div className="library-document-scroll">
