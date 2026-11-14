@@ -1,3 +1,5 @@
+import {knowledgePath,knowledgeDocumentId} from '@trash/protocol';
+import {migrationManifest,migrationPreview,migrateKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractSkill,abstractText,publishAbstract,publishAbstractWiki} from './abstract-library.js';
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
@@ -24,6 +26,11 @@ export class KnowledgeAgent implements TaskRunner {
   }
   enqueue(projectId: string, input: KnowledgeTaskInput, retryOf?: string): KnowledgeTask[] {
     if (this.closed) requestError("SERVER_STOPPING",409);
+    const kbRoot=new MarkdownKnowledge(this.store).root(projectId);
+    if(!migrationManifest(kbRoot)){
+      if(this.knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))requestError('PROJECT_HAS_ACTIVE_TASKS',409);
+      migrateKnowledgeBase(kbRoot,migrationPreview(kbRoot).fingerprint);
+    }
     if(retryOf){
       const all=this.knowledge.tasks(projectId);
       const descends=(candidate:KnowledgeTask)=>{const seen=new Set<string>();let id=candidate.attempt_of;while(id&&!seen.has(id)){if(id===retryOf)return true;seen.add(id);id=all.find(t=>t.task_id===id)?.attempt_of;}return false;};
@@ -72,6 +79,7 @@ export class KnowledgeAgent implements TaskRunner {
       const dependencies=selected.map(d=>({id:d.id,path:d.path,hash:d.hash}));
       if(part.kind==='literature-card'&&sources[0])part={...part,title:sources[0].source.title};
       const targetPaths=part.kind==='literature-card'?[`literature/cards/card-${part.source_ids[0]}-basic.md`,`literature/cards/card-${part.source_ids[0]}-detail.md`,`literature/cards/card-${part.source_ids[0]}-key.md`,...(part.include_source_wiki?[`wiki/wiki-${part.source_ids[0]}.md`]:[])]:previous?[previous.path]:[];
+      for(let i=0;i<targetPaths.length;i++)targetPaths[i]=knowledgePath(targetPaths[i],part.wiki_level);
       const expectedTargets=Object.fromEntries(targetPaths.map(path=>{const file=markdown.locate(projectId,path);return [path,existsSync(file)?createHash('sha256').update(readFileSync(file)).digest('hex'):null];}));
       const topicIndex=index.filter(doc=>doc.kind==='wiki-page'&&['topic','hypothesis'].includes(doc.level??''));
       const abstractBefore=part.abstract_mode?abstractText(this.store,projectId,part.source_ids[0],part.abstract_wiki_only?'wiki':'notes'):undefined;
@@ -193,7 +201,7 @@ export class KnowledgeAgent implements TaskRunner {
         if(!text.trim()){issues.push({path,reason:'文件为空',unsafe:false});continue;}
         if(task.input.abstract_mode){
           if(!/^#\s+.+/m.test(text)||!text.includes('材料范围：仅摘要')||!text.includes(task.input.source_ids[0])){issues.push({path,reason:'摘要结果缺少标题、材料范围或来源标识',unsafe:false});continue;}
-          const headings=path.startsWith('abstract-library/wiki/')?['何时读取','摘要事实','研究线索','可能关联','证据边界','原始摘要入口']:['研究问题','方法概览','作者声称的贡献','摘要中的结果','研究线索','分析边界'];
+          const headings=(path.startsWith('abstract-library/wiki/')||path.endsWith('/memory.md'))?['何时读取','摘要事实','研究线索','可能关联','证据边界','原始摘要入口']:['研究问题','方法概览','作者声称的贡献','摘要中的结果','研究线索','分析边界'];
           const actual=text.replace(/\r\n/g,'\n').split('\n').filter(line=>/^##\s+/.test(line)).map(line=>line.replace(/^##\s+/,'').trim());
           const missing=headings.filter(heading=>!actual.includes(heading));
           if(missing.length||actual.includes('摘要 Wiki')){issues.push({path,reason:`摘要产物结构不符合其用途：${missing.length?'缺少 '+missing.join('、'):'不应嵌套摘要 Wiki 章节'}`,unsafe:false});continue;}
@@ -230,6 +238,7 @@ export class KnowledgeAgent implements TaskRunner {
       const id=task.input.kind==='literature-card'?`card-${source}`:snapshot.previous?.id??(task.input.wiki_level==='overview'?'wiki-project-overview':`wiki-${randomUUID()}`);
       const paths=task.input.abstract_mode?(task.input.abstract_wiki_only?[`abstract-library/wiki/${source}.md`]:[`abstract-library/notes/${source}.md`,`abstract-library/wiki/${source}.md`]):task.input.kind==='literature-card'?[`literature/cards/${id}-detail.md`,`literature/cards/${id}-basic.md`,`literature/cards/${id}-key.md`]:[`wiki/${id}.md`];
       if(task.input.include_source_wiki)paths.push(`wiki/wiki-${source}.md`);
+      for(let i=0;i<paths.length;i++)paths[i]=knowledgePath(paths[i],task.input.wiki_level);
       const output=join(directory,'output');mkdirSync(output,{recursive:true});
       for(const doc of snapshot.documents??[]){const file=join(output,doc.path);mkdirSync(join(file,'..'),{recursive:true});writeFileSync(file,doc.text);}
       if(task.input.abstract_mode){mkdirSync(join(directory,'abstract-skill'),{recursive:true});writeFileSync(join(directory,'abstract-skill','SKILL.md'),abstractSkill(),{mode:0o600});}else stageKnowledgeSkill(directory);
@@ -238,6 +247,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(task.input.include_source_wiki)prompt+=` 本次仅分析 source_id=${source} 的一篇论文，同时生成其单篇 Wiki。wiki/wiki-${source}.md 的 kind 必须为 wiki-page，source_id 必须为 ${source}。Wiki 是800–1500字软目标的Agent单篇研究记忆，按 references/wiki.md 的单篇结构写出研究问题与前提、输入到输出的核心机制、带必要实验条件的关键结果、适用局限及可复用线索。正文必须可独立理解，不能用“见卡片”代替机制或结果解释；不复制详细表格、不凑字、不堆积免责声明。先保留论文自身知识价值，再关联项目，不把所有内容限制到横向移动。关联本篇关键与详细卡片，关键事实就近引用；区分作者结论、材料支持的判断和推断，不声称综合其他论文，不读取其他论文。卡片仍为 literature-card。单篇 Wiki level 必须为 single。含基本卡片共四份必须全部完成。`;
       if(task.input.abstract_mode)prompt=`读取 abstract-skill/SKILL.md 和 input.json，仅分析指定摘要。直接写两份 Markdown 到 output/${paths[0]} 和 output/${paths[1]}：第一份给人看的摘要解读，第二份给 Agent 的摘要 Wiki。一级标题使用提供的论文标题，必须标明 材料范围：仅摘要 和 source_id=${source}。两份文件按 abstract-skill/SKILL.md 的各自结构分别生成：notes 为人读卡片，wiki 为紧凑的Agent研究线索，不能复制相同正文或在卡片里嵌套摘要Wiki。只生成摘要Wiki，不生成全文卡片或正式主题Wiki；不生成源码栏目、待全文核验或补充全文流程。用户要求：${task.input.instructions}`;
       if(task.input.abstract_wiki_only)prompt=`读取 abstract-skill/SKILL.md 和 input.json。仅基于指定来源的原始摘要，按 Agent Wiki 章节生成 output/${paths[0]}。只生成这一份摘要 Wiki，不生成或修改人读卡片、原始资料或全文知识。一级标题使用论文标题，包含材料范围：仅摘要及 source_id=${source}。沿用摘要 Wiki 的紧凑结构、事实与推断区分和证据边界。用户要求：${task.input.instructions}`;
+      prompt+='\n知识库统一使用 knowledge_base/。本次准确输出清单（优先于上文任何旧路径示例）：'+paths.map(path=>path+'，稳定ID='+knowledgeDocumentId(path)).join('；')+'。frontmatter id 使用此稳定ID，不使用 basic/key/detail/memory 这样的文件短名。所有相对链接根据实际新目录计算，引用 input.json 的真实 path。仅摘要文件仍按摘要规范，不添加全文frontmatter。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
       const cliVersion = await new Promise<string>((resolve,reject)=>execFile(this.cli.command,[...this.cli.prefix,"--version"],{timeout:10000,maxBuffer:65536},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
       writeFileSync(join(directory,"metadata.json"),JSON.stringify({adapter:"codex-cli",cli_version:cliVersion,prompt_version:7,skill:task.input.abstract_mode?"trash-abstract-literature":"trash-literature-knowledge",skill_hash:createHash("sha256").update(task.input.abstract_mode?abstractSkill():skillText()).digest("hex"),input_fingerprint:task.fingerprint,sandbox:"workspace-write"},null,2));
@@ -270,6 +280,7 @@ export class KnowledgeAgent implements TaskRunner {
         }
       }
       if(manifest.length){writeFileSync(join(directory,'pdf-reading.json'),JSON.stringify({reading_version:1,status:'all-batches-noted',sources:manifest},null,2),{mode:0o600});prompt+=`\n原始 PDF 全页已分批提供视觉输入，各批笔记在 readings/。先读取全部笔记和 pdf-reading.json，再生成最终文件；笔记产生不等于每个图表已核验。保留未核实项，不仅依赖旧纯文字快照。每个重要证据使用带 source_id、hash、PDF页序的 pdf-view 链接。`;}
+      prompt+='\n知识库统一使用 knowledge_base/。本次准确输出清单（优先于上文任何旧路径示例）：'+paths.map(path=>path+'，稳定ID='+knowledgeDocumentId(path)).join('；')+'。frontmatter id 使用此稳定ID，不使用 basic/key/detail/memory 这样的文件短名。所有相对链接根据实际新目录计算，引用 input.json 的真实 path。仅摘要文件仍按摘要规范，不添加全文frontmatter。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终卡片');

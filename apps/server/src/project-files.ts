@@ -33,7 +33,7 @@ export class ProjectFiles {
   }
   private isProtected(path:string){
     const parts=path.split('/');
-    return !path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
+    return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
     const match=path.match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);

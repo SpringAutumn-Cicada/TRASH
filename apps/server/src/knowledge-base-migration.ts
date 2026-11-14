@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {existsSync,lstatSync,mkdirSync,readdirSync,readFileSync,realpathSync,renameSync,writeFileSync,copyFileSync,rmSync} from 'node:fs';
+import {existsSync,lstatSync,mkdirSync,readdirSync,readFileSync,realpathSync,renameSync,writeFileSync,copyFileSync,rmSync,unlinkSync,rmdirSync} from 'node:fs';
 import {dirname,join,posix,sep} from 'node:path';
 import {knowledgePath,knowledgeBasePath,legacyKnowledgePath} from '@trash/protocol';
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
@@ -20,15 +20,15 @@ export function resolveBasePath(root:string,path:string){
  const candidates=[knowledgePath(path),...['summary','hypothesis','discovery'].map(level=>knowledgePath(path,level))];
  return candidates.find(candidate=>candidate!==path&&existsSync(safeKnowledgeFile(root,candidate)))??path;
 }
-function rewrite(text:string,from:string,to:string,paths:Record<string,string>){
+export function rewriteKnowledgeText(text:string,from:string,to:string,paths:Record<string,string>){
  let fence='';
  return text.split('\n').map(line=>{
   const marker=line.match(/^\s*([`~]{3,})/);if(marker){if(!fence)fence=marker[1][0];else if(fence===marker[1][0])fence='';return line;}if(fence)return line;
   return line.replace(/(!?\[[^\]\n]+\]\()([^\s)]+)([^)]*\))/g,(all,prefix:string,href:string,suffix:string)=>{
-   if(/^(?:[a-z]+:|\/\/|#)/i.test(href))return all;
+   if(href.startsWith('/api/')||/^(?:[a-z]+:|\/\/|#)/i.test(href))return all;
    const [raw,fragment='']=href.split(/(?=[?#])/s);let target:string;try{target=decodeURIComponent(raw);}catch{return all;}
    const old=posix.normalize(target.startsWith('/')?target.slice(1):posix.join(posix.dirname(from),target));
-   const mapped=paths[old];return mapped?prefix+(posix.relative(posix.dirname(to),mapped)||posix.basename(mapped))+fragment+suffix:all;
+   const mapped=paths[old]??old;return mapped?prefix+(posix.relative(posix.dirname(to),mapped)||posix.basename(mapped))+fragment+suffix:all;
   });
  }).join('\n');
 }
@@ -58,19 +58,38 @@ export function migrateKnowledgeBase(rootInput:string,expected:string){
  try{
   for(const item of preview.items){
    const original=safeKnowledgeFile(root,item.from),copy=safeKnowledgeFile(root,backup+'/'+item.from);mkdirSync(dirname(copy),{recursive:true});copyFileSync(original,copy);
+   beforeHashes[item.from]=item.hash;
+   if(hash(readFileSync(copy,'utf8'))!==item.hash)throw new Error('KNOWLEDGE_BACKUP_INVALID');
    if(!item.active)continue;
    const text=readFileSync(original,'utf8');if(hash(text)!==item.hash)throw new Error('VERSION_CONFLICT');
-   const body=rewrite(text,item.from,item.to,paths),target=safeKnowledgeFile(root,stage+'/'+item.to);
+   const body=rewriteKnowledgeText(text,item.from,item.to,paths),target=safeKnowledgeFile(root,stage+'/'+item.to);
    mkdirSync(dirname(target),{recursive:true});writeFileSync(target,body,{mode:0o600});
    beforeHashes[item.from]=item.hash;afterHashes[item.to]=hash(body);
   }
   const base=safeKnowledgeFile(root,stage+'/knowledge_base');mkdirSync(base,{recursive:true});
+  for(const dir of ['papers','abstracts','topics','hypotheses','discoveries','summaries'])mkdirSync(join(base,dir),{recursive:true});
   writeFileSync(join(base,'AGENTS.md'),'# 知识库阅读与维护\n\n先读 index.md，按问题读取关键卡片、研究记忆和主题；精确结果回查详细卡片及原文。区分全文证据与摘要级声明。关联、导航和证据分开，保留人工补充、稳定ID和出处。不要默认读取全库；分批总结不是正式主题。运行缓存和任务日志位于项目 .trash/，不作为研究事实。\n');
-  mkdirSync(join(base,'maintenance'),{recursive:true});writeFileSync(join(base,'maintenance/log.md'),'# 知识维护记录\n\n迁移保留文档ID、原始资料与历史快照。平台后续发布和命名操作在此记录。\n');
+  mkdirSync(join(base,'maintenance'),{recursive:true});writeFileSync(join(base,'maintenance/log.md'),(existsSync(safeKnowledgeFile(root,'.trash/wiki-log.md'))?readFileSync(safeKnowledgeFile(root,'.trash/wiki-log.md'),'utf8')+'\n':'')+'# 知识维护记录\n\n迁移保留文档ID、原始资料与历史快照。平台后续发布和命名操作在此记录。\n');
   const target=safeKnowledgeFile(root,'knowledge_base');if(existsSync(target))throw new Error('KNOWLEDGE_BASE_CONFLICT');
-  renameSync(base,target);
   const manifest={version:1,paths,beforeHashes,afterHashes,backup,at:new Date().toISOString()};
-  const file=safeKnowledgeFile(root,'.trash/knowledge-base-migration.json');writeFileSync(file+'.tmp',JSON.stringify(manifest,null,2));renameSync(file+'.tmp',file);
+  const file=safeKnowledgeFile(root,'.trash/knowledge-base-migration.json');writeFileSync(file+'.tmp',JSON.stringify(manifest,null,2));renameSync(base,target);renameSync(file+'.tmp',file);
+  for(const item of preview.items){const original=safeKnowledgeFile(root,item.from);if(hash(readFileSync(original,'utf8'))===item.hash)unlinkSync(original);}
+  for(const dir of ['literature/cards','wiki','abstract-library/notes','abstract-library/wiki']){const path=safeKnowledgeFile(root,dir);if(existsSync(path)&&!readdirSync(path).length)rmdirSync(path);}
   return {...migrationPreview(root),count:Object.keys(paths).length};
  }finally{rmSync(safeKnowledgeFile(root,stage),{recursive:true,force:true});}
+}
+
+export function rollbackKnowledgeBase(root:string){
+ const manifest=migrationManifest(root);if(!manifest?.backup)throw new Error('KNOWLEDGE_MIGRATION_NOT_FOUND');
+ for(const [path,expected] of Object.entries(manifest.afterHashes??{}))if(!existsSync(safeKnowledgeFile(root,path))||hash(readFileSync(safeKnowledgeFile(root,path),'utf8'))!==expected)throw new Error('KNOWLEDGE_BASE_CHANGED');
+ const current=knowledgeFiles(root,'knowledge_base').filter(path=>knowledgeBasePath.test(path));
+ if(current.some(path=>!manifest.afterHashes?.[path]))throw new Error('KNOWLEDGE_BASE_CHANGED');
+ for(const [old,expected] of Object.entries(manifest.beforeHashes??{})){
+  const file=safeKnowledgeFile(root,old),backup=safeKnowledgeFile(root,manifest.backup+'/'+old);
+  if(!existsSync(backup)||hash(readFileSync(backup,'utf8'))!==expected||(existsSync(file)&&hash(readFileSync(file,'utf8'))!==expected))throw new Error('KNOWLEDGE_BACKUP_INVALID');
+ }
+ for(const old of Object.keys(manifest.beforeHashes??{})){const target=safeKnowledgeFile(root,old);mkdirSync(dirname(target),{recursive:true});copyFileSync(safeKnowledgeFile(root,manifest.backup+'/'+old),target);}
+ renameSync(safeKnowledgeFile(root,'knowledge_base'),safeKnowledgeFile(root,manifest.backup+'/knowledge_base-before-rollback'));
+ renameSync(safeKnowledgeFile(root,'.trash/knowledge-base-migration.json'),safeKnowledgeFile(root,manifest.backup+'/migration-manifest.json'));
+ return {restored:true,backup:manifest.backup};
 }

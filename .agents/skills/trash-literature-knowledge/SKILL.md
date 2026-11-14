@@ -19,6 +19,14 @@ description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源
 
 更新保留用户手工补充。卡片和Wiki校验发布后直接可用，无采纳/拒绝步骤；人工通过编辑调整，仍保留未核实、假设与来源变化标记。写完回读，核对三卡基本信息、数字、结论、条件和链接一致；最终汇报实际文件路径、材料范围和未核实项。任务取消或冲突时保留工作副本，不声称发布成功。
 
+## knowledge_base 目录与稳定标识
+
+统一知识入口为项目 `knowledge_base/index.md`，阅读维护规则见其中的 AGENTS.md。全文卡片与单篇研究记忆属于同一知识库：
+- `knowledge_base/papers/<source_id>/basic.md`、`key.md`、`detail.md`：frontmatter id 仍分别为 `card-<source_id>-basic/key/detail`。
+- 同目录 `memory.md`：id 仍为 `wiki-<source_id>`，level: single。
+- 主题、假设、发现和分批总结分别位于 `topics/`、`hypotheses/`、`discoveries/`、`summaries/`，文件名使用稳定 Wiki ID；项目总览为 `overview.md`。
+路径以任务指定清单和 input.json 为准，ID不随路径、标题变化。旧路径是兼容入口，不是新文件目标。相对链接按当前文档目录计算，例如单篇 memory.md 引用 `./key.md`，topics/ 下的主题引用 `../papers/<source_id>/key.md`。先导航再按需读取，不能把全部知识正文塞进首页。不要修改 .trash 中的缓存或历史文件。修改保留人工内容与证据边界。
+
 ## PDF 全文图文阅读
 
 专用任务由平台按 PDF 页序提供所有页面图像及文字，每四页一个批次，readings/ 保存批次笔记，pdf-reading.json 记录已提供范围。最终综合必须阅读全部批次笔记，保留无法辨认的图表/公式/数字；批次产出笔记不是视觉内容已全部核验的证明。只提供图注不能声称看过图像。扫描页根据真实图像阅读，不伪称已有 OCR。

@@ -1,3 +1,4 @@
+import {knowledgeBasePath,legacyKnowledgePath} from '@trash/protocol';
 import {posix} from 'node:path';
 
 export type KnowledgeLink={path:string;label:string;relation:string;reason:string;evidence:boolean};
@@ -5,7 +6,7 @@ const knowledgePath=/^(wiki|literature\/cards)\/[A-Za-z0-9_-]+\.md$/;
 export function resolveKnowledgeLink(from:string,href:string):string|undefined {
   // Only local Markdown paths are knowledge edges; PDF/web links remain citations.
   if(!href||href.startsWith('#')||/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href))return;
-  try{const decoded=decodeURIComponent(href.split(/[?#]/)[0]);const path=posix.normalize(decoded.startsWith('/')?decoded.slice(1):posix.join(posix.dirname(from),decoded));return knowledgePath.test(path)?path:undefined;}catch{return;}
+  try{const decoded=decodeURIComponent(href.split(/[?#]/)[0]);const path=posix.normalize(decoded.startsWith('/')?decoded.slice(1):posix.join(posix.dirname(from),decoded));return (knowledgeBasePath.test(path)||legacyKnowledgePath.test(path))?path:undefined;}catch{return;}
 }
 export function knowledgeLinks(path:string,text:string):KnowledgeLink[] {
   const body=text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/<!--[\s\S]*?-->/g,'');

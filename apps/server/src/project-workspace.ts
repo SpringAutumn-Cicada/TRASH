@@ -19,7 +19,7 @@ export function workspaceError(error:unknown):never {
 function fail(message:string,statusCode=409):never {
   throw Object.assign(new Error(message),{statusCode});
 }
-const directories=['literature/originals','literature/parsed','literature/cards','wiki','code','data','experiments','manuscript','.trash'];
+const directories=['literature/originals','literature/parsed','code','data','experiments','manuscript','.trash'];
 const requestSchema=z.object({root:z.string().min(1).max(4096).refine(value=>isAbsolute(value)&&!value.includes('\0')),name:z.string().trim().min(1).max(120).refine(value=>value!=='.'&&value!=='..'&&!/[\\/]/.test(value)&&!Array.from(value).some(character=>character.charCodeAt(0)<32))}).strict();
 type Job={id:string;projectId:string;status:'copying'|'verifying'|'switching'|'completed'|'failed'|'interrupted';source:string;target:string;stage:string;backup?:string;files:number;bytes:number;totalFiles:number;totalBytes:number;externalLinks:string[];error?:string;createdAt:string};
 type Entry={path:string;size:number;link?:string;hash?:string};
@@ -117,7 +117,7 @@ export class ProjectWorkspaces {
     const readme=join(root,'README.md');
     if(!existsSync(readme))writeFileSync(readme,`# 论文工作区
 
-文献 literature/、项目知识 wiki/、代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
+文献 literature/、项目知识 knowledge_base/、代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
 
 支持多个研究方向：wiki/directions/<方向ID>.md、code/directions/<方向ID>/、experiments/<方向ID>/<方案ID>/runs/<运行ID>/。
 

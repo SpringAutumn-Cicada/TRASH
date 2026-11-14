@@ -1,3 +1,4 @@
+import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
 import {bibliographyState} from './source-bibliography.js';
@@ -10,7 +11,7 @@ import { directoryRepairBusy } from "./experiment/directory-repair.js";
 import { ProjectWorkspaces, workspaceError } from "./project-workspace.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./experiment/directories.js";
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync,existsSync,readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -258,6 +259,14 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true'}));return;}
       if(subpath==='markdown-knowledge/summary-name-preview'&&method==='GET'){sendJson(response,200,{items:markdown.summaryNamePreview(projectId)});return;}
       if(subpath==='markdown-knowledge/rename-summary'&&method==='POST'){const input=z.object({id:z.string(),title:z.string().trim().min(4).max(150),expected:z.string()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.renameSummary(projectId,input.id,input.title,input.expected)});return;}
+      if(subpath==='markdown-knowledge/migration-preview'&&method==='GET'){sendJson(response,200,migrationPreview(markdown.root(projectId)));return;}
+      if(subpath==='markdown-knowledge/home'&&method==='GET'){const root=markdown.root(projectId);markdown.index(projectId);const manifest=migrationPreview(root);const file=join(root,'knowledge_base/index.md');sendJson(response,200,{path:'knowledge_base/index.md',text:existsSync(file)?readFileSync(file,'utf8'):'# 知识库\n请先预览并迁移到 knowledge_base/。',migration:manifest.migrated});return;}
+      if(subpath==='markdown-knowledge/maintenance-log'&&method==='GET'){const file=join(markdown.root(projectId),'knowledge_base/maintenance/log.md');sendJson(response,200,{text:existsSync(file)?readFileSync(file,'utf8'):'暂无维护记录。'});return;}
+      if(['markdown-knowledge/migrate','markdown-knowledge/rollback-migration'].includes(subpath)&&method==='POST'){
+        const input=z.object({confirm:z.literal(true),expected:z.string().optional()}).strict().parse(await readJson(request));
+        if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+        const result=subpath.endsWith('/migrate')?migrateKnowledgeBase(markdown.root(projectId),input.expected??''):rollbackKnowledgeBase(markdown.root(projectId));markdown.index(projectId,true);sendJson(response,200,result);return;
+      }
       if(subpath==='markdown-knowledge/graph'&&method==='GET'){sendJson(response,200,markdown.graph(projectId));return;}
       if(subpath==='markdown-knowledge/relations'&&method==='GET'){sendJson(response,200,markdown.relations(projectId,url.searchParams.get('id')??''));return;}
       if(subpath==='markdown-knowledge/health'&&method==='GET'){sendJson(response,200,markdown.health(projectId));return;}

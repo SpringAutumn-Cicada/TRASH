@@ -1,3 +1,5 @@
+import {knowledgePath} from '@trash/protocol';
+import {migrationManifest,safeKnowledgeFile} from './knowledge-base-migration.js';
 import {readFileSync,writeFileSync,mkdirSync,existsSync,lstatSync,renameSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -8,6 +10,7 @@ export const abstractSkill=()=>readFileSync(fileURLToPath(new URL('../../../.age
 export function abstractFile(store:TrashStore,project:string,source:string,area:'materials'|'notes'|'wiki'|'history'='notes',version?:string){
   if(!/^source_[a-zA-Z0-9_-]+$/.test(source))throw new Error('SOURCE_NOT_FOUND');
   const root=join(store.root,'projects',project);
+  if((area==='notes'||area==='wiki')&&migrationManifest(root)){const target=safeKnowledgeFile(root,knowledgePath('abstract-library/'+area+'/'+source+'.md'));mkdirSync(dirname(target),{recursive:true});return target;}
   const parts=['abstract-library',area];let dir=root;
   for(const part of parts){dir=join(dir,part);if(existsSync(dir)&&lstatSync(dir).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');mkdirSync(dir,{recursive:true});}
   const target=join(dir,source+(version?'-'+version:'')+'.md');
