@@ -6,7 +6,7 @@ import {join,posix} from 'node:path';
 
 export const paperWikiNames=['whoami.md','idcard.md','background.md','research_problem.md','contributions.md','method/method.md','results/results.md','limitations.md','insights.md','evidence.md'];
 export const paperWikiPaths=(source:string)=>paperWikiNames.map(name=>`knowledge_base/papers/${source}/${name}`);
-export const paperCompatibility=(name:string)=>['idcard.md','basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||name.startsWith('evidence/');
+export const paperCompatibility=(name:string)=>['basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||name.startsWith('evidence/');
 export function paperWikiOutputPaths(output:string,source:string,required:string[]){
  const prefix=`knowledge_base/papers/${source}/`;
  const found=existsSync(join(output,prefix))?knowledgeFiles(output,prefix.slice(0,-1)).filter(path=>knowledgeBasePath.test(path)&&!paperCompatibility(path.slice(prefix.length))):[];
@@ -26,6 +26,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
  for(const file of files){
   if(!file.path.startsWith(prefix)){issue(file.path,'不得生成其他来源内容');continue;}
   const name=file.path.slice(prefix.length);
+  if(name!=='whoami.md'&&!(graph.get(file.path)??[]).includes(prefix+'whoami.md'))issue(file.path,'每个论文子页必须直接链接本篇whoami.md');
   if(!paperWikiNames.includes(name)&&!/^method\/[a-z][a-z0-9_-]*\.md$|^results\/[a-z][a-z0-9_-]*\.md$/.test(name))issue(file.path,'只允许本篇职责页及方法/实验子页');
   const body=file.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'');
   if(name!=='evidence.md'&&(/\/pdf-view\?|\]\([^)]*\.pdf(?:[?#][^)]*)?\)/i.test(body)))issue(file.path,'原文定位仅放统一evidence.md，正文链接依据条目');
@@ -44,12 +45,12 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
    for(const ref of refs){const [target,fragment]=ref[1].split('#');const resolved=posix.normalize(posix.join(posix.dirname(file.path),target));if(resolved!==prefix+'evidence.md'||!fragment||!anchors.includes(fragment))issue(file.path,'依据链接必须指向本篇存在的ev-*条目：'+ref[1]);}
   }
   if(name==='evidence.md')for(const match of body.matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)){
-   const target=match[1];if(!/^(?:\/api\/|https?:\/\/)/.test(target))issue(file.path,'依据页只单向引用原文，不链接回知识页');
+   const target=match[1];if(resolveKnowledgeLink(file.path,target)!==prefix+'whoami.md'&&!/^(?:\/api\/|https?:\/\/)/.test(target))issue(file.path,'依据页除返回whoami导航外，仅引用原文');
   }
  }
  return issues;
 }
 export function paperWikiPrompt(source:string,wikiOnly:boolean){
  const prefix=`knowledge_base/papers/${source}/`;
- return `读取 literature-skill/SKILL.md、literature-skill/references/paper-wiki.md 和 input.json。当前采用新版单篇论文知识协议，优先于旧四文档、index与分散原文引用规范。只处理 source_id=${source}。${wikiOnly?'基于本篇已有材料重组，不读取PDF或声称重新核验原文。':'使用本次章节计划、全部章节笔记及整体认识形成知识，不按页码批次拼接。'}\n先在任务根目录保存knowledge-plan.md，列出职责页、实际需要的机制/实验子页和稳定依据条目。保留已有人工补充，将旧正文的认识和原文定位分配到新页；无法迁移的人工内容在新页明确保留，不静默删除。先生成知识与结果、归并依据，最后生成whoami。\n全部Markdown写入 output/${prefix}。必需：${paperWikiNames.join('、')}。可选 method/<slug>.md、results/<slug>.md，slug仅小写英文、数字、单个连字符或下划线，不使用连续--。不为数量凑页，不生成旧basic/key/detail/memory或index/problem/evidence目录正文；题录写入 idcard.md（kind: wiki-page），仅保留标题、作者、期刊/会议、发表时间、源码状态（有地址就填地址，没有写无）；whoami 的知识导航必须单向链接 ./idcard.md。现有非兼容知识子页仍有效时要一并保留并纳入导航。\n每页frontmatter knowledge_version: 2、kind: wiki-page、source_id: ${source}、level: single。稳定ID=${'wiki-'+source+'--'}加相对论文目录文件名去掉.md且将/替换为--。例如whoami=${knowledgeDocumentId(prefix+'whoami.md')}，方法总览=${knowledgeDocumentId(prefix+'method/method.md')}。\nwhoami仅正式题目、二级标题“ 一句话认识 ”（概括问题+方法，无性能数字和结果评价）、“ 知识导航 ”。作者、DOI、源码等题录不放入whoami。background仅“概览”“已有研究与不足”和研究问题/依据链接。其他职责页按references/paper-wiki.md精简模板写概览与职责正文，不重复添加检索摘要、适合回答和长篇关联栏目。概览保存认识与限定，不只写“本页介绍”。\n唯一evidence.md用## ev-具体英文标识建立稳定条目，记真实原文页、图表、原文链接、来源版本、支持范围与必要摘录；材料缺口明确记录，不伪造出处。知识页仅链接本篇evidence.md#ev-*，不重复PDF引用和页码出处；正文仍保留实验条件、指标口径、未知与作者声明/推断边界。依据页不反向链接知识页。相对链接按所在路径计算，所有页从whoami可达，子页链接总览。\n不生成其他论文、摘要或跨论文主题。不实现depth或渐进读取协议。完成后核对完整目录、出处锚点和内容分工。用户要求：`;
+ return `读取 literature-skill/SKILL.md、literature-skill/references/paper-wiki.md 和 input.json。当前采用新版单篇论文知识协议，优先于旧四文档、index与分散原文引用规范。只处理 source_id=${source}。${wikiOnly?'基于本篇已有材料重组，不读取PDF或声称重新核验原文。':'使用本次章节计划、全部章节笔记及整体认识形成知识，不按页码批次拼接。'}\n先在任务根目录保存knowledge-plan.md，列出职责页、实际需要的机制/实验子页和稳定依据条目。保留已有人工补充，将旧正文的认识和原文定位分配到新页；无法迁移的人工内容在新页明确保留，不静默删除。先生成知识与结果、归并依据，最后生成whoami。\n全部Markdown写入 output/${prefix}。必需：${paperWikiNames.join('、')}。可选 method/<slug>.md、results/<slug>.md，slug仅小写英文、数字、单个连字符或下划线，不使用连续--。不为数量凑页，不生成旧basic/key/detail/memory或index/problem/evidence目录正文；题录写入 idcard.md（kind: wiki-page），仅保留标题、作者、期刊/会议、发表时间、源码状态（有地址就填地址，没有写无）；whoami 的知识导航必须单向链接 ./idcard.md。现有非兼容知识子页仍有效时要一并保留并纳入导航。\n每页frontmatter knowledge_version: 2、kind: wiki-page、source_id: ${source}、level: single。稳定ID=${'wiki-'+source+'--'}加相对论文目录文件名去掉.md且将/替换为--。例如whoami=${knowledgeDocumentId(prefix+'whoami.md')}，方法总览=${knowledgeDocumentId(prefix+'method/method.md')}。\nwhoami仅正式题目、二级标题“ 一句话认识 ”（概括问题+方法，无性能数字和结果评价）、“ 知识导航 ”。作者、DOI、源码等题录不放入whoami。background仅“概览”“已有研究与不足”和研究问题/依据链接。其他职责页按references/paper-wiki.md精简模板写概览与职责正文，不重复添加检索摘要、适合回答和长篇关联栏目。概览保存认识与限定，不只写“本页介绍”。\n唯一evidence.md用## ev-具体英文标识建立稳定条目，记真实原文页、图表、原文链接、来源版本、支持范围与必要摘录；材料缺口明确记录，不伪造出处。知识页仅链接本篇evidence.md#ev-*，不重复PDF引用和页码出处；正文仍保留实验条件、指标口径、未知与作者声明/推断边界。每个子页（包括idcard与evidence）必须有独立一行的 [返回论文入口](相对路径whoami.md)，根子页使用 ./whoami.md，method/results 子页使用 ../whoami.md；whoami 的知识导航直接链接全部子页。这些双向链接仅作导航，不是引用依据。依据页除入口导航外不反向链接知识页。相对链接按所在路径计算，所有页从whoami可达，子页链接总览。\n不生成其他论文、摘要或跨论文主题。不实现depth或渐进读取协议。完成后核对完整目录、出处锚点和内容分工。用户要求：`;
 }
