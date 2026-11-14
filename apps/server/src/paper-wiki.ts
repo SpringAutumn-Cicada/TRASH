@@ -6,7 +6,7 @@ import {join,posix} from 'node:path';
 
 export const paperWikiNames=['whoami.md','background.md','research_problem.md','contributions.md','method/method.md','results/results.md','limitations.md','insights.md','evidence.md'];
 export const paperWikiPaths=(source:string)=>paperWikiNames.map(name=>`knowledge_base/papers/${source}/${name}`);
-export const paperCompatibility=(name:string)=>['basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||name.startsWith('evidence/');
+export const paperCompatibility=(name:string)=>['IDcard.md','basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||name.startsWith('evidence/');
 export function paperWikiOutputPaths(output:string,source:string,required:string[]){
  const prefix=`knowledge_base/papers/${source}/`;
  const found=existsSync(join(output,prefix))?knowledgeFiles(output,prefix.slice(0,-1)).filter(path=>knowledgeBasePath.test(path)&&!paperCompatibility(path.slice(prefix.length))):[];
