@@ -163,7 +163,7 @@ export async function knowledgeRoute(
     if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url),runner.resumable?.bind(runner)));return true;}
     if(parts[2]==='stream'&&method==='GET'){streamTaskEvents(store,task,request,response,url,runner.resumable?.bind(runner));return true;}
     if (parts[2] === "cancel" && method === "POST") { runner.cancel(projectId, task.task_id); send(response,200,{ok:true}); return true; }
-    if (parts[2] === "retry" && method === "POST") { if (["running","queued"].includes(task.status)) requestError("TASK_ACTIVE",409); send(response,201,{tasks:runner.enqueue(projectId,{...task.input,regenerate:true},task.task_id)}); return true; }
+    if (parts[2] === "retry" && method === "POST") { if (["running","queued"].includes(task.status)) requestError("TASK_ACTIVE",409); send(response,201,{tasks:runner.enqueue(projectId,{...task.input,timeout_seconds:task.input.timeout_seconds===900?1800:task.input.timeout_seconds,regenerate:true},task.task_id)}); return true; }
     if (method === "GET") { send(response,200,{task,events:store.db.prepare("SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq LIMIT 1000").all(task.task_id)}); return true; }
   }
   if (subpath === "wiki-templates" && method === "GET") {
