@@ -1,3 +1,4 @@
+import {LibraryDeleteManager} from './library-delete-manager.js';
 import {AbstractLibrary} from './abstract-library.js';
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
@@ -6,7 +7,7 @@ import "./literature-visual.css";
 import { LiteratureDocumentDialog } from "./literature-document-dialog.js";
 import { ModalLayer } from "./modal-layer.js";
 import { LiteratureAnalysisButton } from "./literature-analysis.js";
-import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, Trash2, X, ChevronDown, BookOpen, CircleCheck } from "lucide-react";
+import { ExternalLink, FileUp, Link, LoaderCircle, Plus, Search, Sparkles, X, ChevronDown, BookOpen, CircleCheck } from "lucide-react";
 import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
@@ -58,8 +59,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [importing, setImporting] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const [deleting, setDeleting] = useState<string>();
-  const [deleteTarget, setDeleteTarget] = useState<Source>();
-  const [deleteError, setDeleteError] = useState("");
 
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
@@ -183,21 +182,15 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     catch (cause) { setError(uiError(cause, "无法打开文献来源，请重试。")); }
   };
 
-  const deleteSource = async (source: Source) => {
-    if (deleting) return;
-    if (importing || searching) { setDeleteError("正在导入或检索，请等待操作完成后再确认删除。"); return; }
-    setDeleting(source.source_id); setDeleteError(""); setError("");
-    try {
-      await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) });
-      sourceRequest.current++;
-      if (alive.current) {
-        setSelectedSource(current => current?.source.source_id === source.source_id ? undefined : current);
-        setPassages(current => current.filter(item => item.source.source_id !== source.source_id));
-        setDetail(current => current ? { ...current, sources: current.sources.filter(item => item.source_id !== source.source_id) } : current);
-        setDeleteTarget(undefined); onChanged();
-      }
-    } catch (cause) { if (alive.current) setDeleteError(uiError(cause, "删除文献失败，请重试。")); }
-    finally { if (alive.current) setDeleting(undefined); }
+  const onSourceDeleted=(id:string)=>{
+    sourceRequest.current++;
+    setSelectedSource(current=>current?.source.source_id===id?undefined:current);
+    setPassages(current=>current.filter(item=>item.source.source_id!==id));
+    setDetail(current=>current?{...current,sources:current.sources.filter(item=>item.source_id!==id)}:current);
+    setAnalyses(current=>current.filter(item=>item.source_id!==id));
+    setWikiNotice(current=>current?.sourceId===id?undefined:current);
+    setDocumentTarget(current=>current?.source.source_id===id?undefined:current);
+    onChanged();
   };
 
   const toggleResult = (ref: string) => setSelectedResults((previous) => {
@@ -219,7 +212,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     {fileDragging&&!searchOnly&&<div className="literature-drop-overlay" role="status"><FileUp size={30}/><strong>{importing?'正在导入，请稍候':'松开以导入文献'}</strong><span>PDF · BibTeX · RIS · Markdown · 支持多个文件</span></div>}
     {regenerateTarget&&<RegenerateSourceDialog source={regenerateTarget} busy={submitting.includes(regenerateTarget.source_id)} error={regenerateError} onClose={()=>{if(!submissionLock.current.has(regenerateTarget.source_id))setRegenerateTarget(undefined);}} onConfirm={()=>{void analyzeSource(regenerateTarget,true).then(ok=>{if(ok&&alive.current)setRegenerateTarget(undefined);});}}/>}
     {documentTarget&&<LiteratureDocumentDialog key={documentTarget.source.source_id} projectId={projectId} source={documentTarget.source} initialType={documentTarget.type} onClose={()=>setDocumentTarget(undefined)} onSaved={()=>{void refresh(true);onChanged();}}/>}
-    {deleteTarget && <DeleteSourceDialog source={deleteTarget} busy={Boolean(deleting)} blocked={importing || searching} error={deleteError} onClose={() => { if (!deleting) setDeleteTarget(undefined); }} onConfirm={() => void deleteSource(deleteTarget)}/>}
     {wikiNotice&&(()=>{const task=analyses.find(item=>item.source_id===wikiNotice.sourceId)?.wiki_task;const status=task?.task_id===wikiNotice.taskId?task.status:'queued';return <div className="wiki-task-notice" role="status"><span>{status==='completed'?'Wiki 分析已完成。':status==='failed'?'Wiki 分析失败，可重试。':status==='interrupted'||status==='cancelled'?'Wiki 分析已停止，可重新提交。':status==='running'?'Wiki 正在分析，完成前无法重复提交。':'Wiki 分析已提交，正在排队，完成前无法重复提交。'}</span><a href={projectPath(projectId,'tasks',{focus:wikiNotice.taskId})}>查看任务</a></div>;})()}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
@@ -232,7 +224,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               <div className="library-toolbar-actions"><div className="library-import" data-literature-menu>
                 <button type="button" className="primary-button" aria-expanded={importOpen} aria-controls="literature-import-panel" onClick={()=>{setImportOpen(v=>!v);}}><Plus size={15}/>导入文献<ChevronDown size={12}/></button>
                 {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown，也可拖入页面</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
-              </div></div>
+              </div><LibraryDeleteManager projectId={projectId} sources={detail.sources} disabled={importing||searching} blockedIds={[...submitting,...analyses.filter(item=>['queued','running'].includes(item.status??'')||['queued','running'].includes(item.wiki_task?.status??'')).map(item=>item.source_id),...(wikiSubmitting?[wikiSubmitting]:[])]} onBusyChange={busy=>setDeleting(busy?'batch':undefined)} onDeleted={onSourceDeleted}/></div>
               <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
             </div>
             {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
@@ -257,7 +249,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                   </div>
                   <div className="library-row-controls">
                     <div className="library-state">{item?.hasCards&&item?.hasWiki&&<button type="button" className="library-wiki-analyze" disabled={pending||Boolean(wikiSubmitting)||Boolean(deleting)} onClick={()=>void analyzeWiki(source)} title="仅更新 Wiki，复用已有卡片">{wikiPending||wikiSubmitting===source.source_id?<LoaderCircle size={13} className="spin"/>:<Sparkles size={13}/>}{wikiSubmitting===source.source_id?'提交中…':wikiPending?(item?.wiki_task?.status==='running'?'分析中':'排队中'):'分析 Wiki'}</button>}<span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
-                    <div className="library-row-actions">{item?.hasCards&&item?.hasBasic&&item?.hasWiki&&!wikiPending&&wikiSubmitting!==source.source_id&&(retry||fullPending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&activeTaskId)window.location.assign(projectPath(projectId,'tasks',{focus:activeTaskId}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div><button type="button" className="icon-button library-delete" aria-label={`删除文献：${source.title}`} title="删除文献" disabled={Boolean(deleting)||pending} onClick={()=>{setDeleteError('');setDeleteTarget(source);}}><Trash2 size={15}/></button></div>
+                    <div className="library-row-actions">{item?.hasCards&&item?.hasBasic&&item?.hasWiki&&!wikiPending&&wikiSubmitting!==source.source_id&&(retry||fullPending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&activeTaskId)window.location.assign(projectPath(projectId,'tasks',{focus:activeTaskId}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div></div>
                   </div>
                 </article>;
               })}
@@ -280,32 +272,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
         </div>
   </section>;
 }
-
-function DeleteSourceDialog({ source, busy, blocked, error, onClose, onConfirm }: { source: Source; busy: boolean; blocked: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
-  const modal = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    modal.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    return () => { if (previous?.isConnected) previous.focus(); };
-  }, []);
-  return <ModalLayer><div className="modal-backdrop source-delete-backdrop"><div ref={modal} className="modal source-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="source-delete-title" aria-describedby="source-delete-description" aria-busy={busy} onKeyDown={event => {
-    if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); }
-    if (event.key === "Tab") {
-      const buttons = Array.from(modal.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
-      const first = buttons[0], last = buttons[buttons.length - 1];
-      if (!first) { event.preventDefault(); return; }
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-  }}>
-    <h2 id="source-delete-title">删除参考文献</h2><p className="source-delete-name">{source.title}</p>
-    <p id="source-delete-description">将删除此文献的记录、阅读信息与正文检索内容，原始文件保留。此操作无法撤销；被知识内容历史引用的文献不能删除。</p>
-    {blocked && <p role="status" className="notice">正在导入或检索，请等待操作结束后再确认删除。</p>}
-    {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
-    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button project-delete-confirm" disabled={busy || blocked} onClick={onConfirm}>{busy ? "正在删除…" : "确认删除"}</button></div>
-  </div></div></ModalLayer>;
-}
-
 
 function RegenerateSourceDialog({source,busy,error,onClose,onConfirm}:{source:Source;busy:boolean;error:string;onClose:()=>void;onConfirm:()=>void}){
   const modal=useRef<HTMLDivElement>(null);
