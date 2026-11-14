@@ -295,7 +295,7 @@ function RegenerateSourceDialog({source,busy,error,onClose,onConfirm}:{source:So
       <h2 id="literature-regenerate-title">重新分析这篇论文？</h2>
       <p id="literature-regenerate-description">将根据论文原文重新生成以下内容，已有版本会保留在历史记录中。</p>
       <div className="literature-regenerate-paper"><span>当前论文</span><strong>{source.title}</strong></div>
-      <div className="literature-regenerate-outputs"><span>IDcard</span><span>Wiki</span></div>
+      <div className="literature-regenerate-outputs"><span>idcard</span><span>Wiki</span></div>
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       <footer><button type="button" data-cancel className="secondary-button" disabled={busy} onClick={onClose}>暂不生成</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}>{busy?<LoaderCircle size={15} className="spin"/>:<Sparkles size={15}/>}<span>{busy?'正在提交':'重新生成'}</span></button></footer>
     </div>

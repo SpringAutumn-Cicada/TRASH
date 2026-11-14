@@ -1,10 +1,8 @@
 /** Stable IDs stay independent of the readable knowledge_base directory layout. */
 export const legacyKnowledgePath=/^(?:literature\/cards|wiki)\/[A-Za-z0-9_-]+\.md$/;
-export const knowledgeBasePath=/^knowledge_base\/(?:(?:papers\/source_[A-Za-z0-9_-]+\/(?!.*--)(?:[a-z][a-z0-9_-]*\/){0,3}(?:[a-z][a-z0-9_-]*|IDcard)|abstracts\/source_[A-Za-z0-9_-]+\/(?:interpretation|memory)|(?:topics|hypotheses|discoveries|summaries)\/wiki-[A-Za-z0-9_-]+|overview)\.md)$/;
+export const knowledgeBasePath=/^knowledge_base\/(?:(?:papers\/source_[A-Za-z0-9_-]+\/(?!.*--)(?:[a-z][a-z0-9_-]*\/){0,3}[a-z][a-z0-9_-]*|abstracts\/source_[A-Za-z0-9_-]+\/(?:interpretation|memory)|(?:topics|hypotheses|discoveries|summaries)\/wiki-[A-Za-z0-9_-]+|overview)\.md)$/;
 export function knowledgeDocumentId(path:string):string|undefined{
  if(legacyKnowledgePath.test(path))return path.split('/').at(-1)!.slice(0,-3);
- const identity=path.match(/^knowledge_base\/papers\/(source_[A-Za-z0-9_-]+)\/IDcard\.md$/);
- if(identity)return 'wiki-'+identity[1]+'--IDcard';
  const paper=path.match(/^knowledge_base\/papers\/(source_[A-Za-z0-9_-]+)\/(basic|key|detail|memory)\.md$/);
  if(paper)return paper[2]==='memory'?'wiki-'+paper[1]:'card-'+paper[1]+'-'+paper[2];
  const node=path.match(/^knowledge_base\/papers\/(source_[A-Za-z0-9_-]+)\/((?:[a-z][a-z0-9_-]*\/){0,3}[a-z][a-z0-9_-]*)\.md$/);

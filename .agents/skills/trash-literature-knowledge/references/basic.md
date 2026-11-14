@@ -1,6 +1,6 @@
 # 基本信息卡片
 
-论文基本信息任务只生成 IDcard.md，使用任务指定路径 literature/cards/IDcard-<source_id>.md，frontmatter：knowledge_version: 2、id与文件名相同、kind: literature-card、source_id真实来源、kind: literature-card。
+论文基本信息任务只生成 idcard.md，使用任务指定路径 literature/cards/idcard-<source_id>.md，frontmatter：knowledge_version: 2、id与文件名相同、kind: literature-card、source_id真实来源、kind: literature-card。
 
 正文只用下列固定的顶层单行字段（中文冒号，每项一次、不得空白），正文仍是Markdown，不返回JSON。未知值写“未核实”，没有地址写“未找到”或“无”。字段后可附证据链接，不另起同名字段。
 
