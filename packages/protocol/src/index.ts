@@ -211,3 +211,5 @@ export interface PdfFigure {
  section?:string; region:{x:number;y:number;width:number;height:number};
  path?:string; confidence:number; warnings:string[]; references:{page:number;line:string}[];
 }
+
+export {markdownReferences} from './markdown-references.js';

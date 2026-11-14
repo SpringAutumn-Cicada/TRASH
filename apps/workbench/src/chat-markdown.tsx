@@ -1,3 +1,4 @@
+import {markdownReferences} from '@trash/protocol/browser';
 import React, { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { copyText } from './clipboard.js';
@@ -17,7 +18,7 @@ function CodeBlock({language,body}:{language:string;body:string}){
 }
 export function ChatMarkdown({text,allowRelativeLinks=false}:{text:string;allowRelativeLinks?:boolean}){
   const renderInline=(value:string)=>inline(value,allowRelativeLinks);
-  const lines=text.replace(/\r\n/g,'\n').split('\n'),blocks:React.ReactNode[]=[];
+  const lines=markdownReferences(text).text.replace(/\r\n/g,'\n').split('\n'),blocks:React.ReactNode[]=[];
   for(let i=0;i<lines.length;){
     const line=lines[i];
     if(!line.trim()){i++;continue;}

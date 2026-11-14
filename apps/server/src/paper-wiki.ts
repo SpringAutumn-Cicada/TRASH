@@ -1,5 +1,5 @@
 import {resolveKnowledgeLink} from './knowledge-links.js';
-import {knowledgeDocumentId,knowledgeBasePath} from '@trash/protocol';
+import {markdownReferences,knowledgeDocumentId,knowledgeBasePath} from '@trash/protocol';
 import {knowledgeFiles} from './knowledge-base-migration.js';
 import {existsSync} from 'node:fs';
 import {join,posix} from 'node:path';
@@ -13,9 +13,12 @@ export function paperWikiOutputPaths(output:string,source:string,required:string
  const paths=[...new Set([...required,...found])];if(paths.length>40)throw new Error('单篇知识页过多，请合并碎片页面（最多40页）');return paths;
 }
 export function paperWikiIssues(source:string,files:{path:string;text:string}[]){
+ const unresolved=files.map(file=>({path:file.path,ids:markdownReferences(file.text).unresolved}));
+ files=files.map(file=>({...file,text:markdownReferences(file.text).text}));
  const prefix=`knowledge_base/papers/${source}/`;const byPath=new Map(files.map(file=>[file.path,file.text]));
  const issues:{path:string;reason:string;unsafe:boolean}[]=[];
  const issue=(path:string,reason:string)=>issues.push({path,reason,unsafe:false});
+ for(const file of unresolved)for(const id of file.ids)issue(file.path,'引用式链接缺少定义：'+id);
  const graph=new Map<string,string[]>();
  for(const file of files){const links=[...file.text.replace(/```[\s\S]*?```/g,'').matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].flatMap(match=>{const target=resolveKnowledgeLink(file.path,match[1]);if(!target)return [];if(!target.startsWith(prefix)||!byPath.has(target))issue(file.path,'知识导航仅引用本篇实际输出的知识页：'+match[1]);return [target];});graph.set(file.path,links);}
  const reachable=new Set([prefix+'whoami.md']);let changed=true;while(changed){changed=false;for(const path of [...reachable])for(const target of graph.get(path)??[])if(!reachable.has(target)){reachable.add(target);changed=true;}}
