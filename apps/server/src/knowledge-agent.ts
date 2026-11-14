@@ -61,7 +61,7 @@ export class KnowledgeAgent implements TaskRunner {
       });
       const markdown=new MarkdownKnowledge(this.store);
       const index=markdown.index(projectId).documents;
-      const selected=paperBundle?index.filter(doc=>doc.source_id===part.source_ids[0]):part.kind==='literature-card'?index.filter(doc=>doc.source_id===part.source_ids[0]):part.dependencies.length?index.filter(doc=>part.dependencies.some(d=>d.object_id===doc.id)):index.filter(doc=>part.source_ids.includes(doc.source_id??'')&&doc.card_type==='key');
+      const selected=paperBundle?index.filter(doc=>doc.source_id===part.source_ids[0]&&!paperCompatibility(doc.path.split(`/papers/${part.source_ids[0]}/`)[1]??'')&&doc.kind==='wiki-page'):part.kind==='literature-card'?index.filter(doc=>doc.source_id===part.source_ids[0]&&!paperCompatibility(doc.path.split(`/papers/${part.source_ids[0]}/`)[1]??'')&&doc.kind==='wiki-page'):part.dependencies.length?index.filter(doc=>part.dependencies.some(d=>d.object_id===doc.id)):index.filter(doc=>part.source_ids.includes(doc.source_id??'')&&doc.card_type==='key');
       if(part.kind==='wiki-page'&&!selected.length)requestError('KNOWLEDGE_MATERIALS_REQUIRED',422);
       const selectedIds=new Set(selected.map(d=>d.id));
       if(part.dependencies.some(d=>!selectedIds.has(d.object_id)))requestError('DEPENDENCY_NOT_FOUND',404);
@@ -85,7 +85,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(part.kind==='literature-card'&&sources[0])part={...part,title:sources[0].source.title};
       const targetPaths=part.kind==='literature-card'?[`literature/cards/idcard-${part.source_ids[0]}.md`,...(part.include_source_wiki?[`wiki/wiki-${part.source_ids[0]}.md`]:[])]:previous?[previous.path]:[];
       for(let i=0;i<targetPaths.length;i++)targetPaths[i]=knowledgePath(targetPaths[i],part.wiki_level);
-      if(paperBundle){targetPaths.splice(0,targetPaths.length,...paperWikiPaths(part.source_ids[0]),...['key','detail','memory'].map(name=>`knowledge_base/papers/${part.source_ids[0]}/${name}.md`),...index.filter(doc=>doc.source_id===part.source_ids[0]).map(doc=>doc.path));}
+      if(paperBundle){targetPaths.splice(0,targetPaths.length,...paperWikiPaths(part.source_ids[0]),...index.filter(doc=>doc.source_id===part.source_ids[0]&&!paperCompatibility(doc.path.split(`/papers/${part.source_ids[0]}/`)[1]??'')&&doc.kind==='wiki-page').map(doc=>doc.path));}
       const expectedTargets=Object.fromEntries(targetPaths.map(path=>{const file=markdown.locate(projectId,path);return [path,existsSync(file)?createHash('sha256').update(readFileSync(file)).digest('hex'):null];}));
       const topicIndex=index.filter(doc=>doc.kind==='wiki-page'&&['topic','hypothesis'].includes(doc.level??''));
       const abstractBefore=part.abstract_mode?abstractText(this.store,projectId,part.source_ids[0],part.abstract_wiki_only?'wiki':'notes'):undefined;
@@ -349,24 +349,6 @@ export class KnowledgeAgent implements TaskRunner {
           publishAbstractWiki(this.store,projectId,source,commits[1].text);
         }
         task.status='completed';task.output_id=`abstract-${source}`;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${paths[0]}（仅摘要，独立存放）`);return;
-      }
-      if(paperBundle){
-        const root=commits.find(file=>file.path===`knowledge_base/papers/${source}/whoami.md`)!;
-        const title=root.text.match(/^#\s+(.+)$/m)?.[1]??task.input.title;
-        const prefix=`knowledge_base/papers/${source}/`;
-        const old=snapshot.documents??[];
-        const oldAliases=old.filter(doc=>doc.path.startsWith(prefix)&&paperCompatibility(doc.path.slice(prefix.length))&&doc.card_type!=='basic');
-        const aliasPaths=new Set(oldAliases.map(doc=>doc.path));
-        for(const name of ['key','detail','memory'])if(task.input.include_source_wiki||name==='memory')aliasPaths.add(prefix+name+'.md');
-        for(const path of aliasPaths){
-          const name=path.slice(prefix.length),before=old.find(doc=>doc.path===path);
-          const type=['key.md','detail.md'].includes(name)?name.slice(0,-3):undefined;
-          const next=name==='problem.md'?'research_problem.md':name==='method/index.md'?'method/method.md':name==='evidence/index.md'?'results/results.md':name.startsWith('evidence/')?'results/'+name.slice(9):'whoami.md';
-          const target=commits.some(file=>file.path===prefix+next)?next:'whoami.md';
-          const href=posix.relative(posix.dirname(name),target)||'whoami.md';
-          const body=name==='key.md'?'# '+title+'\n\n'+commits.filter(file=>/\/(background|research_problem|contributions|insights)\.md$/.test(file.path)).map(file=>file.text.replace(/^---\n[\s\S]*?\n---\n/,'').replace(/^#\s+/gm,'## ')).join('\n\n'):`# ${title}\n\n此文件保留旧入口；正文已整理到新版论文知识。`;
-          commits.push({path,text:`---\nknowledge_version: 2\nid: ${before?.id??knowledgeDocumentId(path)}\nkind: ${type?'literature-card':'wiki-page'}\nsource_id: ${source}\n${type?'card_type: '+type:'level: single'}\n---\n${body}\n\n[新版论文知识](${href})\n`,expected:snapshot.expectedTargets?.[path]??before?.hash??null});
-        }
       }
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);
       for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.id!==record.id&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash}))],true);
