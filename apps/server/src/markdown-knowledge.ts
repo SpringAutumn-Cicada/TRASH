@@ -1,3 +1,4 @@
+import {paperCompatibility} from './paper-wiki.js';
 import {knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId} from '@trash/protocol';
 import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText} from './knowledge-base-migration.js';
 import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
@@ -43,7 +44,7 @@ export class MarkdownKnowledge {
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
     const section=(heading:string)=>match[2].split(/^##\s+/m).slice(1).find(part=>part.split('\n')[0].trim()===heading)?.split('\n').slice(1).join('\n').trim();
-    return {material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:kind==='literature-card'?undefined:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    return {material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:kind==='literature-card'?undefined:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(match[2].match(/^## (?:概览|一句话认识|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
@@ -56,7 +57,7 @@ export class MarkdownKnowledge {
     const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
     const migrated=migrationManifest(this.root(project));
     const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
-    for(const path of scan){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-base-3:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    for(const path of scan){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-base-4:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
       if(!force&&old[path]?.signature===signature)entries[path]=old[path];
       else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
       if(entries[path].error)errors.push({path,error:entries[path].error!});
@@ -77,7 +78,8 @@ export class MarkdownKnowledge {
     if(!existsSync(navigation)||readFileSync(navigation,'utf8')!==navigationText){mkdirSync(dirname(navigation),{recursive:true});writeFileSync(navigation+'.tmp',navigationText,{mode:0o600});renameSync(navigation+'.tmp',navigation);}
     if(migrated){
       const homepage=['# 知识库','原始全文与摘要分开管理；卡片、研究记忆与主题统一导航。',''];
-      for(const [label,test] of [['项目总览',(d:Omit<MarkdownDocument,'text'>)=>d.level==='overview'],['论文知识',(d:Omit<MarkdownDocument,'text'>)=>d.path.includes('/papers/')&&(d.path===`knowledge_base/papers/${d.source_id}/index.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/index.md`)&&((d.kind==='wiki-page'&&d.level==='single')||(d.card_type==='key'&&!Object.values(entries).some(entry=>entry.document?.source_id===d.source_id&&entry.document?.level==='single')))))],['摘要知识',(d:Omit<MarkdownDocument,'text'>)=>d.material_scope==='abstract'&&(d.kind==='wiki-page'||!Object.values(entries).some(entry=>entry.document?.source_id===d.source_id&&entry.document?.kind==='wiki-page'))],['知识主题',(d:Omit<MarkdownDocument,'text'>)=>d.level==='topic'],['研究假设',(d:Omit<MarkdownDocument,'text'>)=>d.level==='hypothesis'],['发现清单',(d:Omit<MarkdownDocument,'text'>)=>d.level==='discovery'],['分批总结',(d:Omit<MarkdownDocument,'text'>)=>d.level==='summary']] as const){
+      const paperEntry=(d:Omit<MarkdownDocument,'text'>)=>d.path.includes('/papers/')&&(d.path===`knowledge_base/papers/${d.source_id}/whoami.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/whoami.md`)&&(d.path===`knowledge_base/papers/${d.source_id}/index.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/index.md`)&&(d.id===`wiki-${d.source_id}`||d.card_type==='key')))));
+      for(const [label,test] of [['项目总览',(d:Omit<MarkdownDocument,'text'>)=>d.level==='overview'],['论文知识',paperEntry],['摘要知识',(d:Omit<MarkdownDocument,'text'>)=>d.material_scope==='abstract'&&(d.kind==='wiki-page'||!Object.values(entries).some(entry=>entry.document?.source_id===d.source_id&&entry.document?.kind==='wiki-page'))],['知识主题',(d:Omit<MarkdownDocument,'text'>)=>d.level==='topic'],['研究假设',(d:Omit<MarkdownDocument,'text'>)=>d.level==='hypothesis'],['发现清单',(d:Omit<MarkdownDocument,'text'>)=>d.level==='discovery'],['分批总结',(d:Omit<MarkdownDocument,'text'>)=>d.level==='summary']] as const){
         homepage.push('## '+label);for(const entry of Object.values(entries)){const doc=entry.document;if(doc&&test(doc))homepage.push('- ['+displayTitle(doc).replace(/[\[\]\r\n]/g,' ')+(doc.card_type?' · '+doc.card_type:'')+']('+doc.path.replace(/^knowledge_base\//,'')+')');}
       }
       const home=this.internal(project,'knowledge_base/index.md'),body=homepage.join('\n')+'\n';if(!existsSync(home)||readFileSync(home,'utf8')!==body){writeFileSync(home+'.tmp',body,{mode:0o600});renameSync(home+'.tmp',home);}
@@ -217,22 +219,27 @@ export class MarkdownKnowledge {
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
   commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={}){
     this.recover(project);
-    if(!files.length||files.length>48||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
+    if(!files.length||files.length>128||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const manifest=migrationManifest(this.root(project));const nextPath=manifest?.paths[original.path]??knowledgePath(original.path,text.match(/^level:\s*(\S+)/m)?.[1]);const file={...original,path:manifest?nextPath:original.path,text:manifest&&nextPath!==original.path?rewriteKnowledgeText(text,original.path,nextPath,manifest.paths):text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
     for(const target of targets.filter(t=>t.doc.card_type==='basic'))parseBasicCard(target.text);
-    if(targets.length>1&&!targets.every(t=>t.doc.kind==='wiki-page')&&!targets.some(t=>t.doc.source_id&&t.doc.path===`knowledge_base/papers/${t.doc.source_id}/index.md`)){
+    if(targets.length>1&&!targets.every(t=>t.doc.kind==='wiki-page')&&!targets.some(t=>t.doc.source_id&&['index.md','whoami.md'].some(name=>t.doc.path===`knowledge_base/papers/${t.doc.source_id}/${name}`))){
       const cards=targets.filter(t=>t.doc.kind==='literature-card'),wiki=targets.filter(t=>t.doc.kind==='wiki-page');
       const types=new Set(cards.map(t=>t.doc.card_type));
       if(!cards.length||!cards[0].doc.source_id||targets.some(t=>t.doc.source_id!==cards[0].doc.source_id)||types.size!==cards.length||!types.has('detail')||!types.has('key')||wiki.length>1||wiki.some(t=>t.doc.id!==`wiki-${cards[0].doc.source_id}`)||(targets.length===4&&!types.has('basic')))fail('INVALID_REQUEST',400);
     }
-    const paperRoots=targets.filter(t=>t.doc.path===`knowledge_base/papers/${t.doc.source_id}/index.md`);
+    const paperRoots=targets.filter(t=>['index.md','whoami.md'].some(name=>t.doc.path===`knowledge_base/papers/${t.doc.source_id}/${name}`));
     for(const root of paperRoots){
       const prefix=`knowledge_base/papers/${root.doc.source_id}/`;
       if(targets.some(t=>t.doc.source_id!==root.doc.source_id||!t.doc.path.startsWith(prefix)))fail('INVALID_REQUEST',400);
       const paths=new Set(targets.map(t=>t.doc.path));
       for(const target of targets)for(const link of target.doc.links??[])if(link.path.startsWith(prefix)&&!paths.has(link.path)&&!existsSync(this.locate(project,link.path)))fail('KNOWLEDGE_LINK_MISSING',422);
       const reachable=new Set([root.doc.path]);let grew=true;while(grew){grew=false;for(const target of targets)if(reachable.has(target.doc.path))for(const link of target.doc.links??[])if(paths.has(link.path)&&!reachable.has(link.path)){reachable.add(link.path);grew=true;}}
-      if(targets.some(t=>!t.doc.card_type&&!['memory.md'].some(name=>t.doc.path===prefix+name)&&!reachable.has(t.doc.path)))fail('KNOWLEDGE_ORPHAN_PAGE',422);
+      if(targets.some(t=>!t.doc.card_type&&!paperCompatibility(t.doc.path.slice(prefix.length))&&!reachable.has(t.doc.path)))fail('KNOWLEDGE_ORPHAN_PAGE',422);
+    }
+    for(const target of targets)for(const link of target.doc.links??[])if(link.fragment){
+      const staged=targets.find(t=>t.path===link.path);const physical=this.locate(project,link.path);
+      const body=staged?.text??(existsSync(physical)?readFileSync(physical,'utf8'):undefined);
+      if(link.path.endsWith('/evidence.md')&&(!body||!body.split('\n').some(line=>line.trim()==='## '+link.fragment)))fail('KNOWLEDGE_ANCHOR_MISSING',422);
     }
     // All checks and writes are synchronous: no other server request can interleave this commit.
     const previousDependencies=new Map(this.index(project).documents.map(d=>[d.path,d.dependencies??[]]));
