@@ -329,7 +329,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const sourceId=decodeURIComponent(keepOriginal[1]),source=store.getSource(sourceId);
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===sourceId);
-      if(!['basic','key','detail'].every(type=>docs.some(doc=>doc.card_type===type))||!docs.some(doc=>doc.kind==='wiki-page')){sendJson(response,409,{error:'ORIGINAL_ANALYSIS_REQUIRED'});return;}
+      if(!docs.some(doc=>doc.kind==='wiki-page')){sendJson(response,409,{error:'ORIGINAL_ANALYSIS_REQUIRED'});return;}
       const tasks=knowledge.tasks(projectId).filter(task=>task.input.include_source_wiki&&task.input.source_ids[0]===sourceId);
       const latest=tasks.sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
       if(!latest||latest.task_id!==input.task_id||latest.status==='completed'){sendJson(response,409,{error:'TASK_FINISHED'});return;}
@@ -350,7 +350,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(active){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
       const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===source.source_id);
       const cards=docs.filter(doc=>doc.kind==='literature-card');
-      if(!['key','detail'].every(type=>cards.some(doc=>doc.card_type===type))){sendJson(response,409,{error:'KNOWLEDGE_MATERIALS_REQUIRED'});return;}
+      if(!docs.some(doc=>doc.kind==='wiki-page')&&!cards.some(doc=>doc.path.includes('/IDcard'))){sendJson(response,409,{error:'KNOWLEDGE_MATERIALS_REQUIRED'});return;}
       const wiki=docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/whoami.md`)??docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/index.md`)??docs.find(doc=>doc.kind==='wiki-page'&&doc.level==='single');
       if(!wiki){sendJson(response,409,{error:'NOT_FOUND'});return;}
       const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:[source.source_id],dependencies:cards.map(doc=>({kind:'literature-card',object_id:doc.id,version:1})),target_id:wiki.id,wiki_level:'single',title:source.title,regenerate:true,instructions:'仅使用本篇已有材料生成或更新新版论文Wiki，保留人工补充，不重新核验PDF；whoami.md为入口，原文出处统一evidence.md。source_id 必须保持为 '+source.source_id}));

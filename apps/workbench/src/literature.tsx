@@ -68,7 +68,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const analyzeWiki=async(source:Source)=>{
     if(wikiLock.current||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.wiki_task?.status??'')))return;wikiLock.current=true;setWikiSubmitting(source.source_id);setError('');
     try{const result=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze-wiki`,{method:'POST',body:JSON.stringify({confirm:true})});setAnalyses(previous=>previous.map(item=>item.source_id===source.source_id?{...item,wiki_task:{task_id:result.task_id,status:result.status}}:item));setWikiNotice({sourceId:source.source_id,taskId:result.task_id});}
-    catch(cause){setError(uiError(cause,'无法单独更新 Wiki，请确认已有关键、详细卡片及 Wiki，且没有进行中的分析。'));}
+    catch(cause){setError(uiError(cause,'无法单独更新 Wiki，请确认已有论文内容且没有进行中的分析。'));}
     finally{wikiLock.current=false;setWikiSubmitting(undefined);}
   };
   const submissionLock=useRef(new Set<string>());
@@ -245,7 +245,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small className="library-bibliography" title={[date,source.authors.join(', ')].filter(Boolean).join(' · ')}>{date&&<><time>{date}</time><span aria-hidden="true">·</span></>}<span>{source.authors.join(', ')||'作者信息未提供'}</span></small></span>
                   </button>
                   <div className="library-document-modules" aria-label="论文内容">
-                    {[['basic','基础信息',item?.hasBasic],['key','关键卡片',item?.hasKey],['detail','详细卡片',item?.hasDetail],['wiki','Wiki',item?.hasWiki]].map(([type,name,available])=><button type="button" key={String(type)} className={type==='wiki'?'wiki-entry-button':undefined} disabled={!available} title={available?String(name):'分析生成后可查看'} onClick={()=>setDocumentTarget({source,type:String(type)})}>{name}</button>)}
+                    {item?.hasWiki&&<button type="button" className="wiki-entry-button" onClick={()=>setDocumentTarget({source,type:'wiki'})}>Wiki</button>}
                   </div>
                   <div className="library-row-controls">
                     <div className="library-state">{item?.hasCards&&item?.hasWiki&&<button type="button" className="library-wiki-analyze" disabled={pending||Boolean(wikiSubmitting)||Boolean(deleting)} onClick={()=>void analyzeWiki(source)} title="仅更新 Wiki，复用已有卡片">{wikiPending||wikiSubmitting===source.source_id?<LoaderCircle size={13} className="spin"/>:<Sparkles size={13}/>}{wikiSubmitting===source.source_id?'提交中…':wikiPending?(item?.wiki_task?.status==='running'?'分析中':'排队中'):'分析 Wiki'}</button>}<span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
@@ -295,7 +295,7 @@ function RegenerateSourceDialog({source,busy,error,onClose,onConfirm}:{source:So
       <h2 id="literature-regenerate-title">重新分析这篇论文？</h2>
       <p id="literature-regenerate-description">将根据论文原文重新生成以下内容，已有版本会保留在历史记录中。</p>
       <div className="literature-regenerate-paper"><span>当前论文</span><strong>{source.title}</strong></div>
-      <div className="literature-regenerate-outputs"><span>基础信息</span><span>关键卡片</span><span>详细卡片</span><span>Wiki</span></div>
+      <div className="literature-regenerate-outputs"><span>IDcard</span><span>Wiki</span></div>
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       <footer><button type="button" data-cancel className="secondary-button" disabled={busy} onClick={onClose}>暂不生成</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}>{busy?<LoaderCircle size={15} className="spin"/>:<Sparkles size={15}/>}<span>{busy?'正在提交':'重新生成'}</span></button></footer>
     </div>

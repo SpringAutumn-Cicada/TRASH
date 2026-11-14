@@ -12,7 +12,7 @@ import './markdown-knowledge.css';
 import './wiki-reading.css';
 
 type Document={material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
-const tabs=[['basic','基础信息'],['key','关键卡片'],['detail','详细卡片'],['wiki','Wiki']];
+const tabs=[['wiki','Wiki']];
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved}:{projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
   const [type,setType]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
