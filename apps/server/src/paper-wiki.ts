@@ -4,7 +4,7 @@ import {knowledgeFiles} from './knowledge-base-migration.js';
 import {existsSync} from 'node:fs';
 import {join,posix} from 'node:path';
 
-export const paperWikiNames=['whoami.md','background.md','research_problem.md','contributions.md','method/method.md','results/results.md','limitations.md','insights.md','evidence.md'];
+export const paperWikiNames=['whoami.md','IDcard.md','background.md','research_problem.md','contributions.md','method/method.md','results/results.md','limitations.md','insights.md','evidence.md'];
 export const paperWikiPaths=(source:string)=>paperWikiNames.map(name=>`knowledge_base/papers/${source}/${name}`);
 export const paperCompatibility=(name:string)=>['IDcard.md','basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||name.startsWith('evidence/');
 export function paperWikiOutputPaths(output:string,source:string,required:string[]){
