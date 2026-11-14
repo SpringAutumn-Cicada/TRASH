@@ -12,7 +12,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
+interface SourceAnalysisState {source_id:string;hasHistoricalReading?:boolean;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -224,7 +224,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                 const activeTaskId=item?.task_id;
                 const fullPending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
                 const pending=fullPending;
-                const status=pending?(item?.status==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
+                const status=pending?(item?.status==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.hasHistoricalReading?'待生成新版 Wiki':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
                 const tone=pending?'active':item?.status==='failed'?'failed':item?.stale?'warning':item?.hasWiki?'done':'idle';
                 const retry=['failed','interrupted','cancelled'].includes(item?.status??'');
                 const label=submitting.includes(source.source_id)?'正在提交':pending?'查看进度':retry?(item?.can_resume?'继续分析':'重试分析'):item?.hasOutputs?'重新分析':'开始分析';

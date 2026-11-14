@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 // Only the known four-page image-and-text reader (prompt versions 6–8).
 // No old input.json, Wiki or card contents are read by this adapter.
 export function safeReadingFile(base:string,path:string):Buffer {
- const root=realpathSync(base),target=resolve(base,path),rel=relative(root,target);
+ const root=realpathSync(base),rel=relative(resolve(base),resolve(base,path)),target=resolve(root,rel);
  if(!rel||rel.startsWith('..'+sep)||isAbsolute(rel))throw new Error('UNSAFE_READING_PATH');
  let current=root;for(const part of rel.split(sep)){current=join(current,part);if(lstatSync(current).isSymbolicLink())throw new Error('UNSAFE_READING_PATH');}
  const info=lstatSync(target);if(!info.isFile()||info.size<1||info.size>1024*1024)throw new Error('INVALID_READING_FILE');
@@ -13,6 +13,7 @@ export function safeReadingFile(base:string,path:string):Buffer {
 }
 export function legacyPdfNotes(base:string,source:string,hash?:string,pageCount?:number){
  try{
+  base=realpathSync(base);
   const meta=JSON.parse(safeReadingFile(base,'metadata.json').toString());
   if(meta.adapter!=='codex-cli'||meta.skill!=='trash-literature-knowledge'||![6,7,8].includes(meta.prompt_version))return [];
   const skill=safeReadingFile(base,'literature-skill/SKILL.md').toString();

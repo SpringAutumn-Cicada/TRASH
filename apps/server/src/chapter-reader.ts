@@ -25,13 +25,15 @@ export async function readPaperChapters(options:{pdf:PdfReading;project:string;s
   // Bump input_mode whenever the reading prompt, renderer scale or extraction contract changes.
   const context=digest(JSON.stringify({id,pages,instructions:options.instructions,batch_size:batchSize,input_mode:'page-images-and-text-v2'}));let bytes:Buffer|undefined;let status:Batch['status']='reused-notes';let provenance:Batch['provenance'];
   for(const old of previous){try{const match=old.state.batches.find(item=>item.id===id&&item.context_hash===context&&JSON.stringify(item.pages)===JSON.stringify(pages));const data=match&&safeReadingFile(old.base,join(old.base,'readings',source,id+'.md'));if(match&&data&&digest(data)===match.note_hash){writeFileSync(file,data,{mode:0o600});bytes=data;break;}}catch{/* regenerate invalid checkpoints */}}
-  if(!bytes){const match=legacy.find(item=>JSON.stringify(item.pages)===JSON.stringify(pages));if(match){bytes=match.bytes;provenance=match.provenance;writeFileSync(file,bytes,{mode:0o600});}}
+  if(!bytes){const match=legacy.find(item=>JSON.stringify(item.pages)===JSON.stringify(pages));if(match){bytes=match.bytes;provenance=match.provenance;writeFileSync(file,match.bytes,{mode:0o600});}}
+  if(provenance)event(`复用旧版笔记：第 ${pages[0]}–${pages.at(-1)} 页（来源任务 ${provenance.task_id}）`);
+  if(!bytes)event(`第 ${pages[0]}–${pages.at(-1)} 页笔记缺失或校验不合格，重新阅读`);
   if(!bytes){const text=pages.map(page=>`PDF第${page}页（原文页标 ${doc.pages[page-1].label}）：\n${doc.pages[page-1].text||'无文字层，必须根据页面图像阅读。'}`).join('\n\n');const images=[];for(const page of pages)images.push((await pdf.page(project,source,page,2200,doc)).path);await run(`直接分析本批次 PDF 第 ${pages[0]}-${pages.at(-1)} 页。固定四页批次，不做章节规划，不生成章节计划，不提前生成最终 Wiki。${common}\n附图按 PDF 页序 ${pages.join(',')} 排列，必须查看全部附图并结合以下逐页文字；文字层可能存在顺序或字符错误，以页面图像核对公式、图表和版面。区分 PDF 页序与原文页标，不静默截断文字，保持跨页上下文连续；识别正文、图表、表格、公式、页眉页脚并区分。将分析笔记写到 ${file}，保留关键事实、数字、图表/公式说明、原文页码、未确定内容和与前后批次衔接所需术语。\n\n${text}`,images);bytes=readNote(file);status='notes-produced';}
   state.batches.push({id,pages,context_hash:provenance?undefined:context,provenance,note_hash:digest(bytes),status});persist();event(`PDF ${status==='reused-notes'?'复用':'完成'}第 ${pages[0]}-${pages.at(-1)} 页批次笔记（${i+1}/${batches.length}）`);
  }
  const summaryFiles=batches.map((_,i)=>join(root,`batch-${String(i+1).padStart(3,'0')}.md`));
  save(join(directory,'pdf-reading.json'),{reading_version:1,status:'fixed-batches-noted',source_id:source,hash:doc.hash,batch_size:batchSize,batches:summaryFiles,note:'固定四页图文直接分析；全部批次笔记直接用于生成Wiki，不单独生成整篇认识'});
- event(`PDF 阅读完成：${doc.pages.length} 页，${batches.length} 个固定批次`);
+ event(`已完成阅读 ${doc.pages.length}/${doc.pages.length} 页，开始生成 Wiki`);
  event('PDF 进入Wiki生成：综合全部批次笔记，统一术语、实验条件与依据后直接组织知识页');
  return {summaries:summaryFiles,hash:doc.hash};
 }
