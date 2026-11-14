@@ -282,7 +282,7 @@ function RegenerateSourceDialog({source,busy,error,onClose,onConfirm}:{source:So
     }}>
       <header><span className="literature-regenerate-icon"><Sparkles size={22}/></span><button type="button" className="icon-button" aria-label="关闭重新分析确认" disabled={busy} onClick={onClose}><X size={18}/></button></header>
       <h2 id="literature-regenerate-title">重新分析这篇论文？</h2>
-      <p id="literature-regenerate-description">PDF及阅读流程、分析要求未变且笔记校验合格时，将复用批次笔记直接生成Wiki；否则重新阅读。已有版本保留在历史记录中。</p>
+      <p id="literature-regenerate-description">PDF及阅读流程、分析要求未变且笔记校验合格时，将复用批次笔记直接生成Wiki；否则重新阅读。本次从原始依据重新生成，已有版本及人工修改保留在历史记录中；运行期间的修改不会被静默覆盖。</p>
       <div className="literature-regenerate-paper"><span>当前论文</span><strong>{source.title}</strong></div>
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       <footer><button type="button" data-cancel className="secondary-button" disabled={busy} onClick={onClose}>暂不生成</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}>{busy?<LoaderCircle size={15} className="spin"/>:<Sparkles size={15}/>}<span>{busy?'正在提交':'重新生成'}</span></button></footer>

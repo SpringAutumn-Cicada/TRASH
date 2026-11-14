@@ -161,7 +161,8 @@ export class KnowledgeAgent implements TaskRunner {
     if(task.status!=='running'||this.closed)throw new Error('PDF 全文阅读已取消或中断');
   }
   private restoreDrafts(task:KnowledgeTask,output:string,paths:string[]) {
-    const fields=['abstract_expected','sources','dependencies','expectedTargets','bibliography_baselines','skill_hash'];
+    if(!task.attempt_of)return; // A fresh reanalysis only reuses PDF readings, never Wiki drafts.
+    const fields=['prompt_version','abstract_expected','sources','dependencies','expectedTargets','bibliography_baselines','skill_hash'];
     for(const prior of this.readingAttempts(task)){
       if(prior.input.kind!==task.input.kind||prior.input.include_source_wiki!==task.input.include_source_wiki)continue;
       const old=prior.snapshot as Record<string,unknown>, current=task.snapshot as Record<string,unknown>;
@@ -282,11 +283,13 @@ export class KnowledgeAgent implements TaskRunner {
       prompt+='\n知识库统一使用 knowledge_base/。本次准确输出清单（优先于上文任何旧路径示例）：'+paths.map(path=>path+'，稳定ID='+knowledgeDocumentId(path)).join('；')+'。frontmatter id 使用此稳定ID，不使用 basic/key/detail/memory 这样的文件短名。所有相对链接根据实际新目录计算，引用 input.json 的真实 path。仅摘要文件仍按摘要规范，不添加全文frontmatter。';
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
+      if(fulltextGeneration)writeFileSync(join(directory,'input.json'),JSON.stringify({...(modelInput as Record<string,unknown>),readings:readingResults},null,2),{mode:0o600});
       if(readingResults.length)prompt+='\n先完整读取本次全部固定四页批次笔记：'+JSON.stringify(readingResults)+'。在本次生成中综合全文，统一术语、实验条件和跨批次依据，再直接生成Wiki组；不单独生成paper-understanding.md，不额外调用整篇汇总。不要只读压缩摘要丢掉机制、数字或条件。依据页使用这些真实原文定位。已生成笔记不代表全部图表已核验。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终知识');
       this.restoreDrafts(task,output,paths);
+      if(fulltextGeneration)this.knowledge.event(task.task_id,task.attempt_of?'文档生成：继续本次失败链，仅恢复版本与规则匹配的合格草稿':'文档生成：重新分析从空输出开始，历史Wiki不作为输入；PDF笔记独立核验复用');
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
         writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues},null,2),{mode:0o600});
