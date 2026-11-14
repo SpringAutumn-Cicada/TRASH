@@ -115,6 +115,9 @@ export class KnowledgeAgent implements TaskRunner {
     }
     return result;
   }
+  private legacyReadingAttempts(task:KnowledgeTask):KnowledgeTask[]{
+    return this.knowledge.tasks(task.project_id).filter(prior=>prior.task_id!==task.task_id&&prior.project_id===task.project_id&&prior.created_at<task.created_at&&!prior.input.abstract_mode&&prior.input.include_source_wiki&&prior.input.source_ids.length===1&&prior.input.source_ids[0]===task.input.source_ids[0]&&prior.input.instructions===task.input.instructions).sort((a,b)=>b.created_at.localeCompare(a.created_at));
+  }
   resumable(task:KnowledgeTask):boolean {
     if(!['failed','interrupted','cancelled'].includes(task.status))return false;
     const candidate={...task,attempt_of:task.task_id,snapshot:{...(task.snapshot as Record<string,unknown>),skill_hash:createHash('sha256').update(skillText()).digest('hex')}};
@@ -275,6 +278,7 @@ export class KnowledgeAgent implements TaskRunner {
           try{new PdfReading(this.store).original(projectId,material.source.source_id);}catch{continue;}
         }
         readingResults.push(await readPaperChapters({pdf:new PdfReading(this.store),project:projectId,source:material.source.source_id,directory,
+          legacyDirectories:this.legacyReadingAttempts(task).map(prior=>projectRuntime(this.store.root,projectId,'tasks',prior.task_id)),
           previousDirectories:this.readingAttempts(task,true).map(prior=>projectRuntime(this.store.root,projectId,'tasks',prior.task_id)),instructions:task.input.instructions,deadline,
           active:()=>!this.closed&&this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status==='running',
           event:text=>this.knowledge.event(task.task_id,text),read:(text,images,timeout)=>this.readBatch(task,text,images,directory,timeout)}));
