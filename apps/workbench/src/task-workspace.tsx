@@ -13,7 +13,9 @@ const taskType=(task:TaskItem)=>task.input.abstract_mode?'摘要分析':task.inp
 const progressEvent=(event:TaskEvent,error?:string)=>/^(连接状态：|模型调用失败：|PDF |阅读 PDF 第 |复用已完成批次 |启动本机 |Markdown 已发布：|用户取消任务|卡片生成：|文档生成：|输出校验：|自动补救|恢复合格草稿：|发布阶段：|全部目标草稿)/.test(event.message)||Boolean(error&&event.message===error);
 function generationMessage(message:string){
  const old=message.match(/^卡片生成：待生成 (\d+)\/(\d+) 份；已恢复 (\d+) 份草稿$/);
- return old?`文档生成：目标共 ${old[2]} 份，待生成 ${old[1]} 份，已恢复 ${old[3]} 份合格草稿（非完成进度）`:message;
+ if(old)return `文档生成：已就绪 ${old[3]}/${old[2]} 份（已恢复合格草稿，尚未发布）`;
+ const previous=message.match(/^文档生成：目标共 (\d+) 份，待生成 (\d+) 份，已恢复 (\d+) 份合格草稿（非完成进度）$/);
+ return previous?`文档生成：已就绪 ${previous[3]}/${previous[1]} 份（已恢复合格草稿，尚未发布）`:message;
 }
 function progressSummary(message:string|undefined){
  if(!message)return undefined;
