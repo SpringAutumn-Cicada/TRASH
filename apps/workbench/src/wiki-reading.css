@@ -28,3 +28,5 @@
 .literature-workspace .library-row .library-document-modules button.wiki-entry-button:disabled,
 .literature-workspace .abstract-items .abstract-row-state button.wiki-entry-button:disabled{opacity:.42;cursor:not-allowed;color:var(--muted);border-color:var(--line);background:var(--surface)}
 @media(max-width:700px){.library-document-dialog.wiki-reading-surface,.abstract-dialog-backdrop>.abstract-reader.wiki-reading-surface{max-height:86dvh;border-radius:13px}}
+
+[data-wiki-anchor]{scroll-margin-top:18px}

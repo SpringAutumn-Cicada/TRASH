@@ -161,7 +161,8 @@ export class KnowledgeAgent implements TaskRunner {
       if(fields.some(key=>JSON.stringify(old[key])!==JSON.stringify(current[key])))continue;
       const oldOutput=join(projectRuntime(this.store.root,task.project_id,'tasks',prior.task_id),'output');
       if(!existsSync(oldOutput))continue;
-      const checked=this.inspectOutputs(task,oldOutput,paths);
+      const draftPaths=!task.input.abstract_mode&&(task.input.include_source_wiki||task.input.wiki_level==='single')?paperWikiOutputPaths(oldOutput,task.input.source_ids[0],paths):paths;
+      const checked=this.inspectOutputs(task,oldOutput,draftPaths);
       let recorded:Record<string,string>|undefined;
       try{const check=JSON.parse(readFileSync(join(oldOutput,'..','output-check.json'),'utf8')) as {valid:{path:string;hash:string}[]};recorded=Object.fromEntries(check.valid.map(file=>[file.path,file.hash]));}catch{/* Legacy drafts are independently validated. */}
       for(const draft of checked.valid){
@@ -265,8 +266,9 @@ export class KnowledgeAgent implements TaskRunner {
       if(readingResults.length)prompt+='\n先读取本次全部结构计划、整篇认识和章节笔记：'+JSON.stringify(readingResults)+'。必要时回读readings中的块笔记；不要只读压缩摘要丢掉机制、数字或条件。依据页使用这些真实原文定位。已生成笔记不代表全部图表已核验。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
-      if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终卡片');
+      if(Date.now()>=deadline)throw new Error('全文阅读超时；章节笔记已保留，未发布最终知识');
       this.restoreDrafts(task,output,paths);
+      if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
         writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues},null,2),{mode:0o600});
       };
@@ -286,6 +288,8 @@ export class KnowledgeAgent implements TaskRunner {
         try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
       };
+      const phase=(name:string,title:string)=>{const path=join(directory,'reading-progress.json');if(existsSync(path)){const current=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...current,phase:name,title,updated_at:new Date().toISOString()}),{mode:0o600});}};
+      phase('wiki-generation','生成新版知识页与统一依据');
       let checked=this.inspectOutputs(task,output,paths);
       // Pre-existing published files are reference material, not newly completed drafts.
       const preserved=checked.valid.filter(file=>snapshot.documents?.find(doc=>doc.path===file.path)?.text!==file.text);
@@ -301,6 +305,7 @@ export class KnowledgeAgent implements TaskRunner {
         this.knowledge.event(task.task_id,`卡片生成：待生成 ${needed.length}/${paths.length} 份；已恢复 ${preserved.length} 份草稿`);
         await runGeneration(prompt+`\n本次只生成或修复以下 output/ 相对路径：${needed.join('、')}。其余已合格文件禁止修改。每份必须落盘，不以最终回复替代文件。单文件硬上限1048576字节，不嵌入图片base64，不复制整篇原文。`,preserved);
       }else this.knowledge.event(task.task_id,'全部目标草稿已恢复；无需再次调用模型生成');
+      phase('validation','校验知识页、导航与依据锚点');
       this.knowledge.event(task.task_id,'输出校验：逐项检查 Markdown 文件、大小、格式与来源');
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid));saveCheck(checked);
@@ -321,6 +326,7 @@ export class KnowledgeAgent implements TaskRunner {
       for(const ref of snapshot.dependencies??[]){const current=markdown.index(projectId).documents.find(d=>d.id===ref.id);if(!current||current.hash!==ref.hash)throw new Error('来源内容已变化，保留工作副本，请重新综合');}
       for(const result of readingResults)if(new PdfReading(this.store).original(projectId,source).hash!==result.hash)throw new Error('论文PDF已变化，保留工作副本，请重新分析');
       for(const [id,baseline] of Object.entries(snapshot.bibliography_baselines??{}))if(sourceContentHash(this.store.getSource(id))!==baseline.content_hash)throw new Error('论文原始内容已变化，保留工作副本，请重新分析');
+      phase('publishing','核对版本并整组发布');
       this.knowledge.event(task.task_id,'发布阶段：全部输出校验合格，核对版本后整组发布');
       if(task.input.abstract_mode){
         if(task.input.abstract_wiki_only){
@@ -354,6 +360,7 @@ export class KnowledgeAgent implements TaskRunner {
       }
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);
       for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.id!==record.id&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash}))],true);
+      phase('completed','新版论文知识已发布');
       task.status="completed";task.output_id=(paperBundle?records.find(record=>record.path===`knowledge_base/papers/${source}/whoami.md`):undefined)?.id??records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${records.map(record=>record.path).join('、')}`);
 
     }catch(error){if(task.status==="running" && !this.closed){task.status="failed";task.error=redact(error instanceof Error?error.message:"任务失败");this.knowledge.saveTask(task);this.knowledge.event(task.task_id,task.error);}}

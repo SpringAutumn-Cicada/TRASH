@@ -1,6 +1,6 @@
 ---
 name: trash-literature-knowledge
-description: 在 TRASH 论文项目中阅读论文并生成基本信息（含源码）、详细卡片和关键信息卡片，或增量整合文献主题、维护关联并形成面向 Agent 的精简研究记忆；直接写 Markdown 文件，不提交正文 JSON。不用于编造实验或修改论文原文。
+description: 在 TRASH 论文项目中按章节图文阅读生成论文身份、背景、问题、方法、结果、认识与统一依据 Wiki，兼容旧卡片任务，或增量整合主题与维护关联；直接写 Markdown 文件，不提交正文 JSON。不用于编造实验或修改论文原文。
 ---
 
 # TRASH 文献知识

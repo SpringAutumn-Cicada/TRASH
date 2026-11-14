@@ -17,6 +17,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
   const [type,setType]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
   const [loading,setLoading]=useState(true),[directoryLoaded,setDirectoryLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[editing,setEditing]=useState(false),[draft,setDraft]=useState('');
+  const [fragment,setFragment]=useState('');
   const [history,setHistory]=useState<{hash:string;text:string}[]>(),[reload,setReload]=useState(0);
   const root=useRef<HTMLDivElement>(null),acting=useRef(false);
   const dirty=editing&&draft!==doc?.text;useUnsavedChanges(dirty);
@@ -35,12 +36,13 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       }catch(e){if(active){setLoading(false);setDirectoryLoaded(true);setError(uiError(e,'无法读取文档目录。'));}}
     })();return()=>{active=false;};
   },[base,reload]);
-  const selected=linked||(type==='wiki'&&source?documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/index.md`)?.id:undefined)||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
+  const selected=linked||(type==='wiki'&&source?(documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/whoami.md`)??documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/index.md`))?.id:undefined)||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
   useEffect(()=>{
     let active=true;setDoc(undefined);setEditing(false);setHistory(undefined);setError('');setLoading(Boolean(selected));
     if(selected)void api<{document:Document}>(base+'/document?id='+encodeURIComponent(selected)).then(data=>{if(active){setDoc(data.document);setDraft(data.document.text);}}).catch(e=>{if(active)setError(uiError(e,'无法读取文档。'));}).finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
   },[base,selected,reload]);
+  useEffect(()=>{if(!loading&&fragment){const frame=requestAnimationFrame(()=>{Array.from(root.current?.querySelectorAll<HTMLElement>('[data-wiki-anchor]')??[]).find(node=>node.dataset.wikiAnchor===decodeURIComponent(fragment))?.scrollIntoView({block:'start'});});return()=>cancelAnimationFrame(frame);}},[doc?.id,loading,fragment]);
   const change=(next:string)=>{if(busy||dirty&&!window.confirm('放弃未保存的修改？'))return;setLinked('');setType(next);};
   const run=async(fn:()=>Promise<void>)=>{if(acting.current)return;acting.current=true;setBusy(true);setError('');try{await fn();}catch(e){setError(uiError(e,'操作失败，当前草稿已保留。'));}finally{acting.current=false;setBusy(false);}};
   return <ModalLayer><div className="modal-backdrop library-document-backdrop" onClick={event=>{if(event.currentTarget===event.target)close();}}>
@@ -55,10 +57,10 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
         {(loading||!directoryLoaded)?<p role="status"><LoaderCircle className="spin" size={16}/> 正在读取内容…</p>:doc?<>
           {linked&&<p>关联文档：{doc.title}</p>}{doc.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}
           {editing?<><p className="mk-form-note">保留顶部标识与固定字段。保存基础信息后，文献库会同步可确认的标题、作者与发表年月。</p><textarea className="mk-editor" aria-label="编辑 Markdown" value={draft} onChange={event=>setDraft(event.target.value)}/></>:<div className={`mk-body ${doc.kind==='wiki-page'?'wiki-reading-content':''}`} onClick={event=>{
-            const anchor=(event.target as HTMLElement).closest('a');const href=anchor?.getAttribute('href');if(!href||/^(https?:|#)/i.test(href))return;
+            const anchor=(event.target as HTMLElement).closest('a');const href=anchor?.getAttribute('href');if(!href||/^https?:/i.test(href))return;
             event.preventDefault();const url=new URL(href,'https://knowledge.local/'+doc.path);
             if(url.pathname.startsWith(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/`)&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
-            const path=url.pathname.slice(1),original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);if(original){setLinked('abstract-material-'+original[1]);return;}const next=documents.find(d=>d.path===path||d.id===knowledgeDocumentId(path));if(next){setLinked(next.id);setHistory(undefined);}else setError('关联文档尚未生成或无法查看。');
+            const path=url.pathname.slice(1),original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);if(original){setLinked('abstract-material-'+original[1]);return;}const next=documents.find(d=>d.path===path||d.id===knowledgeDocumentId(path));if(next){setFragment(url.hash.slice(1));setLinked(next.id);setHistory(undefined);}else setError('关联文档尚未生成或无法查看。');
           }}><ChatMarkdown text={doc.kind==='wiki-page'&&doc.level==='single'?doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/^#\s+.+$/m,()=>`# ${doc.title}`):doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')} allowRelativeLinks/></div>}
           {!editing&&!doc.id.startsWith('abstract-material-')&&<KnowledgeRelations projectId={projectId} id={doc.id} hash={doc.hash} onOpen={id=>{setLinked(id);setHistory(undefined);}}/>}
           {history&&<section className="library-document-history"><h4>版本历史</h4>{history.length?history.map(version=><details key={version.hash}><summary>快照 {version.hash.slice(0,10)}</summary><pre>{version.text}</pre></details>):<p>暂无历史版本。</p>}</section>}

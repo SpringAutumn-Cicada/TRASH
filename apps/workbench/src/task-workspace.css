@@ -55,3 +55,5 @@ html:has(.task-workspace)::-webkit-scrollbar-button{display:none;width:0;height:
 .task-actions .task-delete-button{display:inline-flex;align-items:center;gap:5px;background:transparent;border:1px solid color-mix(in srgb,#c13d3d 30%,var(--line));border-radius:6px;color:#c13d3d;cursor:pointer}
 .task-actions .task-delete-button:hover:not(:disabled){background:color-mix(in srgb,#dc4545 8%,var(--surface));border-color:#c13d3d}
 #modal-root .task-delete-confirm{background:#bf3535;border-color:#bf3535;color:#fff}
+
+.task-reading details{margin-top:8px;font-size:11px}.task-reading details>summary{cursor:pointer;color:var(--muted)}.task-reading details p{line-height:1.7;overflow-wrap:anywhere}.task-section-plan{max-height:240px;overflow:auto;line-height:1.8;margin-top:10px}.task-section-plan small{display:inline;color:var(--muted)}

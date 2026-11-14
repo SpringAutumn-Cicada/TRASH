@@ -10,10 +10,19 @@ export function taskSummary(store:TrashStore,task:KnowledgeTask){
  const source=task.input.kind==='literature-card'?store.getSource(task.input.source_ids[0]):undefined;
  const latest=store.db.prepare('SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(task.task_id) as {seq:number;at:string;message:string}|undefined;
  const started=store.db.prepare("SELECT at FROM knowledge_task_events WHERE task_id=? AND message LIKE 'Agent 版本：%' ORDER BY seq LIMIT 1").get(task.task_id) as {at:string}|undefined;
+ let chapterTitle:string|undefined;try{if(active(task.status))chapterTitle=JSON.parse(readFileSync(projectRuntime(store.root,task.project_id,'tasks',task.task_id,'reading-progress.json'),'utf8')).title;}catch{/* Legacy task. */}
  const latestProgress=store.db.prepare("SELECT at,message FROM knowledge_task_events WHERE task_id=? AND (message LIKE 'PDF %' OR message LIKE '复用已完成批次 %' OR message LIKE '启动本机 %' OR message LIKE 'Markdown 已发布：%') ORDER BY seq DESC LIMIT 1").get(task.task_id) as {at:string;message:string}|undefined;
- return {task_id:task.task_id,title:source?.title??task.input.title,input:{abstract_mode:task.input.abstract_mode,kind:task.input.kind,title:task.input.title,source_ids:task.input.source_ids,include_source_wiki:task.input.include_source_wiki,wiki_level:task.input.wiki_level},status:task.status,error:task.error,output_id:task.output_id,created_at:task.created_at,started_at:started?.at,attempt_of:task.attempt_of,last_at:latest?.at,last_seq:latest?.seq??0,progress:latestProgress?.message};
+ return {task_id:task.task_id,title:source?.title??task.input.title,input:{abstract_mode:task.input.abstract_mode,kind:task.input.kind,title:task.input.title,source_ids:task.input.source_ids,include_source_wiki:task.input.include_source_wiki,wiki_level:task.input.wiki_level},status:task.status,error:task.error,output_id:task.output_id,created_at:task.created_at,started_at:started?.at,attempt_of:task.attempt_of,last_at:latest?.at,last_seq:latest?.seq??0,progress:chapterTitle??latestProgress?.message};
 }
 export function taskReadingProgress(store:TrashStore,task:KnowledgeTask){
+ try{
+  const directory=projectRuntime(store.root,task.project_id,'tasks',task.task_id);
+  const progress=JSON.parse(readFileSync(projectRuntime(store.root,task.project_id,'tasks',task.task_id,'reading-progress.json'),'utf8')) as {phase:string;title:string;warnings?:string[]};
+  const source=task.input.source_ids[0];if(!source)return undefined;
+  const plan=JSON.parse(readFileSync(directory+'/readings/'+source+'/plan.json','utf8')) as {sections:{id:string;title:string;level:number;confidence:number;reason:string;parent?:string}[];blocks:{id:string;chapter:string;pages:number[];mode:string;warnings:string[]}[];warnings:string[]};
+  let completedIds:string[]=[];try{completedIds=JSON.parse(readFileSync(directory+'/readings/'+source+'/state.json','utf8')).blocks.map((block:{id:string})=>block.id);}catch{/* Planning has not written notes. */}
+  return {unit:'blocks',total:plan.blocks.length,completed:completedIds.length,phase:progress.phase,title:progress.title,warnings:[...new Set([...(plan.warnings??[]),...(progress.warnings??[])])],sections:plan.sections,blocks:plan.blocks.map(block=>({id:block.id,title:plan.sections.find(section=>section.id===block.chapter)?.title,pages:block.pages,mode:block.mode,warnings:block.warnings,completed:completedIds.includes(block.id)}))};
+ }catch{/* Legacy page batches or planning has not completed. */}
  try{
   const saved=JSON.parse(readFileSync(projectRuntime(store.root,task.project_id,'tasks',task.task_id,'pdf-reading.json'),'utf8')) as {sources:{pageCount?:number;batches:{pages:number[];status:string}[]}[]};
   return {total:saved.sources.reduce((n,s)=>n+(s.pageCount??0),0),completed:saved.sources.reduce((n,s)=>n+new Set(s.batches.filter(b=>['notes-produced','reused-notes'].includes(b.status)).flatMap(b=>b.pages)).size,0)};

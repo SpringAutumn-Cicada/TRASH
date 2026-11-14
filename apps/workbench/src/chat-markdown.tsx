@@ -24,7 +24,7 @@ export function ChatMarkdown({text,allowRelativeLinks=false}:{text:string;allowR
     const fence=line.match(/^\s*(`{3,}|~{3,})(.*)$/);
     if(fence){const language=fence[2].trim(),body:string[]=[];i++;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))body.push(lines[i++]);if(i<lines.length)i++;blocks.push(<CodeBlock key={blocks.length} language={language} body={body.join('\n')}/>);continue;}
     const heading=line.match(/^(#{1,6})\s+(.+)$/);
-    if(heading){const Tag=(`h${Math.min(heading[1].length+1,6)}`) as 'h2'|'h3'|'h4'|'h5'|'h6';blocks.push(<Tag key={blocks.length}>{renderInline(heading[2])}</Tag>);i++;continue;}
+    if(heading){const Tag=(`h${Math.min(heading[1].length+1,6)}`) as 'h2'|'h3'|'h4'|'h5'|'h6';blocks.push(<Tag key={blocks.length} data-wiki-anchor={allowRelativeLinks?heading[2].trim().toLowerCase().replace(/\s+/g,'-'):undefined}>{renderInline(heading[2])}</Tag>);i++;continue;}
     if(/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)){blocks.push(<hr key={blocks.length}/>);i++;continue;}
     if(line.startsWith('>')){const quote:string[]=[];while(i<lines.length&&lines[i].startsWith('>'))quote.push(lines[i++].replace(/^>\s?/,''));blocks.push(<blockquote key={blocks.length}>{renderInline(quote.join('\n'))}</blockquote>);continue;}
     if(/^\s*[-*+]\s+/.test(line)||/^\s*\d+[.)]\s+/.test(line)){

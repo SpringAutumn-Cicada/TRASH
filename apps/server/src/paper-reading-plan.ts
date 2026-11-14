@@ -3,7 +3,7 @@ import type {inspectPdf,PdfLayoutLine} from '@trash/literature';
 export const readingPlanVersion=2;
 export type ReadingUnit={id:string;page:number;text:string;lines:string[];region:{x:number;y:number;width:number;height:number};kind:'paragraph'|'heading'|'visual';section:string};
 export type PaperSection={id:string;title:string;level:number;parent?:string;children:string[];units:string[];confidence:number;reason:string};
-export type ReadingBlock={id:string;chapter:string;sections:string[];units:string[];pages:number[];characters:number;mode:'section'|'paragraph-fallback'|'visual-fallback';warnings:string[]};
+export type ReadingBlock={id:string;chapter:string;sections:string[];units:string[];pages:number[];characters:number;mode:'section'|'subsections'|'paragraph-fallback'|'visual-fallback';warnings:string[]};
 export type PaperReadingPlan={version:number;hash:string;pdf_hash:string;budget:{characters:number;pages:number};sections:PaperSection[];units:ReadingUnit[];blocks:ReadingBlock[];excluded:{id:string;reason:string}[];warnings:string[]};
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function planPaperReading(doc:Awaited<ReturnType<typeof inspectPdf>>,pdfHash:string,budget={characters:14000,pages:8}):PaperReadingPlan{
@@ -47,10 +47,14 @@ export function planPaperReading(doc:Awaited<ReturnType<typeof inspectPdf>>,pdfH
  }
  const byUnit=new Map(units.map(u=>[u.id,u]));const order=new Map(units.map((u,i)=>[u.id,i]));
  const subtree=(s:PaperSection):string[]=>[...s.units,...s.children.flatMap(id=>subtree(sections.find(n=>n.id===id)!))].sort((a,b)=>order.get(a)!-order.get(b)!);
- const fits=(ids:string[])=>ids.reduce((n,id)=>n+byUnit.get(id)!.text.length,0)<=budget.characters&&new Set(ids.map(id=>byUnit.get(id)!.page)).size<=budget.pages;
+ const fits=(ids:string[])=>{const pages=new Set(ids.map(id=>byUnit.get(id)!.page));const visualReserve=pages.size*600+ids.filter(id=>/^(?:fig(?:ure)?|table|图|表)\s*\d/i.test(byUnit.get(id)!.text)).length*300;return ids.reduce((n,id)=>n+byUnit.get(id)!.text.length,0)+visualReserve<=budget.characters&&pages.size<=budget.pages;};
  const chapter=(s:PaperSection):string=>s.parent?chapter(sections.find(n=>n.id===s.parent)!):s.id;
  const blocks:ReadingBlock[]=[];
- const add=(ids:string[],s:PaperSection,fallback:boolean)=>{if(!ids.length)return;const own=ids.map(id=>byUnit.get(id)!);const visual=own.some(u=>u.kind==='visual');blocks.push({id:'block-'+hash({pdfHash,ids,version:readingPlanVersion,budget}).slice(0,20),chapter:chapter(s),sections:[...new Set(own.map(u=>u.section))],units:ids,pages:[...new Set(own.map(u=>u.page))],characters:own.reduce((n,u)=>n+u.text.length,0),mode:visual?'visual-fallback':fallback||!headings.size?'paragraph-fallback':'section',warnings:[...(fallback?['章节超预算，按完整段落/页面内容拆分；承接前序定义']:[]),...(visual?['无文字页使用完整图像；图文范围需核对']:[])]});};
+ const add=(ids:string[],s:PaperSection,divided:boolean)=>{
+  if(!ids.length)return;const own=ids.map(id=>byUnit.get(id)!);const visual=own.some(u=>u.kind==='visual');const member=new Set(ids);
+  const partial=sections.some(section=>section.units.some(id=>member.has(id))&&section.units.some(id=>!member.has(id)));
+  blocks.push({id:'block-'+hash({pdfHash,ids,version:readingPlanVersion,budget}).slice(0,20),chapter:chapter(s),sections:[...new Set(own.map(u=>u.section))],units:ids,pages:[...new Set(own.map(u=>u.page))],characters:own.reduce((n,u)=>n+u.text.length,0),mode:visual?'visual-fallback':partial||!headings.size?'paragraph-fallback':divided?'subsections':'section',warnings:[...(partial?['章节内按完整段落拆分；承接前序定义']:[]),...(divided&&!partial?['长章节按连续完整子节组合']:[]),...(visual?['无文字页使用完整图像；图文范围需核对']:[])]});
+ };
  const split=(s:PaperSection):string[][]=>{const all=subtree(s);if(fits(all))return all.length?[all]:[];
   const pieces=[...s.units.map(id=>[id]),...s.children.flatMap(id=>split(sections.find(n=>n.id===id)!))];
   const out:string[][]=[];let group:string[]=[];for(const piece of pieces){if(group.length&&!fits([...group,...piece])){out.push(group);group=[];}group.push(...piece);if(!fits(group)){out.push(group);group=[];}}if(group.length)out.push(group);return out;
