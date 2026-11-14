@@ -60,6 +60,10 @@ export function planPaperReading(doc:Awaited<ReturnType<typeof inspectPdf>>,pdfH
   const out:string[][]=[];let group:string[]=[];for(const piece of pieces){if(group.length&&!fits([...group,...piece])){out.push(group);group=[];}group.push(...piece);if(!fits(group)){out.push(group);group=[];}}if(group.length)out.push(group);return out;
  };
  for(const section of sections.filter(s=>!s.parent))for(const ids of split(section))add(ids,section,!fits(subtree(section)));
+ // Stable fallback: analysis batches are fixed four-page windows; chapter metadata remains available for Wiki context.
+ const rootSection=(sectionId:string)=>{let current=sections.find(s=>s.id===sectionId);while(current?.parent)current=sections.find(s=>s.id===current!.parent);return current?.id??'front';};
+ const fixedBlocks:ReadingBlock[]=[];for(let start=1;start<=doc.pageCount;start+=4){const end=Math.min(doc.pageCount,start+3);const ids=units.filter(u=>u.page>=start&&u.page<=end).map(u=>u.id);if(!ids.length)continue;const own=ids.map(id=>byUnit.get(id)!);fixedBlocks.push({id:'block-'+hash({pdfHash,start,end,version:readingPlanVersion,budget}).slice(0,20),chapter:rootSection(own[0].section),sections:[...new Set(own.map(u=>u.section))],units:ids,pages:[...new Set(own.map(u=>u.page))],characters:own.reduce((n,u)=>n+u.text.length,0),mode:'section',warnings:['固定四页批次；章节标题仅作上下文，不作为硬边界']});}
+ blocks.length=0;blocks.push(...fixedBlocks);
  for(const block of blocks)if(!fits(block.units))block.warnings.push('单个完整段落仍超预算；保留原段，不截断，需提高预算或人工调整');
  const coverage=blocks.flatMap(b=>b.units);if(coverage.length!==units.length||new Set(coverage).size!==units.length)throw new Error('PDF_READING_COVERAGE_INVALID');
  const plan={version:readingPlanVersion,pdf_hash:pdfHash,budget,sections,units,blocks,excluded,warnings};return {...plan,hash:hash(plan)};
