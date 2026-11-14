@@ -24,7 +24,7 @@ export function knowledgeLinks(path:string,text:string):KnowledgeLink[] {
       const relation=evidence?'依据':prefix.match(/^(支持|限制|对比|分歧|扩展|验证|相关|导航|前置|总结|上级)\s*[:：]/)?.[1]??'相关';
       const next=lines[i+1]??'';
       const reason=(clean.replace(match[0],match[1]).replace(/^\s*[-*+]\s*/,'')+(next.match(/^\s{2,}\S/)?' '+next.trim():'')).trim().slice(0,360);
-      if(!links.some(link=>link.path===target&&link.relation===relation&&link.reason===reason))links.push({path:target,fragment:match[2].split('#')[1],label:match[1],relation,reason,evidence});
+      if(!links.some(link=>link.path===target&&link.fragment===match[2].split('#')[1]&&link.relation===relation&&link.reason===reason))links.push({path:target,fragment:match[2].split('#')[1],label:match[1],relation,reason,evidence});
     }
   }
   return links;

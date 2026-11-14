@@ -1,3 +1,4 @@
+import {resolveKnowledgeLink} from './knowledge-links.js';
 import {knowledgeDocumentId,knowledgeBasePath} from '@trash/protocol';
 import {knowledgeFiles} from './knowledge-base-migration.js';
 import {existsSync} from 'node:fs';
@@ -15,6 +16,10 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
  const prefix=`knowledge_base/papers/${source}/`;const byPath=new Map(files.map(file=>[file.path,file.text]));
  const issues:{path:string;reason:string;unsafe:boolean}[]=[];
  const issue=(path:string,reason:string)=>issues.push({path,reason,unsafe:false});
+ const graph=new Map<string,string[]>();
+ for(const file of files){const links=[...file.text.replace(/```[\s\S]*?```/g,'').matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].flatMap(match=>{const target=resolveKnowledgeLink(file.path,match[1]);if(!target)return [];if(!target.startsWith(prefix)||!byPath.has(target))issue(file.path,'知识导航仅引用本篇实际输出的知识页：'+match[1]);return [target];});graph.set(file.path,links);}
+ const reachable=new Set([prefix+'whoami.md']);let changed=true;while(changed){changed=false;for(const path of [...reachable])for(const target of graph.get(path)??[])if(!reachable.has(target)){reachable.add(target);changed=true;}}
+ for(const file of files)if(!reachable.has(file.path))issue(prefix+'whoami.md','该知识页未被论文导航或子目录覆盖：'+file.path.slice(prefix.length));
  const evidence=byPath.get(prefix+'evidence.md');const anchors=evidence?[...evidence.matchAll(/^##\s+(ev-[a-z0-9][a-z0-9_-]*)\s*$/gm)].map(match=>match[1]):[];
  if(evidence&&(!anchors.length||new Set(anchors).size!==anchors.length))issue(prefix+'evidence.md','依据页需要不重复的稳定ev-*二级标题锚点');
  for(const name of paperWikiNames)if(!byPath.has(prefix+name))issue(prefix+name,'缺少本篇必需知识页');
@@ -23,6 +28,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
   const name=file.path.slice(prefix.length);
   if(!paperWikiNames.includes(name)&&!/^method\/[a-z][a-z0-9_-]*\.md$|^results\/[a-z][a-z0-9_-]*\.md$/.test(name))issue(file.path,'只允许本篇职责页及方法/实验子页');
   const body=file.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'');
+  if(name!=='evidence.md'&&(/\/pdf-view\?|\]\([^)]*\.pdf(?:[?#][^)]*)?\)/i.test(body)))issue(file.path,'原文定位仅放统一evidence.md，正文链接依据条目');
   if(name==='whoami.md'){
    const headings=[...body.matchAll(/^##\s+(.+)$/gm)].map(m=>m[1].trim());
    if(headings.join('|')!=='一句话认识|知识导航')issue(file.path,'whoami只保留题目、一句话认识、知识导航');
@@ -33,7 +39,6 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
    if(name==='background.md'){
     const headings=[...body.matchAll(/^##\s+(.+)$/gm)].map(m=>m[1].trim());if(headings.join('|')!=='概览|已有研究与不足')issue(file.path,'背景页仅概览和已有研究与不足两个正文部分');
    }
-   if(/\/pdf-view\?|\]\([^)]*\.pdf(?:[?#][^)]*)?\)/i.test(body))issue(file.path,'原文定位仅放统一evidence.md，正文链接依据条目');
    const refs=[...body.matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].filter(m=>m[1].split('#')[0].endsWith('evidence.md'));
    if(!refs.length)issue(file.path,'知识页至少链接一个真实依据条目，缺失时在依据页明确材料不足');
    for(const ref of refs){const [target,fragment]=ref[1].split('#');const resolved=posix.normalize(posix.join(posix.dirname(file.path),target));if(resolved!==prefix+'evidence.md'||!fragment||!anchors.includes(fragment))issue(file.path,'依据链接必须指向本篇存在的ev-*条目：'+ref[1]);}
