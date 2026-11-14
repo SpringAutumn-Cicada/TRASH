@@ -351,7 +351,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(input.resume){
         const previous=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['failed','interrupted','cancelled'].includes(t.status)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
         if(!previous){sendJson(response,409,{error:'SOURCE_RESUME_UNAVAILABLE'});return;}
-        const [task]=agent.enqueue(projectId,{...previous.input,timeout_seconds:previous.input.timeout_seconds===900?1800:previous.input.timeout_seconds,regenerate:true},previous.task_id);
+        const [task]=agent.enqueue(projectId,{...previous.input,timeout_seconds:[900,1800].includes(previous.input.timeout_seconds)?3600:previous.input.timeout_seconds,regenerate:true},previous.task_id);
         sendJson(response,202,{task_id:task.task_id,status:task.status});return;
       }
       if(!input.regenerate && new MarkdownKnowledge(store).index(projectId).documents.some(d=>d.source_id===sourceId)){sendJson(response,409,{error:'SOURCE_ANALYSIS_CONFIRM_REQUIRED'});return;}
