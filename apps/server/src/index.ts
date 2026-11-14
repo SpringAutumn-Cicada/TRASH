@@ -351,9 +351,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===source.source_id);
       const cards=docs.filter(doc=>doc.kind==='literature-card');
       if(!['key','detail'].every(type=>cards.some(doc=>doc.card_type===type))){sendJson(response,409,{error:'KNOWLEDGE_MATERIALS_REQUIRED'});return;}
-      const wiki=docs.find(doc=>doc.kind==='wiki-page'&&doc.level==='single');
+      const wiki=docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/index.md`)??docs.find(doc=>doc.kind==='wiki-page'&&doc.level==='single');
       if(!wiki){sendJson(response,409,{error:'NOT_FOUND'});return;}
-      const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:[source.source_id],dependencies:cards.map(doc=>({kind:'literature-card',object_id:doc.id,version:1})),target_id:wiki.id,wiki_level:'single',title:source.title,regenerate:true,instructions:'仅使用本篇已有卡片更新单篇研究记忆，不重新分析PDF，不改写卡片，保留人工补充。source_id 必须保持为 '+source.source_id}));
+      const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:[source.source_id],dependencies:cards.map(doc=>({kind:'literature-card',object_id:doc.id,version:1})),target_id:wiki.id,wiki_level:'single',title:source.title,regenerate:true,instructions:'仅使用本篇已有材料生成或更新分层论文Wiki，保留人工补充，不重新核验PDF；新index.md为入口。source_id 必须保持为 '+source.source_id}));
       sendJson(response,202,{task_id:task.task_id,status:task.status});return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
