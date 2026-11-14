@@ -321,7 +321,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if(subpath==='source-analyses' && method==='GET'){
       const docs=new MarkdownKnowledge(store).index(projectId).documents;
       const tasks=knowledge.tasks(projectId).filter(t=>!(t as {dismissed_reanalysis?:boolean}).dismissed_reanalysis&&t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
-      sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);const wikiTask=knowledge.tasks(projectId).filter(t=>t.input.kind==='wiki-page'&&t.input.wiki_level==='single'&&t.input.source_ids.includes(source.source_id)).sort((a,b)=>Number(['queued','running'].includes(b.status))-Number(['queued','running'].includes(a.status))||b.created_at.localeCompare(a.created_at))[0];return {wiki_task:wikiTask?{task_id:wikiTask.task_id,status:wikiTask.status,error:wikiTask.error}:undefined,source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
+      sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);return {source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
     }
     const keepOriginal=subpath.match(/^sources\/([^/]+)\/keep-original$/);
     if(keepOriginal&&method==='POST'){
@@ -339,22 +339,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       knowledge.event(latest.task_id,'用户退出重新分析，保留当前已整理版本；日志与草稿保留');
       sendJson(response,200,{preserved:true});return;
-    }
-    const sourceWiki=subpath.match(/^sources\/(source_[A-Za-z0-9_-]+)\/analyze-wiki$/);
-    if(sourceWiki&&method==='POST'){
-      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
-      const source=store.getSource(sourceWiki[1]);
-      if(!source||source.project_id!==projectId||source.material_scope==='abstract'){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
-      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const active=knowledge.tasks(projectId).find(task=>['queued','running'].includes(task.status)&&task.input.source_ids.includes(source.source_id));
-      if(active){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
-      const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===source.source_id);
-      const cards=docs.filter(doc=>doc.kind==='literature-card');
-      if(!docs.some(doc=>doc.kind==='wiki-page')&&!cards.some(doc=>doc.path.includes('/idcard'))){sendJson(response,409,{error:'KNOWLEDGE_MATERIALS_REQUIRED'});return;}
-      const wiki=docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/whoami.md`)??docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/index.md`)??docs.find(doc=>doc.kind==='wiki-page'&&doc.level==='single');
-      if(!wiki){sendJson(response,409,{error:'NOT_FOUND'});return;}
-      const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:[source.source_id],dependencies:cards.map(doc=>({kind:'literature-card',object_id:doc.id,version:1})),target_id:wiki.id,wiki_level:'single',title:source.title,regenerate:true,instructions:'仅使用本篇已有材料生成或更新新版论文Wiki，保留人工补充，不重新核验PDF；whoami.md为入口，原文出处统一evidence.md。source_id 必须保持为 '+source.source_id}));
-      sendJson(response,202,{task_id:task.task_id,status:task.status});return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
     if(sourceAnalysis && method==='POST'){

@@ -102,12 +102,16 @@ export class KnowledgeAgent implements TaskRunner {
     return tasks;
   }
   // Reading checkpoints depend on the PDF and reading rules, not changing library metadata.
-  private readingAttempts(task: KnowledgeTask): KnowledgeTask[] {
+  private readingAttempts(task: KnowledgeTask, includeHistoricalReadings=false): KnowledgeTask[] {
     const tasks=this.knowledge.tasks(task.project_id), result:KnowledgeTask[]=[], seen=new Set<string>();
     let id=task.attempt_of;
     while(id&&!seen.has(id)){seen.add(id);const prior=tasks.find(t=>t.task_id===id);if(!prior)break;
       if(Boolean(prior.input.abstract_mode)===Boolean(task.input.abstract_mode)&&prior.input.instructions===task.input.instructions&&(prior.snapshot as {reading_rule_version?:number}).reading_rule_version===2&&(task.snapshot as {reading_rule_version?:number}).reading_rule_version===2)result.push(prior);
       id=prior.attempt_of;
+    }
+    // Reading artifacts are reusable across completed analyses, not only retry ancestry.
+    if(includeHistoricalReadings)for(const prior of tasks.filter(prior=>prior.task_id!==task.task_id&&prior.created_at<task.created_at&&prior.input.include_source_wiki&&!prior.input.abstract_mode&&prior.input.source_ids[0]===task.input.source_ids[0]&&prior.input.instructions===task.input.instructions&&(prior.snapshot as {reading_rule_version?:number}).reading_rule_version===(task.snapshot as {reading_rule_version?:number}).reading_rule_version).sort((a,b)=>b.created_at.localeCompare(a.created_at))){
+      if(!seen.has(prior.task_id)){seen.add(prior.task_id);result.push(prior);}
     }
     return result;
   }
@@ -260,7 +264,7 @@ export class KnowledgeAgent implements TaskRunner {
           try{new PdfReading(this.store).original(projectId,material.source.source_id);}catch{continue;}
         }
         readingResults.push(await readPaperChapters({pdf:new PdfReading(this.store),project:projectId,source:material.source.source_id,directory,
-          previousDirectories:this.readingAttempts(task).map(prior=>projectRuntime(this.store.root,projectId,'tasks',prior.task_id)),instructions:task.input.instructions,deadline,
+          previousDirectories:this.readingAttempts(task,true).map(prior=>projectRuntime(this.store.root,projectId,'tasks',prior.task_id)),instructions:task.input.instructions,deadline,
           active:()=>!this.closed&&this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status==='running',
           event:text=>this.knowledge.event(task.task_id,text),read:(text,images,timeout)=>this.readBatch(task,text,images,directory,timeout)}));
       }

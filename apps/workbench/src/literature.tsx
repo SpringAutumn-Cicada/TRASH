@@ -12,7 +12,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {wiki_task?:{task_id:string;status:string;error?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
+interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -62,15 +62,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
 
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
-  const [wikiSubmitting,setWikiSubmitting]=useState<string>();
-  const wikiLock=useRef(false);
-  const [wikiNotice,setWikiNotice]=useState<{sourceId:string;taskId:string}>();
-  const analyzeWiki=async(source:Source)=>{
-    if(wikiLock.current||analyses.some(item=>item.source_id===source.source_id&&['queued','running'].includes(item.wiki_task?.status??'')))return;wikiLock.current=true;setWikiSubmitting(source.source_id);setError('');
-    try{const result=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze-wiki`,{method:'POST',body:JSON.stringify({confirm:true})});setAnalyses(previous=>previous.map(item=>item.source_id===source.source_id?{...item,wiki_task:{task_id:result.task_id,status:result.status}}:item));setWikiNotice({sourceId:source.source_id,taskId:result.task_id});}
-    catch(cause){setError(uiError(cause,'无法单独更新 Wiki，请确认已有论文内容且没有进行中的分析。'));}
-    finally{wikiLock.current=false;setWikiSubmitting(undefined);}
-  };
   const submissionLock=useRef(new Set<string>());
   const completedAnalysis=useRef('');
   useEffect(()=>{
@@ -212,7 +203,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     {fileDragging&&!searchOnly&&<div className="literature-drop-overlay" role="status"><FileUp size={30}/><strong>{importing?'正在导入，请稍候':'松开以导入文献'}</strong><span>PDF · BibTeX · RIS · Markdown · 支持多个文件</span></div>}
     {regenerateTarget&&<RegenerateSourceDialog source={regenerateTarget} busy={submitting.includes(regenerateTarget.source_id)} error={regenerateError} onClose={()=>{if(!submissionLock.current.has(regenerateTarget.source_id))setRegenerateTarget(undefined);}} onConfirm={()=>{void analyzeSource(regenerateTarget,true).then(ok=>{if(ok&&alive.current)setRegenerateTarget(undefined);});}}/>}
     {documentTarget&&<LiteratureDocumentDialog key={documentTarget.source.source_id} projectId={projectId} source={documentTarget.source} initialType={documentTarget.type} onClose={()=>setDocumentTarget(undefined)} onSaved={()=>{void refresh(true);onChanged();}}/>}
-    {wikiNotice&&(()=>{const task=analyses.find(item=>item.source_id===wikiNotice.sourceId)?.wiki_task;const status=task?.task_id===wikiNotice.taskId?task.status:'queued';return <div className="wiki-task-notice" role="status"><span>{status==='completed'?'Wiki 分析已完成。':status==='failed'?'Wiki 分析失败，可重试。':status==='interrupted'||status==='cancelled'?'Wiki 分析已停止，可重新提交。':status==='running'?'Wiki 正在分析，完成前无法重复提交。':'Wiki 分析已提交，正在排队，完成前无法重复提交。'}</span><a href={projectPath(projectId,'tasks',{focus:wikiNotice.taskId})}>查看任务</a></div>;})()}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
           <section className="literature-main" hidden={searchOnly}>
@@ -224,19 +214,18 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               <div className="library-toolbar-actions"><div className="library-import" data-literature-menu>
                 <button type="button" className="primary-button" aria-expanded={importOpen} aria-controls="literature-import-panel" onClick={()=>{setImportOpen(v=>!v);}}><Plus size={15}/>导入文献<ChevronDown size={12}/></button>
                 {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown，也可拖入页面</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
-              </div><LibraryDeleteManager projectId={projectId} sources={detail.sources} disabled={importing||searching} blockedIds={[...submitting,...analyses.filter(item=>['queued','running'].includes(item.status??'')||['queued','running'].includes(item.wiki_task?.status??'')).map(item=>item.source_id),...(wikiSubmitting?[wikiSubmitting]:[])]} onBusyChange={busy=>setDeleting(busy?'batch':undefined)} onDeleted={onSourceDeleted}/></div>
+              </div><LibraryDeleteManager projectId={projectId} sources={detail.sources} disabled={importing||searching} blockedIds={[...submitting,...analyses.filter(item=>['queued','running'].includes(item.status??'')).map(item=>item.source_id)]} onBusyChange={busy=>setDeleting(busy?'batch':undefined)} onDeleted={onSourceDeleted}/></div>
               <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
             </div>
             {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
               <div className="library-table-heading"><span>标题 / 作者</span><span>内容</span><span>状态 / 操作</span></div>
               {detail.sources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
                 const item=analyses.find(entry=>entry.source_id===source.source_id);
-                const wikiPending=['queued','running'].includes(item?.wiki_task?.status??'');
-                const activeTaskId=wikiPending?item?.wiki_task?.task_id:item?.task_id;
+                const activeTaskId=item?.task_id;
                 const fullPending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
-                const pending=fullPending||wikiSubmitting===source.source_id||wikiPending;
-                const status=pending?((wikiPending?item?.wiki_task?.status:item?.status)==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasCards&&item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
-                const tone=pending?'active':item?.status==='failed'?'failed':item?.stale?'warning':item?.hasCards&&item?.hasWiki?'done':'idle';
+                const pending=fullPending;
+                const status=pending?(item?.status==='running'?'分析中':'排队中'):item?.status==='failed'?'分析失败':item?.stale?'待更新':item?.hasWiki?'已整理':item?.hasOutputs?'部分整理':item?.status==='cancelled'?'已停止':item?.status==='interrupted'?'已中断':'未分析';
+                const tone=pending?'active':item?.status==='failed'?'failed':item?.stale?'warning':item?.hasWiki?'done':'idle';
                 const retry=['failed','interrupted','cancelled'].includes(item?.status??'');
                 const label=submitting.includes(source.source_id)?'正在提交':pending?'查看进度':retry?(item?.can_resume?'继续分析':'重试分析'):item?.hasOutputs?'重新分析':'开始分析';
                 const date=String(source.publication_date??source.year??'').replace('-','');
@@ -248,8 +237,8 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     {item?.hasWiki&&<button type="button" className="wiki-entry-button" onClick={()=>setDocumentTarget({source,type:'wiki'})}>Wiki</button>}
                   </div>
                   <div className="library-row-controls">
-                    <div className="library-state">{item?.hasCards&&item?.hasWiki&&<button type="button" className="library-wiki-analyze" disabled={pending||Boolean(wikiSubmitting)||Boolean(deleting)} onClick={()=>void analyzeWiki(source)} title="仅更新 Wiki，复用已有卡片">{wikiPending||wikiSubmitting===source.source_id?<LoaderCircle size={13} className="spin"/>:<Sparkles size={13}/>}{wikiSubmitting===source.source_id?'提交中…':wikiPending?(item?.wiki_task?.status==='running'?'分析中':'排队中'):'分析 Wiki'}</button>}<span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
-                    <div className="library-row-actions">{item?.hasCards&&item?.hasBasic&&item?.hasWiki&&!wikiPending&&wikiSubmitting!==source.source_id&&(retry||fullPending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&activeTaskId)window.location.assign(projectPath(projectId,'tasks',{focus:activeTaskId}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div></div>
+                    <div className="library-state"><span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
+                    <div className="library-row-actions">{item?.hasWiki&&(retry||fullPending)&&item.task_id&&<button type="button" className="library-keep-original" disabled={submitting.includes(source.source_id)} onClick={()=>void keepOriginal(source,item)} title="退出本次重新分析，保留当前已整理内容">保留原版</button>}<div className="library-analysis-action"><button type="button" className={`library-analyze ${submitting.includes(source.source_id)?'library-analyze-submitting':pending?'library-analyze-progress':retry?'library-analyze-retry':''}`} disabled={Boolean(deleting)||submitting.includes(source.source_id)} onClick={()=>{if(pending&&activeTaskId)window.location.assign(projectPath(projectId,'tasks',{focus:activeTaskId}));else void analyzeSource(source);}}>{pending?<LoaderCircle size={14} className="spin"/>:<Sparkles size={14}/>}<span>{label}</span></button>{item?.error&&!pending&&<details className="library-error"><summary>查看原因</summary><p>{item.error}</p></details>}</div></div>
                   </div>
                 </article>;
               })}
@@ -293,7 +282,7 @@ function RegenerateSourceDialog({source,busy,error,onClose,onConfirm}:{source:So
     }}>
       <header><span className="literature-regenerate-icon"><Sparkles size={22}/></span><button type="button" className="icon-button" aria-label="关闭重新分析确认" disabled={busy} onClick={onClose}><X size={18}/></button></header>
       <h2 id="literature-regenerate-title">重新分析这篇论文？</h2>
-      <p id="literature-regenerate-description">将根据论文原文重新生成以下内容，已有版本会保留在历史记录中。</p>
+      <p id="literature-regenerate-description">PDF及阅读流程、分析要求未变且笔记校验合格时，将复用批次笔记直接生成Wiki；否则重新阅读。已有版本保留在历史记录中。</p>
       <div className="literature-regenerate-paper"><span>当前论文</span><strong>{source.title}</strong></div>
       <div className="literature-regenerate-outputs"><span>idcard</span><span>Wiki</span></div>
       {error&&<ErrorNotice>{error}</ErrorNotice>}
