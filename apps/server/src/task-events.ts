@@ -19,14 +19,8 @@ export function taskReadingProgress(store:TrashStore,task:KnowledgeTask){
   const directory=projectRuntime(store.root,task.project_id,'tasks',task.task_id);
   const progress=JSON.parse(readFileSync(projectRuntime(store.root,task.project_id,'tasks',task.task_id,'reading-progress.json'),'utf8')) as {phase:string;title:string;warnings?:string[]};
   const source=task.input.source_ids[0];if(!source)return undefined;
-  try{
-   const saved=JSON.parse(readFileSync(directory+'/pdf-reading.json','utf8')) as {batch_size?:number;batches?:string[]};
-   const state=JSON.parse(readFileSync(directory+'/readings/'+source+'/state.json','utf8')) as {batches?:{pages:number[]}[]};
-   if(saved.batch_size===4&&Array.isArray(saved.batches)){
-    const completed=state.batches??[];const totalPages=completed.flatMap(batch=>batch.pages).length;
-    return {unit:'pages',total:Math.max(totalPages, saved.batches.length*4),completed:totalPages,phase:progress.phase,title:progress.title,warnings:progress.warnings??[]};
-   }
-  }catch{/* Continue with legacy task data. */}
+  const fixed=progress as typeof progress & {total?:number;completed?:number};
+  if(fixed.total!==undefined)return {unit:'pages',total:fixed.total,completed:fixed.completed??0,phase:fixed.phase,title:fixed.title};
   const plan=JSON.parse(readFileSync(directory+'/readings/'+source+'/plan.json','utf8')) as {sections:{id:string;title:string;level:number;confidence:number;reason:string;parent?:string}[];blocks:{id:string;chapter:string;pages:number[];mode:string;warnings:string[]}[];warnings:string[]};
   const legacyState=JSON.parse(readFileSync(directory+'/readings/'+source+'/state.json','utf8')) as {blocks?:{pages:number[]}[]};
   if(plan.blocks?.length){const pages=plan.blocks.flatMap(block=>block.pages),done=new Set((legacyState.blocks??[]).flatMap(block=>block.pages));return {unit:'pages',total:Math.max(...pages,0),completed:done.size,phase:progress.phase,title:'固定四页批次阅读',warnings:[]};}
