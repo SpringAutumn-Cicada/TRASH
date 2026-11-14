@@ -2,3 +2,4 @@
 export { experimentResultSchema } from './knowledge.js';
 export { calculateBinaryMetrics, defaultEvaluationMetrics, evaluationMetrics } from './evaluation.js';
 export type { BinaryConfusionMatrix } from './evaluation.js';
+export {knowledgeDocumentId,knowledgePath,knowledgeBasePath,legacyKnowledgePath,legacyPath} from './knowledge-paths.js';

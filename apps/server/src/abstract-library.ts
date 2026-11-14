@@ -11,6 +11,7 @@ export function abstractFile(store:TrashStore,project:string,source:string,area:
   if(!/^source_[a-zA-Z0-9_-]+$/.test(source))throw new Error('SOURCE_NOT_FOUND');
   const root=join(store.root,'projects',project);
   if((area==='notes'||area==='wiki')&&migrationManifest(root)){const target=safeKnowledgeFile(root,knowledgePath('abstract-library/'+area+'/'+source+'.md'));mkdirSync(dirname(target),{recursive:true});return target;}
+  if(area==='history'&&migrationManifest(root)){if(version&&!/^[a-f0-9]{64}$/.test(version))throw new Error('KNOWLEDGE_PATH_INVALID');const target=safeKnowledgeFile(root,'.trash/abstract-history/'+source+(version?'-'+version:'')+'.md');mkdirSync(dirname(target),{recursive:true});return target;}
   const parts=['abstract-library',area];let dir=root;
   for(const part of parts){dir=join(dir,part);if(existsSync(dir)&&lstatSync(dir).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');mkdirSync(dir,{recursive:true});}
   const target=join(dir,source+(version?'-'+version:'')+'.md');
