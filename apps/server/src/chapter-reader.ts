@@ -29,7 +29,7 @@ export async function readPaperChapters(options:{pdf:PdfReading;project:string;s
  for(const [i,block] of plan.blocks.entries()){
   assertActive();const file=join(root,block.id+'.md');const names=block.sections.map(id=>plan.sections.find(s=>s.id===id)!.title);
   stage('reading',`阅读 ${names.join(' / ')} · PDF ${block.pages.join(',')} 页`,i,plan.blocks.length,block.warnings);
-  if(block.characters>plan.budget.characters)throw new Error('完整段落超出输入预算；请调整计划，不静默截断原文');
+  if(block.characters>plan.budget.characters)event('本批次文字接近输入预算，保留完整页面与段落，不截断原文');
   const ancestors=block.sections.flatMap(id=>{const titles:string[]=[];let section=plan.sections.find(s=>s.id===id);while(section){titles.unshift(section.title);section=plan.sections.find(s=>s.id===section?.parent);}return [titles.join(' → ')];});
   const context=digest(JSON.stringify({block,previousNoteHash,ancestors,instructions:options.instructions,version:readingPlanVersion}));
   let bytes=reuse(block.id+'.md',context,old=>old.blocks.find(note=>note.id===block.id));let status:Note['status']='reused-notes';

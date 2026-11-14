@@ -6,7 +6,7 @@ export type PaperSection={id:string;title:string;level:number;parent?:string;chi
 export type ReadingBlock={id:string;chapter:string;sections:string[];units:string[];pages:number[];characters:number;mode:'section'|'subsections'|'paragraph-fallback'|'visual-fallback';warnings:string[]};
 export type PaperReadingPlan={version:number;hash:string;pdf_hash:string;budget:{characters:number;pages:number};sections:PaperSection[];units:ReadingUnit[];blocks:ReadingBlock[];excluded:{id:string;reason:string}[];warnings:string[]};
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export function planPaperReading(doc:Awaited<ReturnType<typeof inspectPdf>>,pdfHash:string,budget={characters:14000,pages:8}):PaperReadingPlan{
+export function planPaperReading(doc:Awaited<ReturnType<typeof inspectPdf>>,pdfHash:string,budget={characters:60000,pages:4}):PaperReadingPlan{
  const warnings=doc.pages.flatMap(p=>p.warnings.map(w=>`PDF第${p.page}页：${w}`));
  const normalize=(s:string)=>s.toLowerCase().replace(/\d+/g,'#').replace(/\s+/g,' ').trim();
  const margins=new Map<string,Set<number>>();
