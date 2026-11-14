@@ -1,3 +1,4 @@
+import {CliTurnResult} from './cli-turn-result.js';
 import {readPaperChapters} from './chapter-reader.js';
 import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility} from './paper-wiki.js';
 import {knowledgePath,knowledgeDocumentId} from '@trash/protocol';
@@ -147,10 +148,12 @@ export class KnowledgeAgent implements TaskRunner {
     if(timeout<=1)throw new Error('全文阅读超时，未发布最终卡片');
     const child=spawn(this.cli.command,[...this.cli.prefix,'exec','--sandbox','workspace-write','-c','approval_policy="never"','-c','mcp_servers.node_repl.enabled=false','--skip-git-repo-check','--ephemeral','--json','--color','never','-C',directory,...images.flatMap(path=>['--image',path]),'-'],{cwd:directory,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
     this.running.set(task.project_id,{child,task});
-    let reportedFailure='',pending='';child.stdout.on('data',(chunk:Buffer)=>{pending+=chunk.toString();let newline:number;while((newline=pending.indexOf('\n'))>=0){const line=pending.slice(0,newline);pending=pending.slice(newline+1);try{const event=JSON.parse(line);if(event.type==='turn.failed'||event.type==='error')reportedFailure=redact(String(event.error?.message??event.message??'PDF 阅读失败'));}catch{/* Non-JSON output remains in logs. */}}if(pending.length>1024*1024)pending='';});
+    const result=new CliTurnResult(message=>this.knowledge.event(task.task_id,redact(message)));
+    child.stdout.on('data',(chunk:Buffer)=>result.push(chunk));
     let bytes=0;const log=(chunk:Buffer)=>{if(bytes>1024*1024)return;bytes+=chunk.length;this.knowledge.event(task.task_id,redact(chunk.toString()));};child.stdout.on('data',log);child.stderr.on('data',log);
-    const completion=new Promise<void>((resolve,reject)=>{child.once('error',reject);child.once('close',code=>code===0&&!reportedFailure?resolve():reject(new Error(reportedFailure||`PDF 阅读批次退出 ${code}，未发布最终内容`)));});
-    const timer=setTimeout(()=>this.terminate(child),timeout*1000);child.stdin.on('error',()=>{});child.stdin.end(prompt);try{await completion;}finally{clearTimeout(timer);}
+    let timedOut=false;
+    const completion=new Promise<void>((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>{result.finish();const failure=timedOut?'PDF阅读超时；批次草稿已保留':result.failure(code,signal);if(failure){this.knowledge.event(task.task_id,'模型调用失败：'+redact(failure));reject(new Error(redact(failure)));}else resolve();});});
+    const timer=setTimeout(()=>{timedOut=true;this.terminate(child);},timeout*1000);child.stdin.on('error',()=>{});child.stdin.end(prompt);try{await completion;}finally{clearTimeout(timer);}
     if(task.status!=='running'||this.closed)throw new Error('PDF 全文阅读已取消或中断');
   }
   private restoreDrafts(task:KnowledgeTask,output:string,paths:string[]) {
@@ -277,13 +280,14 @@ export class KnowledgeAgent implements TaskRunner {
         if(Date.now()>=deadline)throw new Error('生成阶段超时；草稿已保留，请继续分析');
         child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
         this.running.set(projectId,{child,task});
-        let logBytes=0, reportedFailure='', pending='';
+        let logBytes=0;
+        const result=new CliTurnResult(message=>this.knowledge.event(task.task_id,redact(message)));
         const log=(chunk:Buffer)=>{if(!this.closed&&logBytes<1024*1024){const message=redact(chunk.toString());logBytes+=Buffer.byteLength(message);this.knowledge.event(task.task_id,message);}};
-        child.stdout?.on('data',(chunk:Buffer)=>{pending+=chunk.toString();let newline:number;while((newline=pending.indexOf('\n'))>=0){const line=pending.slice(0,newline);pending=pending.slice(newline+1);try{const event=JSON.parse(line);if(event.type==='turn.failed'||event.type==='error')reportedFailure=redact(String(event.error?.message??event.message??'生成失败'));}catch{/* Raw output remains in logs. */}}if(pending.length>1024*1024)pending='';});
+        child.stdout?.on('data',(chunk:Buffer)=>result.push(chunk));
         child.stdout?.on('data',log);child.stderr?.on('data',log);
         let timedOut=false;
         const timer=setTimeout(()=>{timedOut=true;if(child)this.terminate(child);},Math.max(1,deadline-Date.now()));
-        const completion=new Promise<void>((resolve,reject)=>{child!.once('error',reject);child!.once('close',code=>code===0&&!reportedFailure?resolve():reject(new Error(timedOut?'生成阶段超时；草稿已保留':reportedFailure||`CLI 退出码 ${code}`)));});
+        const completion=new Promise<void>((resolve,reject)=>{child!.once('error',reject);child!.once('close',(code,signal)=>{result.finish();const failure=timedOut?'生成阶段超时；草稿已保留':result.failure(code,signal);if(failure){this.knowledge.event(task.task_id,'模型调用失败：'+redact(failure));reject(new Error(redact(failure)));}else resolve();});});
         child.stdin?.on('error',()=>{});child.stdin?.end(instructions);
         try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
