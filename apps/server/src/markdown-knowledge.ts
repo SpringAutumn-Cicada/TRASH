@@ -15,9 +15,12 @@ const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-knowledge/',import.meta.url));
-export function skillText(){return ['SKILL.md','references/basic.md','references/cards.md','references/wiki.md','references/paper-wiki.md'].map(name=>readFileSync(join(skillRoot,name),'utf8')).join('\n\n');}
+const knowledgeSkillFiles=['SKILL.md','references/wiki.md','references/paper-wiki.md'];
+export function skillText(){return knowledgeSkillFiles.map(name=>readFileSync(join(skillRoot,name),'utf8')).join('\n\n');}
 export function stageKnowledgeSkill(directory:string){
-  for(const name of ['SKILL.md','references/basic.md','references/cards.md','references/wiki.md','references/paper-wiki.md']){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(join(skillRoot,name),'utf8'),{mode:0o600});}
+  // Remove obsolete staged rules when continuing a previously created task.
+  for(const name of ['basic.md','cards.md']){const path=join(directory,'literature-skill','references',name);if(existsSync(path)){rejectSymlink(path);unlinkSync(path);}}
+  for(const name of knowledgeSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(join(skillRoot,name),'utf8'),{mode:0o600});}
 }
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}

@@ -189,7 +189,7 @@ export class LiteratureAnalysis {
       if (batches.length > 1) {
         value.stage = "groups"; value.group_history=[...(value.group_history??[]),...value.group_tasks];value.group_tasks = [];
         value.round=(value.round??0)+1;if(value.round>8)throw new Error('分层综合超过8层，请缩小主题范围');
-        for(const [i,batch] of batches.entries())value.group_tasks.push(...this.enqueueWiki(value,`文献知识第${value.round}层分组${i+1}`,batch,'按实际提供来源归纳证据、共识、分歧和缺失，生成不超过3000字符的主题线索中间总结：开放提取共同假设、分歧、异常、机制和边界，不按项目题目筛掉主题。必须保留原始关键卡片ID及链接、覆盖ID，区分事实和推断，避免逐篇重复摘要。按 summary 分批总结规范生成有内容的展示标题、何时读取、覆盖方向和材料范围；批次编号只记录在批次标识，不作为标题。','summary'));
+        for(const [i,batch] of batches.entries())value.group_tasks.push(...this.enqueueWiki(value,`文献知识第${value.round}层分组${i+1}`,batch,'按实际提供来源归纳证据、共识、分歧和缺失，生成不超过3000字符的主题线索中间总结：开放提取共同假设、分歧、异常、机制和边界，不按项目题目筛掉主题。必须保留原始Wiki页ID及链接、覆盖ID，区分事实和推断，避免逐篇重复摘要。按 summary 分批总结规范生成有内容的展示标题、何时读取、覆盖方向和材料范围；批次编号只记录在批次标识，不作为标题。','summary'));
         this.save(value); return;
       }
       if(value.theme_title){value.stage='wiki';value.wiki_tasks.push(...this.enqueueWiki(value,value.theme_title,records,`按用户明确主题“${value.theme_title}”生成精简Agent研究记忆。何时读取、核心认识、证据与分歧、未知与待验证、项目关联和深入阅读；不把假设写成事实。`));}

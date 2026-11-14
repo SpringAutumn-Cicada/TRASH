@@ -75,7 +75,7 @@ export function migrateKnowledgeBase(rootInput:string,expected:string){
   }
   const base=safeKnowledgeFile(root,stage+'/knowledge_base');mkdirSync(base,{recursive:true});
   for(const dir of ['papers','abstracts','topics','hypotheses','discoveries','summaries'])mkdirSync(join(base,dir),{recursive:true});
-  writeFileSync(join(base,'AGENTS.md'),'# 知识库阅读与维护\n\n先读知识库 index.md，再读具体论文 papers/<source_id>/whoami.md；按问题进入背景、研究问题、方法机制、贡献、实验结果、局限与综合认识，原文出处归并到evidence.md。尚未重组的论文保留 basic/key/detail/memory 旧入口；精确结果回查实验证据页或详细卡片及原文。区分全文证据与摘要级声明。关联、导航和证据分开，保留人工补充、稳定ID和出处。不要默认读取全库；分批总结不是正式主题。运行缓存和任务日志位于项目 .trash/，不作为研究事实。\n');
+  writeFileSync(join(base,'AGENTS.md'),'# 知识库阅读与维护\n\n先读知识库 index.md，再读具体论文 papers/<source_id>/whoami.md；按问题进入背景、研究问题、方法机制、贡献、实验结果、局限与综合认识，原文出处归并到evidence.md。不读取或生成旧卡片兼容入口；精确结果回查结果页、依据页及原文。区分全文证据与摘要级声明。关联、导航和证据分开，保留人工补充、稳定ID和出处。不要默认读取全库；分批总结不是正式主题。运行缓存和任务日志位于项目 .trash/，不作为研究事实。\n');
   mkdirSync(join(base,'maintenance'),{recursive:true});writeFileSync(join(base,'maintenance/log.md'),(existsSync(safeKnowledgeFile(root,'.trash/wiki-log.md'))?readFileSync(safeKnowledgeFile(root,'.trash/wiki-log.md'),'utf8')+'\n':'')+'# 知识维护记录\n\n迁移保留文档ID、原始资料与历史快照。平台后续发布和命名操作在此记录。\n');
   for(const item of preview.items)if(hash(readFileSync(safeKnowledgeFile(root,item.from),'utf8'))!==item.hash)throw new Error('VERSION_CONFLICT');
   const target=safeKnowledgeFile(root,'knowledge_base');if(existsSync(target))throw new Error('KNOWLEDGE_BASE_CONFLICT');
