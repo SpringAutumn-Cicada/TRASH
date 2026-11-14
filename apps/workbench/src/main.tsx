@@ -186,7 +186,7 @@ function App() {
     <BackgroundDatasetTransfers/>
     {leaveDialog}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} initialProfileId={autoDlProfile} onClose={()=>setAutoDlOpen(false)}/>}
-    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} projectTitle={project.title} onUpdated={updated=>setProjects(previous=>previous.map(item=>item.project_id===updated.project_id?updated:item))} onClose={()=>setWorkspaceOpen(false)} onBrowse={()=>{const proceed=()=>{setWorkspaceOpen(false);goPage("files");};if(canLeave(proceed))proceed();}}/>}
+    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} projectTitle={project.title} projectQuestion={project.research_question} onUpdated={updated=>setProjects(previous=>previous.map(item=>item.project_id===updated.project_id?updated:item))} onClose={()=>setWorkspaceOpen(false)} onBrowse={()=>{const proceed=()=>{setWorkspaceOpen(false);goPage("files");};if(canLeave(proceed))proceed();}}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;

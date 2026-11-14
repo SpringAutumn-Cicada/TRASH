@@ -10,10 +10,11 @@ import { useUnsavedChanges } from './navigation.js';
 type Migration={id:string;status:string;files:number;bytes:number;totalFiles:number;totalBytes:number;source:string;target:string;backup?:string;externalLinks:string[];error?:string;stage:string};
 type Workspace={backups:{id:string;path:string}[];externalReferences:string[];path:string;configured:boolean;defaultRoot:string;folder:string;migration:Migration|null};
 const states:Record<string,string>={copying:'复制工作区',verifying:'校验文件',switching:'切换目录',completed:'迁移完成',failed:'迁移失败',interrupted:'迁移已中断'};
-export function ProjectWorkspaceDialog({projectId,projectTitle,onUpdated,onClose,onBrowse}:{projectId:string;projectTitle:string;onUpdated:(project:ResearchProject)=>void;onClose:()=>void;onBrowse:()=>void}){
+export function ProjectWorkspaceDialog({projectId,projectTitle,projectQuestion,onUpdated,onClose,onBrowse}:{projectId:string;projectTitle:string;projectQuestion:string;onUpdated:(project:ResearchProject)=>void;onClose:()=>void;onBrowse:()=>void}){
   const [workspace,setWorkspace]=useState<Workspace>(),[root,setRoot]=useState(''),[name,setName]=useState(''),[picker,setPicker]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[dirty,setDirty]=useState(false),[confirmCleanup,setConfirmCleanup]=useState<string>();
   const [title,setTitle]=useState(projectTitle),[savedTitle,setSavedTitle]=useState(projectTitle),[saved,setSaved]=useState(false);
-  const titleDirty=title.trim()!==savedTitle;
+  const [question,setQuestion]=useState(projectQuestion),[savedQuestion,setSavedQuestion]=useState(projectQuestion);
+  const titleDirty=title.trim()!==savedTitle||question.trim()!==savedQuestion;
   const initialized=useRef(false),modal=useRef<HTMLFormElement>(null);
   const job=workspace?.migration,active=Boolean(job&&!['completed','failed','interrupted'].includes(job.status));
   useUnsavedChanges(titleDirty||dirty&&!active);
@@ -29,16 +30,16 @@ export function ProjectWorkspaceDialog({projectId,projectTitle,onUpdated,onClose
     catch(cause){setError(uiError(cause,'工作区操作失败，请检查目录、权限及活动任务。'));}finally{setBusy(false);}
   };
   const saveName=async()=>{
-    if(busy||!title.trim()||!titleDirty)return;
+    if(busy||!title.trim()||!question.trim()||!titleDirty)return;
     setBusy(true);setError('');setSaved(false);
-    try{const result=await api<{project:ResearchProject}>(`/projects/${encodeURIComponent(projectId)}`,{method:'PATCH',body:JSON.stringify({title:title.trim()})});setTitle(result.project.title);setSavedTitle(result.project.title);onUpdated(result.project);setSaved(true);}
-    catch(cause){setError(uiError(cause,'项目名称保存失败，请重试。'));}finally{setBusy(false);}
+    try{const result=await api<{project:ResearchProject}>(`/projects/${encodeURIComponent(projectId)}`,{method:'PATCH',body:JSON.stringify({title:title.trim(),research_question:question.trim()})});setTitle(result.project.title);setSavedTitle(result.project.title);setQuestion(result.project.research_question);setSavedQuestion(result.project.research_question);onUpdated(result.project);setSaved(true);}
+    catch(cause){setError(uiError(cause,'项目基本信息保存失败，请重试。'));}finally{setBusy(false);}
   };
   return <ModalLayer><div className="modal-backdrop"><form ref={modal} tabIndex={-1} className="modal workspace-settings" role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title" onSubmit={event=>{event.preventDefault();if(event.target!==event.currentTarget)return;void saveName();}} onKeyDown={event=>{
       if(picker)return;
       if(event.key==='Escape'&&!busy){event.stopPropagation();onClose();}
       if(event.key==='Tab'){
-        const controls=Array.from(modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),summary,[tabindex="0"]')??[]).filter(item=>item.getClientRects().length);
+        const controls=Array.from(modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]')??[]).filter(item=>item.getClientRects().length);
         const first=controls[0],last=controls[controls.length-1];
         if(event.shiftKey&&(document.activeElement===first||document.activeElement===modal.current)){event.preventDefault();last?.focus();}
         else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
@@ -46,7 +47,7 @@ export function ProjectWorkspaceDialog({projectId,projectTitle,onUpdated,onClose
     }}>
     <div className="modal-heading"><div><span className="project-settings-eyebrow"><Settings2 size={14}/>项目设置</span><h2 id="workspace-settings-title">项目配置</h2></div><button type="button" className="icon-button" aria-label="关闭项目配置" disabled={busy} onClick={onClose}><X size={17}/></button></div>
     <div className="project-settings-body">
-    <section className="project-settings-section"><h3>基本信息</h3><p>设置项目在导航与项目列表中显示的名称。</p><label>项目名称<input required maxLength={120} value={title} disabled={busy} onChange={event=>{setTitle(event.target.value);setSaved(false);}}/></label><div className="project-name-actions"><small>{saved?'名称已保存':'更改名称不会移动项目文件夹。'}</small><button type="button" className="primary-button" disabled={busy||!title.trim()||!titleDirty} onClick={()=>void saveName()}>{busy?'正在保存…':'保存名称'}</button></div></section>
+    <section className="project-settings-section"><h3>基本信息</h3><p>设置项目名称和研究问题，研究问题显示在项目标题下方。</p><label>项目名称<input required maxLength={120} value={title} disabled={busy} onChange={event=>{setTitle(event.target.value);setSaved(false);}}/></label><label>研究问题<textarea required maxLength={10000} value={question} disabled={busy} onChange={event=>{setQuestion(event.target.value);setSaved(false);}}/></label><div className="project-name-actions"><small>{saved?'基本信息已保存':'更改名称不会移动项目文件夹。'}</small><button type="button" className="primary-button" disabled={busy||!title.trim()||!question.trim()||!titleDirty} onClick={()=>void saveName()}>{busy?'正在保存…':'保存基本信息'}</button></div></section>
     {workspace?<><section className="project-settings-section"><h3>存储位置</h3><p>当前目录：<code className="workspace-path">{workspace.path}</code></p><p>{workspace.configured?'论文材料、卡片和 Wiki 已保存到项目目录。':'旧项目尚未设置完整工作区，选择根目录后将整理并迁移已有材料。'}</p>
     {workspace.externalReferences.length>0&&<details><summary>工作区外的引用保持原位置（{workspace.externalReferences.length}）</summary>{workspace.externalReferences.map(path=><p key={path}><code className="workspace-path">{path}</code></p>)}</details>}
     <button type="button" className="secondary-button" disabled={busy||active} onClick={onBrowse}><FolderOpen size={15}/>打开当前目录</button>

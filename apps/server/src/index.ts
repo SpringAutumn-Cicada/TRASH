@@ -168,9 +168,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
     if(!subpath&&method==='PATCH'){
-      const input=z.object({title:z.string().trim().min(1).max(120)}).strict().parse(await readJson(request));
+      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().min(1).max(10000).optional()}).strict().parse(await readJson(request));
       const at=new Date().toISOString();
-      store.db.prepare("UPDATE projects SET data=json_set(data,'$.title',?,'$.updated_at',?),updated_at=? WHERE project_id=?").run(input.title,at,at,projectId);
+      store.db.prepare("UPDATE projects SET data=json_set(data,'$.title',?,'$.research_question',?,'$.updated_at',?),updated_at=? WHERE project_id=?").run(input.title,input.research_question??project.research_question,at,at,projectId);
       sendJson(response,200,{project:store.getProject(projectId)});return;
     }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
