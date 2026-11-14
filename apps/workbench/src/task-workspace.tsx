@@ -10,7 +10,7 @@ const active=(status:string)=>['queued','running'].includes(status);
 const statuses:Record<string,string>={queued:'排队中',running:'运行中',completed:'已完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'};
 const connectionLabels:Record<string,string>={connecting:'正在连接',live:'实时连接',reconnecting:'正在重连',polling:'轮询更新',error:'连接中断',idle:'等待更新'};
 const taskType=(task:TaskItem)=>task.input.abstract_mode?'摘要分析':task.input.kind==='literature-card'?'论文分析':task.input.wiki_level==='discovery'?'主题发现':task.input.wiki_level==='overview'?'项目总览':'Wiki 综合';
-const progressEvent=(event:TaskEvent,error?:string)=>/^(PDF |复用已完成批次 |启动本机 |Markdown 已发布：|用户取消任务|卡片生成：|输出校验：|自动补救|恢复合格草稿：|发布阶段：|全部目标草稿)/.test(event.message)||Boolean(error&&event.message===error);
+const progressEvent=(event:TaskEvent,error?:string)=>/^(PDF |阅读 PDF 第 |复用已完成批次 |启动本机 |Markdown 已发布：|用户取消任务|卡片生成：|输出校验：|自动补救|恢复合格草稿：|发布阶段：|全部目标草稿)/.test(event.message)||Boolean(error&&event.message===error);
 function progressSummary(message:string|undefined){
  if(!message)return undefined;
  const pages=message.match(/提供第 (.+?) 页 \/ 共 (\d+) 页/);if(pages)return `阅读第 ${pages[1]} 页 / 共 ${pages[2]} 页`;
