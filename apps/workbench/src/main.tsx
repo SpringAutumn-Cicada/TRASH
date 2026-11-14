@@ -1,3 +1,4 @@
+import {KnowledgeBaseWorkspace} from './knowledge-base.js';
 import { TaskWorkspace } from './task-workspace.js';
 import { PdfReader } from "./pdf-reader.js";
 import { MarkdownKnowledgePanel } from "./markdown-knowledge.js";
@@ -43,22 +44,21 @@ function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projec
   if(error)return <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>;
   if(!sources)return <div className="page-loading">正在加载项目资料…</div>;
   if(page==='tasks')return <TaskWorkspace key={projectId} projectId={projectId} focusId={focusId}/>;
-  if(page==='cards'||page==='wiki')return <MarkdownKnowledgePanel projectId={projectId} sources={sources} kind={page==='cards'?'literature-card':'wiki-page'} focusId={focusId} onNavigate={onNavigate}/>;
+  if(page==='cards'||page==='wiki')return <KnowledgeBaseWorkspace projectId={projectId} sources={sources} focusId={focusId} onNavigate={onNavigate}/>;
   const section={cards:"literature-cards",wiki:"wiki-pages",results:"experiment-results",tasks:"knowledge-tasks"} as const;
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
 }
 const literatureModules = [
   { id: "literature", label: "文献", icon: BookOpen },
   { id: "search", label: "搜索文献", icon: Search },
-  { id: "cards", label: "卡片", icon: Layers },
-  { id: "wiki", label: "Wiki", icon: NotebookText }
+  { id: "wiki", label: "知识库", icon: NotebookText }
 ] as const;
 function LiteratureModules({projectId,page,action,focusId,status,onNavigate,onChanged}:{projectId:string;page:"literature"|"cards"|"wiki";action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void;onChanged:()=>void}) {
   const id=useId();
-  const selected=page==="literature"?(action==="search"?"search":"literature"):page;
+  const selected=page==="literature"?(action==="search"?"search":"literature"):"wiki";
   const select=(module:typeof literatureModules[number]['id'])=>onNavigate(module==="search"?"literature":module,module==="search"?{action:"search"}:undefined);
   return <section className="data-page literature-workspace">
-    <div className="data-heading"><span className="data-symbol"><BookOpen size={25}/></span><div><h2>文献</h2><p>管理文献、搜索资料、整理卡片与研究 Wiki。</p></div></div>
+    <div className="data-heading"><span className="data-symbol"><BookOpen size={25}/></span><div><h2>文献</h2><p>管理原始文献，沉淀卡片、研究记忆与知识主题。</p></div></div>
     <nav className="data-module-tabs" role="tablist" aria-label="文献子模块">{literatureModules.map((item,index)=><button key={item.id} type="button" role="tab" id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel`} aria-selected={selected===item.id} tabIndex={selected===item.id?0:-1} className={selected===item.id?'active':''} onClick={()=>select(item.id)} onKeyDown={event=>{
       let next:number;
       if(event.key==='ArrowRight')next=(index+1)%literatureModules.length;

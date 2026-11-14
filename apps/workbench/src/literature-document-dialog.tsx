@@ -1,3 +1,4 @@
+import {knowledgeDocumentId} from '@trash/protocol';
 import {KnowledgeRelations} from './knowledge-relations.js';
 import React,{useEffect,useRef,useState} from 'react';
 import {LoaderCircle,Save,X} from 'lucide-react';
@@ -10,7 +11,7 @@ import {useUnsavedChanges} from './navigation.js';
 import './markdown-knowledge.css';
 import './wiki-reading.css';
 
-type Document={id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
+type Document={material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
 const tabs=[['basic','基础信息'],['key','关键卡片'],['detail','详细卡片'],['wiki','Wiki']];
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved}:{projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
@@ -57,13 +58,13 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
             const anchor=(event.target as HTMLElement).closest('a');const href=anchor?.getAttribute('href');if(!href||/^(https?:|#)/i.test(href))return;
             event.preventDefault();const url=new URL(href,'https://knowledge.local/'+doc.path);
             if(url.pathname.startsWith(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/`)&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
-            const path=url.pathname.slice(1),next=documents.find(d=>d.path===path);if(next){setLinked(next.id);setHistory(undefined);}else setError('关联文档尚未生成或无法查看。');
+            const path=url.pathname.slice(1),original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);if(original){setLinked('abstract-material-'+original[1]);return;}const next=documents.find(d=>d.path===path||d.id===knowledgeDocumentId(path));if(next){setLinked(next.id);setHistory(undefined);}else setError('关联文档尚未生成或无法查看。');
           }}><ChatMarkdown text={doc.kind==='wiki-page'&&doc.level==='single'?doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/^#\s+.+$/m,()=>`# ${doc.title}`):doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')} allowRelativeLinks/></div>}
           {!editing&&<KnowledgeRelations projectId={projectId} id={doc.id} hash={doc.hash} onOpen={id=>{setLinked(id);setHistory(undefined);}}/>}
           {history&&<section className="library-document-history"><h4>版本历史</h4>{history.length?history.map(version=><details key={version.hash}><summary>快照 {version.hash.slice(0,10)}</summary><pre>{version.text}</pre></details>):<p>暂无历史版本。</p>}</section>}
         </>:!error&&<p>该内容尚未生成，请先分析这篇论文。</p>}
       </div>
-      <footer><span>{editing?(dirty?'有未保存修改':'编辑 Markdown'):doc?.path}</span><div>{editing?<><button type="button" className="secondary-button" disabled={busy} onClick={()=>{if(!dirty||window.confirm('放弃未保存的修改？')){setDraft(doc!.text);setEditing(false);}}}>取消编辑</button><button type="button" className="primary-button" disabled={busy||!dirty} onClick={()=>void run(async()=>{await api(base+'/save',{method:'POST',body:JSON.stringify({path:doc!.path,text:draft,expected:doc!.hash})});setEditing(false);setReload(n=>n+1);onSaved();})}><Save size={14}/>{busy?'正在保存':'保存修改'}</button></>:<><button type="button" className="secondary-button" disabled={busy||!doc} onClick={()=>void run(async()=>{const result=await api<{versions:{hash:string;text:string}[]}>(base+'/history?id='+encodeURIComponent(doc!.id));setHistory(result.versions);})}>版本历史</button><button type="button" className="secondary-button" disabled={busy||!doc} onClick={()=>{setDraft(doc!.text);setEditing(true);setHistory(undefined);}}>编辑内容</button></>}</div></footer>
+      <footer><span>{editing?(dirty?'有未保存修改':'编辑 Markdown'):doc?.path}</span><div>{editing?<><button type="button" className="secondary-button" disabled={busy} onClick={()=>{if(!dirty||window.confirm('放弃未保存的修改？')){setDraft(doc!.text);setEditing(false);}}}>取消编辑</button><button type="button" className="primary-button" disabled={busy||!dirty} onClick={()=>void run(async()=>{await api(base+'/save',{method:'POST',body:JSON.stringify({path:doc!.path,text:draft,expected:doc!.hash})});setEditing(false);setReload(n=>n+1);onSaved();})}><Save size={14}/>{busy?'正在保存':'保存修改'}</button></>:<><button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'} onClick={()=>void run(async()=>{const result=await api<{versions:{hash:string;text:string}[]}>(base+'/history?id='+encodeURIComponent(doc!.id));setHistory(result.versions);})}>版本历史</button><button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'} onClick={()=>{setDraft(doc!.text);setEditing(true);setHistory(undefined);}}>编辑内容</button></>}</div></footer>
     </div>
   </div></ModalLayer>;
 }
