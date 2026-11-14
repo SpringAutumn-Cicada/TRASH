@@ -198,3 +198,16 @@ export * from "./evaluation.js";
 export * from './execution.js';
 
 export * from './knowledge-paths.js';
+
+// PDF preparation is independent of knowledge/model task status.
+export type PdfPreparationStatus='queued'|'running'|'ready'|'partial'|'failed'|'cancelled';
+export interface PdfPreparation {
+ id:string; project_id:string; source_id:string; fingerprint:string; revision:string;
+ pdf_hash:string; status:PdfPreparationStatus; phase:string; completed:number; total:number;
+ warnings:string[]; error?:string; created_at:number; updated_at:number;
+}
+export interface PdfFigure {
+ id:string; type:'figure'|'table'; number:string; caption:string; page:number; pages:number[];
+ section?:string; region:{x:number;y:number;width:number;height:number};
+ path?:string; confidence:number; warnings:string[]; references:{page:number;line:string}[];
+}

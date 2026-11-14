@@ -342,3 +342,5 @@ export class TrashStore {
 }
 
 export { parseMarkdown as parseKnowledgeMarkdown } from "./knowledge-markdown.js";
+
+export {migratePdfPreparation} from './pdf-preparation.js';
