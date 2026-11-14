@@ -17,7 +17,7 @@ description: 在 TRASH 论文项目中固定四页一批图文阅读并生成单
 
 项目入口为 knowledge_base/index.md。单篇位于 papers/<source_id>/，whoami.md 为论文总览，idcard.md 为题录页，背景、问题、贡献、方法、结果、局限、认识和依据页遵守 references/paper-wiki.md。全部单篇页面为 kind: wiki-page、level: single、knowledge_version: 2，稳定 ID 和路径使用任务指定值。不要生成或读取旧基本、关键、详细卡片及旧单篇记忆文件，不生成兼容入口。
 
-主题、假设、发现和分批总结分别位于 topics/、hypotheses/、discoveries/、summaries/，总览为 overview.md。相对链接按当前页面目录计算。每个论文子页在 frontmatter 后、一级标题前以论文总览链接作为正文第一行；whoami 导航覆盖全部有效子页。导航不作为证据依赖。
+主题、假设、发现和分批总结分别位于 topics/、hypotheses/、discoveries/、summaries/，总览为 overview.md。相对链接按当前页面目录计算。每个论文子页在一级标题之后、概览之前的首个非空行放置论文总览链接；whoami 导航覆盖全部有效子页。导航不作为证据依赖。
 
 ## PDF 全文阅读
 
