@@ -10,7 +10,11 @@ const active=(status:string)=>['queued','running'].includes(status);
 const statuses:Record<string,string>={queued:'排队中',running:'运行中',completed:'已完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'};
 const connectionLabels:Record<string,string>={connecting:'正在连接',live:'实时连接',reconnecting:'正在重连',polling:'轮询更新',error:'连接中断',idle:'等待更新'};
 const taskType=(task:TaskItem)=>task.input.abstract_mode?'摘要分析':task.input.kind==='literature-card'?'论文分析':task.input.wiki_level==='discovery'?'主题发现':task.input.wiki_level==='overview'?'项目总览':'Wiki 综合';
-const progressEvent=(event:TaskEvent,error?:string)=>/^(连接状态：|模型调用失败：|PDF |阅读 PDF 第 |复用已完成批次 |启动本机 |Markdown 已发布：|用户取消任务|卡片生成：|输出校验：|自动补救|恢复合格草稿：|发布阶段：|全部目标草稿)/.test(event.message)||Boolean(error&&event.message===error);
+const progressEvent=(event:TaskEvent,error?:string)=>/^(连接状态：|模型调用失败：|PDF |阅读 PDF 第 |复用已完成批次 |启动本机 |Markdown 已发布：|用户取消任务|卡片生成：|文档生成：|输出校验：|自动补救|恢复合格草稿：|发布阶段：|全部目标草稿)/.test(event.message)||Boolean(error&&event.message===error);
+function generationMessage(message:string){
+ const old=message.match(/^卡片生成：待生成 (\d+)\/(\d+) 份；已恢复 (\d+) 份草稿$/);
+ return old?`文档生成：目标共 ${old[2]} 份，待生成 ${old[1]} 份，已恢复 ${old[3]} 份合格草稿（非完成进度）`:message;
+}
 function progressSummary(message:string|undefined){
  if(!message)return undefined;
  const pages=message.match(/提供第 (.+?) 页 \/ 共 (\d+) 页/);if(pages)return `阅读第 ${pages[1]} 页 / 共 ${pages[2]} 页`;
@@ -59,7 +63,7 @@ export function TaskWorkspace({projectId,focusId}:{projectId:string;focusId?:str
   {feed.error&&<ErrorNotice>{feed.error}</ErrorNotice>}
   <div className={`task-log-scroll ${raw?'task-raw':''}`} ref={scroll} tabIndex={0} aria-label={raw?'任务原始输出':'任务执行进展'} onScroll={event=>{const element=event.currentTarget;if(element.scrollHeight-element.scrollTop-element.clientHeight>60)setFollowing(false);else{setFollowing(true);setNewLogs(0);}}}>
    {feed.hasOlder&&<button type="button" className="task-older" disabled={feed.olderBusy} onClick={()=>void loadOlder()}>{feed.olderBusy?'正在加载…':'加载更早日志'}</button>}
-   {!visible.length?<div className="task-log-empty"><ListChecks size={24}/><p>{task?.status==='queued'?'任务排队中，启动后会在这里显示进展。':feed.connection==='connecting'?'正在读取日志…':raw?'暂无日志输出。':'暂无平台进展记录，可切换原始输出查看 Agent 日志。'}</p></div>:visible.map(event=><div key={event.seq} className="task-log-line"><time dateTime={event.at} title={new Date(event.at).toLocaleString()}>{new Date(event.at).toLocaleTimeString('zh-CN',{hour12:false})}</time><pre>{event.message}</pre></div>)}
+   {!visible.length?<div className="task-log-empty"><ListChecks size={24}/><p>{task?.status==='queued'?'任务排队中，启动后会在这里显示进展。':feed.connection==='connecting'?'正在读取日志…':raw?'暂无日志输出。':'暂无平台进展记录，可切换原始输出查看 Agent 日志。'}</p></div>:visible.map(event=><div key={event.seq} className="task-log-line"><time dateTime={event.at} title={new Date(event.at).toLocaleString()}>{new Date(event.at).toLocaleTimeString('zh-CN',{hour12:false})}</time><pre>{raw?event.message:generationMessage(event.message)}</pre></div>)}
   </div><footer className="task-log-footer"><label><input type="checkbox" checked={following} onChange={event=>{setFollowing(event.target.checked);if(event.target.checked)setNewLogs(0);}}/>自动跟随</label><span>已加载 {feed.events.length} 条{raw?' · 原始输出按存储内容展示':''}</span>{!following&&<button type="button" className="text-button" onClick={()=>{setFollowing(true);setNewLogs(0);}}><ChevronDown size={13}/>{newLogs?`${newLogs} 条新日志`:'回到最新'}</button>}</footer></div>;
  const results=task?.status==='completed'&&!task.input.abstract_mode?documents.filter(d=>task.input.kind==='literature-card'?d.source_id===task.input.source_ids[0]&&(d.kind==='literature-card'||task.input.include_source_wiki):d.id===task.output_id):[];
  return <section className="task-workspace"><header className="task-page-heading"><div><h2>Agent 任务</h2><p>查看执行进展、实时日志与生成结果。</p></div><div><span className={`task-connection ${listConnected?'':'lost'}`}><i/>{listConnected?'自动更新':'连接异常'}</span><button type="button" className="icon-button" aria-label="刷新任务" title="刷新任务" onClick={()=>void refresh()}><RefreshCw size={16}/></button></div></header>

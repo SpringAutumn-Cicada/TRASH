@@ -310,7 +310,7 @@ export class KnowledgeAgent implements TaskRunner {
         }
       };
       if(needed.length){
-        this.knowledge.event(task.task_id,`卡片生成：待生成 ${needed.length}/${paths.length} 份；已恢复 ${preserved.length} 份草稿`);
+        this.knowledge.event(task.task_id,`文档生成：目标共 ${paths.length} 份，待生成 ${needed.length} 份，已恢复 ${preserved.length} 份合格草稿（非完成进度）`);
         await runGeneration(prompt+`\n本次只生成或修复以下 output/ 相对路径：${needed.join('、')}。其余已合格文件禁止修改。每份必须落盘，不以最终回复替代文件。单文件硬上限1048576字节，不嵌入图片base64，不复制整篇原文。`,preserved);
       }else this.knowledge.event(task.task_id,'全部目标草稿已恢复；无需再次调用模型生成');
       phase('validation','校验知识页、导航与依据锚点');
