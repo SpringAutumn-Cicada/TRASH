@@ -16,6 +16,10 @@ export const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const timestampSchema = z.string().datetime({ offset: true });
 const refSchema = z.string().min(1);
 
+export const researchQuestionSchema=z.object({
+  id:z.string().regex(/^question_[A-Za-z0-9_-]+$/),title:z.string().trim().min(1).max(200),question:z.string().trim().min(1).max(10000),status:z.enum(['candidate','evidence-needed','selected','paused','excluded']),rationale:z.string().max(5000).default(''),source_run_id:z.string().optional(),source_candidate_id:z.string().optional(),evidence:z.array(z.object({id:z.string(),path:z.string()})).default([]),created_at:z.string(),updated_at:z.string()
+}).strict();
+export type ResearchQuestion=z.infer<typeof researchQuestionSchema>;
 export const researchProjectSchema = z.object({
   protocol_version: z.literal(PROTOCOL_VERSION),
   project_id: projectIdSchema,
@@ -24,6 +28,7 @@ export const researchProjectSchema = z.object({
   research_area: z.string().trim().min(1).max(500).optional(),
   research_interests: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
   research_stage: z.enum(["exploration","focused"]).optional(),
+  research_questions:z.array(researchQuestionSchema).max(100).optional(),
   module: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]*$/), version: z.string().min(1) }).strict(),
   status: z.enum(["active", "archived"]),
   created_at: timestampSchema,

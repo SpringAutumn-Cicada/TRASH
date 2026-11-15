@@ -1,3 +1,4 @@
+import {projectQuestions,saveProjectQuestion} from './research-questions.js';
 import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractFile,abstractText} from './abstract-library.js';
@@ -169,17 +170,32 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if(!subpath&&method==='PATCH'){
       const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_area:z.string().trim().min(1).max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
       if(input.expected_updated_at&&input.expected_updated_at!==project.updated_at){sendJson(response,409,{error:'VERSION_CONFLICT'});return;}
+      if(project.research_questions&&input.research_question!==undefined){sendJson(response,409,{error:'USE_RESEARCH_QUESTIONS'});return;}
       const at=new Date().toISOString(),{expected_updated_at,...changes}=input;
       store.db.prepare('UPDATE projects SET data=?,updated_at=? WHERE project_id=?').run(JSON.stringify({...project,...changes,updated_at:at}),at,projectId);
       sendJson(response,200,{project:store.getProject(projectId)});return;
     }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(subpath==='research-questions'&&method==='GET'){sendJson(response,200,{project,questions:projectQuestions(project)});return;}
+    const questionRoute=subpath.match(/^research-questions\/(question_[A-Za-z0-9_-]+)$/);
+    if((subpath==='research-questions'&&method==='POST')||(questionRoute&&method==='PATCH')){
+      const input=z.object({title:z.string().trim().min(1).max(200),question:z.string().trim().min(1).max(10000),status:z.enum(['candidate','evidence-needed','selected','paused','excluded']),rationale:z.string().max(5000).default(''),expected_updated_at:z.string(),source_run_id:z.string().optional(),source_candidate_id:z.string().optional()}).strict().parse(await readJson(request));
+      if(Boolean(input.source_run_id)!==Boolean(input.source_candidate_id)){sendJson(response,422,{error:'RESEARCH_CANDIDATE_SOURCE_REQUIRED'});return;}
+      if(questionRoute&&(input.source_run_id||input.source_candidate_id)){sendJson(response,400,{error:'RESEARCH_ORIGIN_IMMUTABLE'});return;}
+      let evidence:{id:string;path:string}[]|undefined;
+      if(!questionRoute&&input.source_run_id){const candidate=exploration.candidates(projectId,input.source_run_id).find(c=>c.id===input.source_candidate_id);if(!candidate?.complete){sendJson(response,422,{error:'RESEARCH_CANDIDATE_INCOMPLETE'});return;}evidence=candidate.evidence;}
+      sendJson(response,200,saveProjectQuestion(store,project,{...input,evidence},questionRoute?.[1]));return;
+    }
+    const candidatesRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/candidates$/);
+    if(candidatesRoute&&method==='GET'){sendJson(response,200,{project,candidates:exploration.candidates(projectId,candidatesRoute[1])});return;}
     if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId)});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default('')}).strict().parse(await readJson(request));
-      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions)});return;
+      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional()}).strict().parse(await readJson(request));
+      const question=input.question_id?projectQuestions(project).find(q=>q.id===input.question_id):undefined;
+      if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
+      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question)});return;
     }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
     if(explorationAction&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1]):exploration.cancel(projectId,explorationAction[1])});return;}

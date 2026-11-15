@@ -1,3 +1,4 @@
+import {researchExplorationIssues} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
 import {readPaperChapters} from './chapter-reader.js';
 import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility} from './paper-wiki.js';
@@ -201,6 +202,7 @@ export class KnowledgeAgent implements TaskRunner {
         if(size>1024*1024){issues.push({path,reason:`文件超限：${size} 字节，上限 1048576 字节`,unsafe:false});continue;}
         const text=readFileSync(file,'utf8');
         if(!text.trim()){issues.push({path,reason:'文件为空',unsafe:false});continue;}
+        if(task.input.research_exploration){const errors=researchExplorationIssues(path,text,task.input.research_exploration);if(errors.length){issues.push({path,reason:errors.join('；'),unsafe:false});continue;}}
         if(task.input.abstract_mode){
           if(!/^#\s+.+/m.test(text)||!text.includes('材料范围：仅摘要')||!text.includes(task.input.source_ids[0])){issues.push({path,reason:'摘要结果缺少标题、材料范围或来源标识',unsafe:false});continue;}
           const headings=(path.startsWith('abstract-library/wiki/')||path.endsWith('/memory.md'))?['何时读取','摘要事实','研究线索','可能关联','证据边界','原始摘要入口']:['研究问题','方法概览','作者声称的贡献','摘要中的结果','研究线索','分析边界'];
