@@ -1,3 +1,4 @@
+import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {evidenceMigrationPreview,migrateEvidence} from './evidence-migration.js';
 import {projectQuestions,saveProjectQuestion} from './research-questions.js';
 import {ResearchExploration} from './research-exploration.js';
@@ -306,6 +307,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge/context'&&method==='GET'){const input=z.object({q:z.string().min(1).max(500),budget:z.coerce.number().int().min(1000).max(24000).default(16000)}).parse(Object.fromEntries(url.searchParams));sendJson(response,200,markdown.context(projectId,input.q,input.budget));return;}
       if(subpath==='markdown-knowledge/log'&&method==='GET'){const page=z.coerce.number().int().positive().default(1).parse(url.searchParams.get('page')??undefined);sendJson(response,200,markdown.operations(projectId,page));return;}
       if(subpath==='markdown-knowledge/document'&&method==='GET'){sendJson(response,200,{document:markdown.read(projectId,url.searchParams.get('id')??'')});return;}
+      if(subpath==='markdown-knowledge/paper-versions'&&method==='GET'){const source=z.string().regex(/^source_[A-Za-z0-9_-]+$/).parse(url.searchParams.get('source_id'));sendJson(response,200,new PaperWikiVersions(store,markdown,projectId,source).list());return;}
+      if(subpath==='markdown-knowledge/paper-versions/file'&&method==='GET'){const source=z.string().regex(/^source_[A-Za-z0-9_-]+$/).parse(url.searchParams.get('source_id'));sendJson(response,200,new PaperWikiVersions(store,markdown,projectId,source).file(url.searchParams.get('version_id')??'',url.searchParams.get('path')??''));return;}
+      if(['markdown-knowledge/paper-versions/preview','markdown-knowledge/paper-versions/action'].includes(subpath)&&method==='POST'){
+        const input=z.object({source_id:z.string().regex(/^source_[A-Za-z0-9_-]+$/),action:z.enum(['restore','trash','untrash','purge','note','cleanup','undo-cleanup']),id:z.string().max(120).optional(),paths:z.array(z.string().max(500)).max(120).optional(),expected:z.string().optional(),note:z.string().max(200).optional(),confirm:z.literal(true).optional()}).strict().parse(await readJson(request));
+        const manager=new PaperWikiVersions(store,markdown,projectId,input.source_id);
+        if(subpath.endsWith('/preview')){sendJson(response,200,manager.preview(input.action,input.id,input.paths));return;}
+        if(!input.confirm||!input.expected){sendJson(response,400,{error:'请先预览并确认操作'});return;}
+        if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){sendJson(response,409,{error:'项目有活动任务，完成后可操作'});return;}
+        sendJson(response,200,manager.act({...input,expected:input.expected}));return;
+      }
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){
         // Local saves/reviews use the document hash, not the project-wide Agent lock.
