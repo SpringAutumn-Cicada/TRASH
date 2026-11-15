@@ -1,3 +1,4 @@
+import {classifyPaperFiles,taskGeneratedHashes} from './paper-wiki-groups.js';
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,renameSync,unlinkSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve,sep} from 'node:path';
@@ -39,9 +40,9 @@ export class PaperWikiVersions{
  private save(state:State){this.atomic(this.base+'/state.json',JSON.stringify(state));}
  private blob(value:string){const digest=hash(value),file=this.path(this.base+'/objects/'+digest+'.md');if(!existsSync(file))this.atomic(this.base+'/objects/'+digest+'.md',value);return digest;}
  private text(file:FileVersion){const historical=this.historicalCache?.texts.get(file.hash);if(historical!==undefined)return historical;if(!/^[a-f0-9]{64}$/.test(file.hash))fail('快照hash无效');const text=readFileSync(this.path(this.base+'/objects/'+file.hash+'.md'),'utf8');if(hash(text)!==file.hash)fail('版本快照已损坏');return text;}
- private docs(){return this.markdown.index(this.project).documents;}
+ private docs(){return this.markdown.index(this.project,false,true).documents;}
  private live(){
-  const all=this.docs(),byPath=new Map(all.map(doc=>[doc.path,doc]));
+  const all=this.markdown.index(this.project).documents,byPath=new Map(all.map(doc=>[doc.path,doc]));
   const entry=this.prefix+'whoami.md';if(!byPath.has(entry))return [];
   const paths=new Set([entry]),pending=[entry];
   while(pending.length){const doc=byPath.get(pending.pop()!);for(const target of [...(doc?.links??[]).map(link=>link.path),...(doc?.dependencies??[]).map(ref=>ref.path)])if(target.startsWith(this.prefix)&&!paths.has(target)){paths.add(target);pending.push(target);}}
@@ -61,7 +62,8 @@ export class PaperWikiVersions{
   const state=this.readState(),live=this.virtual(),current_id=this.currentId(state,live),byPath=new Map(live.files.map(file=>[file.path,file.hash]));
   const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!state.historical_records?.[version.id]?.purged&&!state.versions.some(saved=>saved.task_id===version.task_id)).map(version=>({...version,trashed_at:state.historical_records?.[version.id]?.trashed_at}))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
   const current=new Set(live.files.map(file=>file.path));
-  const old=this.docs().filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix)&&!current.has(doc.path)).map(doc=>({path:doc.path,hash:doc.hash,title:doc.document_title??doc.title,blockers:this.blockers([doc.path])}));
+  const statuses=classifyPaperFiles(this.markdown.root(this.project),this.source,this.docs(),taskGeneratedHashes(this.store,this.project,this.source)).files;
+  const old=this.docs().filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix)&&!current.has(doc.path)).map(doc=>({path:doc.path,hash:doc.hash,title:doc.document_title??doc.title,group_status:statuses.find(file=>file.path===doc.path)?.status,reason:statuses.find(file=>file.path===doc.path)?.reason,blockers:[...this.blockers([doc.path]),...statuses.filter(file=>file.path===doc.path&&['retained','unassigned'].includes(file.status)).map(file=>file.reason)]}));
   return {current_id,versions,historical_analysis_count:this.historical().versions.length,old_files:old,cleanups:state.cleanups.map(item=>({...item,files:item.files.map(({path,hash})=>({path,hash}))})),expected:this.expected(),busy:this.busy()};
  }
  /** Replay only recorded publications. Never fill historical holes with live files. */

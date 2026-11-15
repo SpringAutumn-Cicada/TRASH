@@ -1,3 +1,4 @@
+import {paperMembership,groupPath,readPaperGroup,type GroupStatus} from './paper-wiki-groups.js';
 import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
 import {paperCompatibility} from './paper-wiki.js';
 import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId} from '@trash/protocol';
@@ -11,7 +12,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
+export type MarkdownDocument={group_status?:GroupStatus;id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
@@ -75,7 +76,7 @@ export class MarkdownKnowledge {
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
   private writeIndex(project:string,value:unknown){const file=this.internal(project,'.trash/knowledge-index-v2.json');mkdirSync(dirname(file),{recursive:true});const temp=file+'.tmp';writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,file);}
-  index(project:string,force=false){
+  index(project:string,force=false,includeRetired=false){
     this.recover(project);
     this.store.db.exec("CREATE TABLE IF NOT EXISTS knowledge_search_v2(project TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(project,path))");
     type Entry={signature:string;document?:Omit<MarkdownDocument,'text'>;error?:string};
@@ -95,18 +96,22 @@ export class MarkdownKnowledge {
       const id=(area==='wiki'?'abstract-wiki-':'abstract-note-')+source.source_id;
       entries[path]={signature:'abstract:'+digest(text),document:{id,kind:area==='wiki'?'wiki-page':'literature-card',card_type:area==='wiki'?undefined:'detail',material_scope:'abstract',level:'abstract',source_id:source.source_id,title:source.title,path,hash:digest(text),modified:lstatSync(file).mtime.toISOString(),status:'accepted',summary:text.replace(/^#+.*$/gm,'').replace(/\s+/g,' ').slice(0,180),links:knowledgeLinks(path,text)}};
     }
-    this.store.db.transaction(()=>{for(const [path,entry] of Object.entries(entries)){if(!entry.document){this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,path);continue;}const cached=this.store.db.prepare('SELECT hash FROM knowledge_search_v2 WHERE project=? AND path=?').get(project,path) as {hash:string}|undefined;if(force||cached?.hash!==entry.document.hash)this.store.db.prepare('INSERT OR REPLACE INTO knowledge_search_v2(project,path,hash,text) VALUES(?,?,?,?)').run(project,path,entry.document.hash,readFileSync(this.locate(project,path),'utf8'));}for(const row of this.store.db.prepare('SELECT path FROM knowledge_search_v2 WHERE project=?').all(project) as {path:string}[])if(!entries[row.path]?.document)this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,row.path);})();
+    const paperDocuments=Object.values(entries).flatMap(entry=>entry.document?[entry.document]:[]);
+    const membership=new Map([...new Set(paperDocuments.flatMap(doc=>doc.source_id&&doc.path.startsWith(`knowledge_base/papers/${doc.source_id}/`)?[doc.source_id]:[]))].map(source=>[source,paperMembership(this.root(project),source,paperDocuments).current]));
+    for(const entry of Object.values(entries)){const doc=entry.document;if(doc?.source_id&&membership.has(doc.source_id)&&doc.path.startsWith(`knowledge_base/papers/${doc.source_id}/`))doc.group_status=membership.get(doc.source_id)!.has(doc.path)?'current':'unassigned';}
+    const active=(doc:Omit<MarkdownDocument,'text'>|undefined)=>Boolean(doc&&(!doc.group_status||doc.group_status==='current'));
+    this.store.db.transaction(()=>{for(const [path,entry] of Object.entries(entries)){if(!active(entry.document)){this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,path);continue;}if(!entry.document)continue;const cached=this.store.db.prepare('SELECT hash FROM knowledge_search_v2 WHERE project=? AND path=?').get(project,path) as {hash:string}|undefined;if(force||cached?.hash!==entry.document.hash)this.store.db.prepare('INSERT OR REPLACE INTO knowledge_search_v2(project,path,hash,text) VALUES(?,?,?,?)').run(project,path,entry.document.hash,readFileSync(this.locate(project,path),'utf8'));}for(const row of this.store.db.prepare('SELECT path FROM knowledge_search_v2 WHERE project=?').all(project) as {path:string}[])if(!active(entries[row.path]?.document))this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,row.path);})();
     if(force||JSON.stringify(entries)!==JSON.stringify(old))this.writeIndex(project,{version:2,entries});
     const displayTitle=(d:Omit<MarkdownDocument,'text'>)=>d.source_id&&!d.id.includes('--')?(this.store.getSource(d.source_id)?.title||d.title):d.title;
     const lines=['# Wiki 导航','平台生成，可从 Markdown 重建；按需检索，不要求每轮全文读取。',''];
-    for(const entry of Object.values(entries)){const d=entry.document;if(d?.kind==='wiki-page')lines.push(`- [${displayTitle(d).replace(/[\[\]\r\n]/g,' ')}](../${d.path}) · ${d.level} · ${d.summary??''}`);}
+    for(const entry of Object.values(entries)){const d=entry.document;if(d?.kind==='wiki-page'&&active(d))lines.push(`- [${displayTitle(d).replace(/[\[\]\r\n]/g,' ')}](../${d.path}) · ${d.level} · ${d.summary??''}`);}
     const navigation=this.internal(project,'.trash/wiki-index.md'),navigationText=lines.join('\n')+'\n';
     if(!existsSync(navigation)||readFileSync(navigation,'utf8')!==navigationText){mkdirSync(dirname(navigation),{recursive:true});writeFileSync(navigation+'.tmp',navigationText,{mode:0o600});renameSync(navigation+'.tmp',navigation);}
     if(migrated){
       const homepage=['# 知识库','原始全文与摘要分开管理；卡片、研究记忆与主题统一导航。',''];
       const paperEntry=(d:Omit<MarkdownDocument,'text'>)=>d.path.includes('/papers/')&&(d.path===`knowledge_base/papers/${d.source_id}/whoami.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/whoami.md`)&&(d.path===`knowledge_base/papers/${d.source_id}/index.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/index.md`)&&(d.id===`wiki-${d.source_id}`||d.card_type==='key')))));
       for(const [label,test] of [['项目总览',(d:Omit<MarkdownDocument,'text'>)=>d.level==='overview'],['论文知识',paperEntry],['摘要知识',(d:Omit<MarkdownDocument,'text'>)=>d.material_scope==='abstract'&&(d.kind==='wiki-page'||!Object.values(entries).some(entry=>entry.document?.source_id===d.source_id&&entry.document?.kind==='wiki-page'))],['知识主题',(d:Omit<MarkdownDocument,'text'>)=>d.level==='topic'],['研究假设',(d:Omit<MarkdownDocument,'text'>)=>d.level==='hypothesis'],['发现清单',(d:Omit<MarkdownDocument,'text'>)=>d.level==='discovery'],['分批总结',(d:Omit<MarkdownDocument,'text'>)=>d.level==='summary']] as const){
-        homepage.push('## '+label);for(const entry of Object.values(entries)){const doc=entry.document;if(doc&&test(doc))homepage.push('- ['+displayTitle(doc).replace(/[\[\]\r\n]/g,' ')+(doc.card_type?' · '+doc.card_type:'')+']('+doc.path.replace(/^knowledge_base\//,'')+')');}
+        homepage.push('## '+label);for(const entry of Object.values(entries)){const doc=entry.document;if(doc&&active(doc)&&test(doc))homepage.push('- ['+displayTitle(doc).replace(/[\[\]\r\n]/g,' ')+(doc.card_type?' · '+doc.card_type:'')+']('+doc.path.replace(/^knowledge_base\//,'')+')');}
       }
       const home=this.internal(project,'knowledge_base/index.md'),body=homepage.join('\n')+'\n';if(!existsSync(home)||readFileSync(home,'utf8')!==body){writeFileSync(home+'.tmp',body,{mode:0o600});renameSync(home+'.tmp',home);}
     }
@@ -121,7 +126,7 @@ export class MarkdownKnowledge {
     }
     // Propagate invalidation through the actual dependency graph, including missing files.
     for(let i=0;i<documents.length;i++){let changed=false;for(const doc of documents)if(!doc.stale&&doc.dependencies?.some(ref=>documents.find(d=>d.path===ref.path)?.stale)){doc.stale=true;changed=true;}if(!changed)break;}
-    return {documents:documents.sort((a,b)=>b.modified.localeCompare(a.modified)),errors};
+    return {documents:documents.filter(doc=>includeRetired||active(doc)).sort((a,b)=>b.modified.localeCompare(a.modified)),errors};
   }
   read(project:string,id:string){
     if(id.startsWith('abstract-material-')){
@@ -130,7 +135,7 @@ export class MarkdownKnowledge {
       const text='# '+source.title+'\n\n'+source.authors.join(', ')+'\n\n'+(source.publication_date??'')+'\n\n'+(source.abstract??'');
       return {id,kind:'literature-card' as const,material_scope:'abstract' as const,card_type:'detail' as const,level:'abstract',title:source.title,source_id:source.source_id,path:'abstract-library/materials/'+source.source_id+'.md',text,hash:digest(text),modified:source.imported_at,status:'accepted',stale:false};
     }
-    const entry=this.index(project).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash)fail('VERSION_CONFLICT');return {...entry,text};}
+    const entry=this.index(project,false,true).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash)fail('VERSION_CONFLICT');return {...entry,text};}
   list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.read(project,d.id))};}
   query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean;include_summaries?:boolean}={}){
     const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level));
