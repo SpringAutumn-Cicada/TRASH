@@ -28,6 +28,12 @@ export function stageKnowledgeSkill(directory:string){
 export function stageSynthesisSkill(directory:string){
   for(const name of synthesisSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(join(synthesisSkillRoot,name),'utf8'),{mode:0o600});}
 }
+export function stageChatSkills(directory:string){
+  stageSynthesisSkill(directory);
+  const target=join(directory,'literature-skill','references','paper-wiki.md');
+  mkdirSync(dirname(target),{recursive:true});
+  writeFileSync(target,readFileSync(join(skillRoot,'references/paper-wiki.md'),'utf8'),{mode:0o600});
+}
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}
   root(project:string){if(!this.store.getProject(project))fail('PROJECT_NOT_FOUND',404);const root=join(this.store.root,'projects',project);mkdirSync(root,{recursive:true});return realpathSync(root);}
