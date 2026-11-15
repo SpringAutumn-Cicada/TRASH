@@ -137,7 +137,7 @@ export class MarkdownKnowledge {
   }
   relations(project:string,id:string){
     const docs=this.index(project).documents,doc=docs.find(d=>d.id===id);if(!doc)fail('NOT_FOUND',404);
-    const describe=(path:string)=>{const target=docs.find(d=>d.path===path);return {id:target?.id,path,title:target?.title??path,missing:!target,stale:target?.stale??false};};
+    const describe=(path:string)=>{const target=docs.find(d=>d.path===path);return {id:target?.id,path,title:target?.title??path,hash:target?.hash,missing:!target,stale:target?.stale??false};};
     return {
       id,
       evidence:(doc.dependencies??[]).map(ref=>({...describe(ref.path),hash:ref.hash,changed:docs.find(d=>d.path===ref.path)?.hash!==ref.hash,relation:'依据',reason:doc.links?.find(l=>l.path===ref.path&&l.evidence)?.reason??'生成或编辑时记录的依据'})),
@@ -175,15 +175,15 @@ export class MarkdownKnowledge {
       const related=docs.find(item=>item.path===path);if(related&&related.page_role!=='evidence'&&related.page_role!=='evidence-index'&&!related.path.endsWith('/evidence.md')&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
     }
     let remaining=Math.min(24000,Math.max(1000,budget));const omitted:string[]=[];
-    const records=selected.flatMap(d=>{const text=this.read(project,d.id).text;if(text.length>remaining){omitted.push(d.id);return [];}remaining-=text.length;return [{id:d.id,path:d.path,title:d.title,hash:d.hash,stale:d.stale,text}];});
+    const records=selected.flatMap(d=>{const text=this.read(project,d.id).text;if(text.length>remaining){omitted.push(d.id);return [];}remaining-=text.length;return [{id:d.id,path:d.path,title:d.title,source_id:d.source_id,source_title:d.source_id?this.store.getSource(d.source_id)?.title:undefined,hash:d.hash,stale:d.stale,text}];});
     const evidencePaths=new Set(selected.filter(d=>records.some(record=>record.id===d.id)).flatMap(d=>(d.links??[]).filter(link=>link.evidence).map(link=>link.path)));
     const evidence_candidates=docs.filter(d=>evidencePaths.has(d.path)).map(d=>({id:d.id,path:d.path,title:d.title,hash:d.hash,source_id:d.source_id,summary:d.summary,stale:d.stale}));
-    return {query,documents:records,evidence_candidates,omitted,characters:records.reduce((n,d)=>n+d.text.length,0),candidates:ranked.length,note:'先读匹配职责页及一跳知识关联；evidence_candidates仅为未读目录，按需用evidence/get查支撑与反例，不能声称已查阅。'};
+    return {query,documents:records,evidence_candidates:evidence_candidates.slice(0,40),evidence_candidates_total:evidence_candidates.length,evidence_candidates_omitted:Math.max(0,evidence_candidates.length-40),omitted,characters:records.reduce((n,d)=>n+d.text.length,0),candidates:ranked.length,note:'先读匹配职责页及一跳知识关联；evidence_candidates仅为未读目录，按需用evidence/get查支撑与反例，不能声称已查阅。'};
   }
   evidence(project:string,id:string){
     const record=this.read(project,id);
     if(!/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(record.path)||!('page_role' in record)||record.page_role!=='evidence')fail('EVIDENCE_RECORD_REQUIRED',422);
-    return {record,citations:this.relations(project,id).backlinks.filter(link=>link.evidence),note:'引用位置基于当前正文解析；返回的依据内容不代表重新核验PDF。'};
+    return {record,source:record.source_id?{source_id:record.source_id,title:this.store.getSource(record.source_id)?.title}:undefined,citations:this.relations(project,id).backlinks.filter(link=>link.evidence),note:'引用位置基于当前正文解析；返回的依据内容不代表重新核验PDF。'};
   }
   recordOperation(project:string,operation:string,documents:{id:string;path:string;hash:string}[],note=''){
     this.store.db.exec('CREATE TABLE IF NOT EXISTS knowledge_memory_events(id TEXT PRIMARY KEY,project TEXT NOT NULL,at TEXT NOT NULL,operation TEXT NOT NULL,data TEXT NOT NULL)');
@@ -228,7 +228,7 @@ export class MarkdownKnowledge {
     return this.save(project,doc.path,text,expected);
   }
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
-  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={}){
+  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={},options:{preserveSourceVersions?:boolean}={}){
     this.recover(project);
     if(!files.length||files.length>128||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const manifest=migrationManifest(this.root(project));const nextPath=manifest?.paths[original.path]??knowledgePath(original.path,text.match(/^level:\s*(\S+)/m)?.[1]);const file={...original,path:manifest?nextPath:original.path,text:manifest&&nextPath!==original.path?rewriteKnowledgeText(text,original.path,nextPath,manifest.paths):text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
@@ -254,6 +254,11 @@ export class MarkdownKnowledge {
     }
     // All checks and writes are synchronous: no other server request can interleave this commit.
     const previousDependencies=new Map(this.index(project).documents.map(d=>[d.path,d.dependencies??[]]));
+    const sourceVersions=new Map(targets.map(file=>{
+      if(!options.preserveSourceVersions)return [file.doc.id,undefined] as const;
+      for(const id of [file.doc.id,`wiki-${file.doc.source_id}--evidence`]){const path=this.internal(project,`.trash/knowledge-sources/${id}.json`);if(existsSync(path))return [file.doc.id,readFileSync(path,'utf8')] as const;}
+      return [file.doc.id,undefined] as const;
+    }));
     const staged=targets.map(file=>{mkdirSync(dirname(file.target),{recursive:true});const temp=file.target+'.'+randomUUID()+'.tmp';writeFileSync(temp,file.text,{mode:0o600,flag:'wx'});return {...file,temp};});
     const journal=this.internal(project,'.trash/markdown-transaction.json');mkdirSync(dirname(journal),{recursive:true});
     const transaction={committed:false,files:targets.map(({path,text,before})=>({path,text,before}))};
@@ -268,7 +273,7 @@ export class MarkdownKnowledge {
       const refs=(file.doc.links??[]).filter(link=>link.evidence).flatMap(link=>{try{const target=this.locate(project,link.path);const old=previousDependencies.get(file.path)?.find(ref=>ref.path===link.path);return existsSync(target)?[old??{path:link.path,hash:digest(readFileSync(target,'utf8'))}]:[{path:link.path,hash:old?.hash??'missing'}];}catch{return [];}});
       this.stamp(project,file.doc.id,refs);
     }
-    for(const file of staged.filter(f=>f.doc.source_id)){const stamp=this.internal(project,`.trash/knowledge-sources/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({hash:sourceContentHash(this.store.getSource(file.doc.source_id!))}),{mode:0o600});}
+    for(const file of staged.filter(f=>f.doc.source_id)){const stamp=this.internal(project,`.trash/knowledge-sources/${file.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});const version=options.preserveSourceVersions?sourceVersions.get(file.doc.id):JSON.stringify({hash:sourceContentHash(this.store.getSource(file.doc.source_id!))});if(version!==undefined)writeFileSync(stamp,version,{mode:0o600});}
     this.recordOperation(project,'publish',staged.map(f=>({id:f.doc.id,path:f.path,hash:f.doc.hash})));
     return staged.map(f=>f.doc);
   }

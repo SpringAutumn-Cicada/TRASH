@@ -1,3 +1,4 @@
+import {evidenceMigrationPreview,migrateEvidence} from './evidence-migration.js';
 import {projectQuestions,saveProjectQuestion} from './research-questions.js';
 import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
@@ -291,6 +292,13 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
         const result=subpath.endsWith('/migrate')?migrateKnowledgeBase(markdown.root(projectId),input.expected??''):rollbackKnowledgeBase(markdown.root(projectId));markdown.index(projectId,true);sendJson(response,200,result);return;
       }
+      if(subpath==='markdown-knowledge/evidence-migration-preview'&&method==='GET'){const source=z.string().regex(/^source_[A-Za-z0-9_-]+$/).parse(url.searchParams.get('source_id'));sendJson(response,200,evidenceMigrationPreview(markdown,projectId,source));return;}
+      if(subpath==='markdown-knowledge/evidence-migrate'&&method==='POST'){
+        const input=z.object({source_id:z.string().regex(/^source_[A-Za-z0-9_-]+$/),expected:z.string().length(64),confirm:z.literal(true)}).strict().parse(await readJson(request));
+        if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+        sendJson(response,200,migrateEvidence(markdown,projectId,input.source_id,input.expected));return;
+      }
+      if(subpath==='markdown-knowledge/evidence'&&method==='GET'){sendJson(response,200,markdown.evidence(projectId,url.searchParams.get('id')??''));return;}
       if(subpath==='markdown-knowledge/graph'&&method==='GET'){sendJson(response,200,markdown.graph(projectId));return;}
       if(subpath==='markdown-knowledge/relations'&&method==='GET'){sendJson(response,200,markdown.relations(projectId,url.searchParams.get('id')??''));return;}
       if(subpath==='markdown-knowledge/health'&&method==='GET'){sendJson(response,200,markdown.health(projectId));return;}

@@ -111,7 +111,7 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
       const ledger=join(workspace,'knowledge-reads.json');rememberRead(ledger,record.path,record.hash,offset,Math.min(record.text.length,offset+length),record.text.length);
       const {text,...metadata}=record;const end=Math.min(text.length,offset+length);
       if(writable)markdown.recordOperation(projectId,value.operation==='evidence'?'read-evidence':'read', [{id:record.id,path:record.path,hash:record.hash}],`实际返回字符 ${offset}–${end}/${text.length}；${end<text.length?'尚有未读内容':'已到末尾'}；不代表已核验PDF。`);
-      return {record:{...metadata,text:text.slice(offset,end)},offset,total:text.length,next_offset:end<text.length?end:null,working_copy:draft,...(evidence?{citations:evidence.citations,note:evidence.note}:{})};
+      return {record:{...metadata,text:text.slice(offset,end)},offset,total:text.length,next_offset:end<text.length?end:null,working_copy:draft,...(evidence?{source:evidence.source,citations:evidence.citations,note:evidence.note}:{})};
     }
     experimentError('MARKDOWN_DIRECT_WRITE_REQUIRED',409);
   }
