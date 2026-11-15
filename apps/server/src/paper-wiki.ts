@@ -90,5 +90,5 @@ export function paperWikiPrompt(source:string,wikiOnly:boolean){
  const prefix=`knowledge_base/papers/${source}/`;
  return `读取 literature-skill/SKILL.md、literature-skill/references/paper-wiki.md、literature-skill/contract.json 和 input.json，使用 trash-literature-wiki。只处理 source_id=${source}。
 ${wikiOnly?'仅基于实际提供材料修订，保留人工内容，不宣称重新阅读PDF。':'完整读取本次全部有效四页图文批次笔记，在同一次生成中综合全文；重新分析从空输出开始，不读取历史Wiki。'}
-直接写 Markdown 到 output/${prefix}。必需输出：${paperWikiNames.filter(name=>name!=='evidence.md').map(name=>name+'（ID='+knowledgeDocumentId(prefix+name)+'）').join('、')}。evidence.md由发布前脚本生成；若已有目录不得添加说明正文。可选方法和结果子页、独立依据按skill生成。不要运行发布前脚本或写派生manifest，由平台统一执行。其他文件仅供阅读，不修改。用户要求：`;
+直接写 Markdown 到 output/${prefix}。必需输出：${paperWikiNames.filter(name=>name!=='evidence.md').map(name=>name+'（ID='+knowledgeDocumentId(prefix+name)+'）').join('、')}。evidence.md由发布前脚本生成；若已有目录不得添加说明正文。方法和结果子页按需生成。独立依据是必需输出：必须写 evidence/ev-reading-scope.md，以及支撑正文引用的 evidence/ev-<slug>.md；每个引用对应一个实际文件，不能只在正文写链接。依据内容由模型依据当前材料生成，脚本仅生成目录，不会生成依据事实。不要运行发布前脚本或写派生manifest，由平台统一执行。其他文件仅供阅读，不修改。用户要求：`;
 }

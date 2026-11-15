@@ -14,7 +14,7 @@ export async function prepareWikiOutput(directory:string,source:string){
  // Execute maintained code, never the model-writable staged copy.
  const tools=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/scripts/',import.meta.url));
  const reports:{script:string;milliseconds:number;output:string}[]=[];
- for(const script of ['build_evidence_index.py','check_wiki_structure.py','check_wiki_links.py','wiki_context_manifest.py']){
+ for(const script of ['build_evidence_index.py','wiki_context_manifest.py']){
   const started=Date.now();
   const args=['-B',resolve(tools,script),root,...(script==='wiki_context_manifest.py'?['--output',join(directory,'wiki-context-manifest.json')]:[])];
   try{

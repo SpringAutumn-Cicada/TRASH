@@ -14,7 +14,7 @@ def build(root: Path) -> Path:
     evidence_dir = root / "evidence"
     entries = sorted(evidence_dir.glob("ev-*.md"))
     if not entries:
-        raise ValueError("refusing to build empty evidence index")
+        raise ValueError("缺少独立依据文件：evidence/ev-*.md 未生成。目录脚本只能汇总已有条目，不能代写依据；请先补齐 ev-reading-scope.md 和正文引用的依据，再生成目录。")
     if not (root / "whoami.md").is_file() or not source_id(root):
         raise ValueError("missing Wiki identity")
     title = first_heading((root / "whoami.md").read_text(encoding="utf-8")) if (root / "whoami.md").exists() else root.name

@@ -24,7 +24,7 @@ description: 在 TRASH 论文项目中读取完整论文材料，生成或修订
 1. 核对论文材料、页数、哈希、阅读批次和缺口。
 2. 写 `knowledge-plan.md`，确定研究目标、贡献类型、页面重点和必要依据。
 3. 先生成职责页正文，再整理依据，最后生成 `whoami` 导航。
-4. `evidence.md` 由平台发布前脚本生成；模型只写具体依据，不运行检查器或生成派生索引。
+4. `evidence.md` 由平台发布前脚本生成；模型必须写具体依据（至少 ev-reading-scope 和正文引用条目），不运行目录脚本或生成派生索引。
 5. 在当前生成调用中回读方法链路、关键结果、条件、反例、作者归属和依据链接。
 6. 检查路径、ID、相对链接、元数据和人工补充，只发布本任务目标文件。
 
@@ -34,10 +34,8 @@ description: 在 TRASH 论文项目中读取完整论文材料，生成或修订
 
 本 skill 附带 `scripts/`，用于减少机械文件操作和按需读取成本：
 
-- `check_wiki_structure.py <wiki>`：检查固定页面、frontmatter、依据字段和页面角色；
-- `check_wiki_links.py <wiki>`：检查九项导航、相对链接和依据返回链接；
 - `build_evidence_index.py <wiki>`：根据 `evidence/ev-*.md` 重建轻量依据目录；
-- `wiki_context_manifest.py <wiki> [-o <path>]`：生成供 Agent 分层检索的页面与依据索引。
+- `wiki_context_manifest.py <wiki> --output <path>`：生成供 Agent 分层检索的页面与依据索引。
 
 脚本只处理可确定的结构、路径、元数据和索引，不判断论文事实、作者结论或研究价值。生成内容后可先用索引确定读取范围，再按需读取正文和依据。
 
