@@ -3,11 +3,12 @@ import {existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,renameSync,unlin
 import {dirname,join,resolve,sep} from 'node:path';
 import type {TrashStore} from '@trash/storage';
 import type {MarkdownKnowledge} from './markdown-knowledge.js';
+import {knowledgeLinks} from './knowledge-links.js';
 import {bibliographyState,parseIdcard} from './source-bibliography.js';
 
 type Ref={path:string;hash:string};
 type FileVersion={path:string;hash:string;id:string;dependencies:Ref[];source_stamp?:string};
-type Version={id:string;at:string;reason:string;note?:string;task_id?:string;files:FileVersion[];trashed_at?:string};
+type Version={id:string;at:string;reason:string;note?:string;task_id?:string;files:FileVersion[];trashed_at?:string;historical?:boolean;missing_paths?:string[];publication_count?:number;publication_id?:string};
 type Cleanup={id:string;at:string;files:FileVersion[];restored_at?:string};
 type State={version:1;versions:Version[];cleanups:Cleanup[]};
 export type VersionAction='restore'|'trash'|'untrash'|'purge'|'note'|'cleanup'|'undo-cleanup';
@@ -37,7 +38,7 @@ export class PaperWikiVersions{
  private atomic(relative:string,text:string){const file=this.path(relative);mkdirSync(dirname(file),{recursive:true});const temp=file+'.'+randomUUID()+'.tmp';writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,file);}
  private save(state:State){this.atomic(this.base+'/state.json',JSON.stringify(state));}
  private blob(value:string){const digest=hash(value),file=this.path(this.base+'/objects/'+digest+'.md');if(!existsSync(file))this.atomic(this.base+'/objects/'+digest+'.md',value);return digest;}
- private text(file:FileVersion){if(!/^[a-f0-9]{64}$/.test(file.hash))fail('快照hash无效');const text=readFileSync(this.path(this.base+'/objects/'+file.hash+'.md'),'utf8');if(hash(text)!==file.hash)fail('版本快照已损坏');return text;}
+ private text(file:FileVersion){const historical=this.historicalCache?.texts.get(file.hash);if(historical!==undefined)return historical;if(!/^[a-f0-9]{64}$/.test(file.hash))fail('快照hash无效');const text=readFileSync(this.path(this.base+'/objects/'+file.hash+'.md'),'utf8');if(hash(text)!==file.hash)fail('版本快照已损坏');return text;}
  private docs(){return this.markdown.index(this.project).documents;}
  private live(){
   const all=this.docs(),byPath=new Map(all.map(doc=>[doc.path,doc]));
@@ -58,16 +59,42 @@ export class PaperWikiVersions{
  private currentId(state:State,live:Version){return state.versions.find(version=>!version.trashed_at&&this.fingerprint(version.files)===this.fingerprint(live.files))?.id??live.id;}
  list(){
   const state=this.readState(),live=this.virtual(),current_id=this.currentId(state,live),byPath=new Map(live.files.map(file=>[file.path,file.hash]));
-  const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
+  const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!([...state.versions,live].some(saved=>JSON.stringify(saved.files.map(file=>[file.path,file.hash]).sort())===JSON.stringify(version.files.map(file=>[file.path,file.hash]).sort()))))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
   const current=new Set(live.files.map(file=>file.path));
   const old=this.docs().filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix)&&!current.has(doc.path)).map(doc=>({path:doc.path,hash:doc.hash,title:doc.document_title??doc.title,blockers:this.blockers([doc.path])}));
-  return {current_id,versions,old_files:old,cleanups:state.cleanups.map(item=>({...item,files:item.files.map(({path,hash})=>({path,hash}))})),expected:this.expected(),busy:this.busy()};
+  return {current_id,versions,historical_publications:this.historical().publications,old_files:old,cleanups:state.cleanups.map(item=>({...item,files:item.files.map(({path,hash})=>({path,hash}))})),expected:this.expected(),busy:this.busy()};
+ }
+ /** Replay only recorded publications. Never fill historical holes with live files. */
+ private historicalCache?:{versions:Version[];texts:Map<string,string>;publications:number};
+ private historical(){
+  if(this.historicalCache)return this.historicalCache;
+  const rows=this.store.db.prepare("SELECT id,at,data FROM knowledge_memory_events WHERE project=? AND operation='publish' ORDER BY at,id").all(this.project) as {id:string;at:string;data:string}[];
+  const state=new Map<string,FileVersion>(),texts=new Map<string,string>(),groups=new Map<string,Version>();let publications=0;
+  for(const row of rows){
+   let documents:{id:string;path:string;hash:string}[];try{documents=JSON.parse(row.data).documents??[];if(!Array.isArray(documents))continue;}catch{continue;}
+   const updates=documents.filter(doc=>typeof doc.path==='string'&&doc.path.startsWith(this.prefix)&&!doc.path.slice(this.prefix.length).split('/').some(part=>part==='..'||part==='.')&&/^[A-Za-z0-9_-]+$/.test(doc.id)&&/^[a-f0-9]{64}$/.test(doc.hash));
+   if(!updates.length)continue;publications++;
+   for(const doc of updates){state.set(doc.path,{...doc,dependencies:[]});if(texts.has(doc.hash))continue;
+    const snapshot=this.path(`.trash/markdown-history/${doc.id}/${doc.hash}.md`);
+    if(existsSync(snapshot)&&lstatSync(snapshot).size<=1024*1024){const text=readFileSync(snapshot,'utf8');if(hash(text)===doc.hash)texts.set(doc.hash,text);}
+   }
+   const entry=state.has(this.prefix+'whoami.md')?this.prefix+'whoami.md':this.prefix+'index.md';if(!state.has(entry))continue;
+   const pending=[entry],visited=new Set<string>(),files:FileVersion[]=[],missing=new Set<string>();
+   while(pending.length){const path=pending.pop()!;if(visited.has(path))continue;visited.add(path);const file=state.get(path);if(!file){missing.add(path);continue;}files.push(file);const text=texts.get(file.hash);if(text===undefined){missing.add(path);continue;}
+    const targets=knowledgeLinks(path,text).map(link=>link.path),scope=text.match(/^scope_ref:\s*(ev-[a-z0-9_-]+)\s*$/m)?.[1];if(scope&&path.includes('/evidence/'))targets.push(this.prefix+'evidence/'+scope+'.md');
+    pending.push(...targets.filter(target=>target.startsWith(this.prefix)&&!visited.has(target)));
+   }
+   files.sort((a,b)=>a.path.localeCompare(b.path));const signature=hash(JSON.stringify(files.map(file=>[file.path,file.hash]))),previous=groups.get(signature);
+   if(previous){previous.publication_count=(previous.publication_count??1)+1;if(updates.length>1)previous.reason='历史批量发布';continue;}
+   groups.set(signature,{id:'historical-'+signature,at:row.at,reason:updates.length>1?'历史批量发布':'历史编辑发布',files,historical:true,publication_id:row.id,missing_paths:[...missing].sort(),publication_count:1});
+  }
+  return this.historicalCache={versions:[...groups.values()].reverse(),texts,publications};
  }
  private busy(){return Boolean(this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(this.project));}
  private expected(){return hash(JSON.stringify([this.readState(),this.docs().map(doc=>[doc.path,doc.hash,doc.dependencies])]));}
  private blockers(paths:string[]){const selected=new Set(paths),current=new Set(this.live().map(doc=>doc.path));const refs=this.docs().filter(doc=>!selected.has(doc.path)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>selected.has(path))).map(doc=>doc.path);const retained=this.readState().versions.filter(version=>!version.trashed_at&&version.files.some(file=>selected.has(file.path))).map(version=>'历史版本：'+version.id);return [...new Set([...paths.filter(path=>current.has(path)),...refs,...retained])];}
- private getVersion(id:string){const state=this.readState(),live=this.virtual();return id===live.id?live:state.versions.find(version=>version.id===id)??fail('版本不存在');}
- file(version_id:string,path:string){const version=this.getVersion(version_id),file=version.files.find(item=>item.path===path);if(!file){const current=this.live().find(item=>item.path===path);if(!current)fail('版本中无此文件');return {path,text:'',current_text:this.markdown.read(this.project,current.id).text,hash:current.hash};}const text=version.id.startsWith('current-')?readFileSync(this.path(path),'utf8'):this.text(file);if(hash(text)!==file.hash)fail('文件已变化，请刷新');const current=this.live().find(item=>item.path===path);return {path,text,current_text:current?this.markdown.read(this.project,current.id).text:'',hash:file.hash};}
+ private getVersion(id:string){const state=this.readState(),live=this.virtual();return id===live.id?live:state.versions.find(version=>version.id===id)??this.historical().versions.find(version=>version.id===id)??fail('版本不存在');}
+ file(version_id:string,path:string){const version=this.getVersion(version_id),file=version.files.find(item=>item.path===path);if(!file){const current=this.live().find(item=>item.path===path);if(!current)fail('版本中无此文件');return {path,text:'',current_text:this.markdown.read(this.project,current.id).text,hash:current.hash};}if(version.historical&&!this.historical().texts.has(file.hash))fail('此历史文件快照缺失，无法读取；未使用当前正文替代');const text=version.id.startsWith('current-')?readFileSync(this.path(path),'utf8'):this.text(file);if(hash(text)!==file.hash)fail('文件已变化，请刷新');const current=this.live().find(item=>item.path===path);return {path,text,current_text:current?this.markdown.read(this.project,current.id).text:'',hash:file.hash};}
  preview(action:VersionAction,id?:string,paths:string[]=[]){
   const list=this.list();
   if(action==='cleanup'){
@@ -76,6 +103,7 @@ export class PaperWikiVersions{
   }
   if(action==='undo-cleanup'){const item=this.readState().cleanups.find(item=>item.id===id&&!item.restored_at);if(!item)fail('清理记录不存在');return {expected:list.expected,action,id,paths:item.files.map(file=>file.path),blockers:item.files.filter(file=>existsSync(this.path(file.path))&&hash(readFileSync(this.path(file.path),'utf8'))!==file.hash).map(file=>file.path),message:'恢复旧文件；存在同名文件时拒绝覆盖。'};}
   const version=id?this.getVersion(id):undefined;
+  if(version?.historical)fail('历史发布组仅供查阅比较；旧记录未保存完整来源状态，不能直接覆盖当前Wiki');
   if(!version)fail('请选择版本');
   if(['trash','purge'].includes(action)&&id===list.current_id)fail('不能删除当前版本');
   const blockers=action==='restore'?this.docs().filter(doc=>!doc.path.startsWith(this.prefix)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>path.startsWith(this.prefix)&&version.files.some(file=>file.path===path&&file.hash!==this.docs().find(doc=>doc.path===path)?.hash))).map(doc=>doc.path):[];
