@@ -194,13 +194,13 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId)});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([])}).strict().parse(await readJson(request));
+      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([])}).strict().parse(await readJson(request));
       const question=input.question_id?projectQuestions(project).find(q=>q.id===input.question_id):undefined;
       if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
       sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids)});return;
     }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
-    if(explorationAction&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1]):exploration.cancel(projectId,explorationAction[1])});return;}
+    if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional()}).strict().parse(await readJson(request));if(input.topic_id&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id):exploration.cancel(projectId,explorationAction[1])});return;}
     const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
     if(pdfView&&method==='GET'){const source=store.getSource(pdfView[1]);if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}response.writeHead(302,{location:`/pdf-reader?project=${encodeURIComponent(projectId)}&source=${encodeURIComponent(pdfView[1])}&hash=${encodeURIComponent(url.searchParams.get('hash')??'')}`});response.end();return;}
     const pdfRoute=subpath.match(/^sources\/([^/]+)\/pdf(?:\/pages\/(\d+))?$/);

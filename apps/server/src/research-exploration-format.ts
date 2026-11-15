@@ -2,7 +2,8 @@ import {knowledgeLinks} from './knowledge-links.js';
 
 export function researchExplorationIssues(path:string,text:string,mode:'summary'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic'):string[]{
  const issues:string[]=[];
- if(['summary','research-map','comparison','background','topic-discovery','topic'].includes(mode))return issues;
+ if(mode==='topic-discovery'){if(!/^## 材料范围\s*$/m.test(text))issues.push('主题发现缺少材料范围');if(!/^## (知识主题|候选线索)[：:]\s*\S/m.test(text)&&!text.includes('未发现可整理主题'))issues.push('主题发现需有效主题、候选线索或明确未发现可整理主题');return issues;}
+ if(['summary','research-map','comparison','background','topic'].includes(mode))return issues;
  const sections=text.split(/^##\s+/m).slice(1);
  if(mode==='evidence-plan'){
   for(const name of ['当前问题','已有支持与反例','关键证据缺口','定向检索计划','最小验证与推翻条件','停止或收敛条件'])if(!sections.some(section=>section.split('\n')[0].trim()===name&&section.split('\n').slice(1).join('').trim()))issues.push('补证据计划缺少有内容的栏目：'+name);
