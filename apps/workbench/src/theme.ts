@@ -2,11 +2,14 @@ import {readPreference,writePreference} from './navigation.js';
 
 export const themes=[{id:'graphite-purple',label:'石墨紫',browserColor:'#242633'},{id:'default',label:'经典绿',browserColor:'#f4f6f5'},{id:'blue',label:'蓝色科技',browserColor:'#f3f7fc'}] as const;
 export type ThemeId=typeof themes[number]['id'];
+const key='trash-theme';
+function cookieTheme():string|null{try{return document.cookie.match(/(?:^|; )trash-theme=([^;]+)/)?.[1]??null;}catch{return null;}}
 export function resolveTheme(value:string|null|undefined):ThemeId{return themes.find(theme=>theme.id===value)?.id??'graphite-purple';}
-export function savedTheme():ThemeId{return resolveTheme(readPreference('trash-theme'));}
+export function savedTheme():ThemeId{return resolveTheme(readPreference(key)??cookieTheme());}
 export function applyTheme(value:ThemeId){
- const theme=themes.find(theme=>theme.id===value)!;
+ const theme=themes.find(item=>item.id===value)!;
  document.documentElement.dataset.theme=value;
  document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme.browserColor);
- writePreference('trash-theme',value);
+ writePreference(key,value);
+ try{document.cookie=`${key}=${encodeURIComponent(value)}; Max-Age=31536000; Path=/; SameSite=Lax`;}catch{/* Cookie storage may be disabled. */}
 }

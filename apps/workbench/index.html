@@ -6,7 +6,9 @@
     <meta name="theme-color" content="#242633" />
     <script>
       try {
-        const saved=localStorage.getItem('trash-theme');
+        const local=localStorage.getItem('trash-theme');
+        const cookie=document.cookie.match(/(?:^|; )trash-theme=([^;]+)/)?.[1];
+        const saved=local||cookie;
         const theme=['graphite-purple','default','blue'].includes(saved)?saved:'graphite-purple';
         document.documentElement.dataset.theme=theme;
         document.querySelector('meta[name="theme-color"]').content={'graphite-purple':'#242633',default:'#f4f6f5',blue:'#f3f7fc'}[theme];
