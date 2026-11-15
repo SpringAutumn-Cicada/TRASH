@@ -77,3 +77,11 @@
 :root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link:hover{background:#30313f;color:#fff}
 :root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link.active{background:#42364f;color:#f5efff;border-color:#575268}
 :root[data-theme="graphite-purple"] .project-sidebar .sidebar-secondary{background:#30313f;color:#f1eef7}
+
+/* Final cascade guard for the graphite-purple default after legacy workspace rules. */
+html[data-theme="graphite-purple"] body{background:#f6f6f8;color:#252334}
+html[data-theme="graphite-purple"] .workspace-shell{background:#f6f6f8;color:#252334}
+html[data-theme="graphite-purple"] .project-sidebar{background:#242633 !important;color:#f1eef7;border-color:#3c3b4b}
+html[data-theme="graphite-purple"] .workspace-main{background:#f6f6f8;color:#252334}
+html[data-theme="graphite-purple"] .project-sidebar .local-indicator{color:#beb8cc}
+html[data-theme="graphite-purple"] .project-sidebar .local-indicator i{background:#42aa88}
