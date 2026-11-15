@@ -1,6 +1,6 @@
 # 面向 Agent 的研究记忆
 
-Wiki 负责让后续 Agent 快速找到认识、证据、分歧和待解决问题。单篇方法与实验细节保存在对应职责页，原文出处统一保存在 evidence.md。
+Wiki 负责让后续 Agent 快速找到认识、证据、分歧和待解决问题。单篇方法与实验细节保存在对应职责页，原文出处保存在 evidence/ev-*.md，evidence.md 为目录。
 
 ## 主题边界
 
@@ -8,7 +8,7 @@ Wiki 负责让后续 Agent 快速找到认识、证据、分歧和待解决问�
 
 ## 单篇 Wiki
 
-单篇全文严格使用 references/paper-wiki.md 的职责页结构与独立依据文件，不生成额外单文件研究记忆。跨论文任务按需读取 whoami 导航、方法、结果和 evidence/ev-*.md 条目，保留材料范围。
+单篇全文使用 trash-literature-wiki 的 references/paper-wiki.md 的职责页结构与独立依据文件，不生成额外单文件研究记忆。跨论文任务按需读取 whoami 导航、方法、结果和 evidence/ev-*.md 条目，保留材料范围。
 
 ## 分批总结（level: summary）
 
