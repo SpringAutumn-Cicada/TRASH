@@ -70,6 +70,7 @@ export class KnowledgeAgent implements TaskRunner {
       const documents=[...new Set([...selected.map(d=>d.id),...(previous?[previous.id]:[])])].map(id=>markdown.read(projectId,id));
       const inputChars=documents.reduce((n,d)=>n+d.text.length,0);
       if(paperBundle&&inputChars>400000)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
+      if(part.research_exploration&&inputChars>50000)requestError("RESEARCH_INPUT_TOO_LARGE",422);
       if(inputChars>60000&&!paperBundle){
         if(part.kind!=='wiki-page'&&!paperBundle)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
         // Wiki synthesis uses card evidence, not full documents. Keep frontmatter, headings and a bounded body.
@@ -260,6 +261,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(task.input.abstract_mode)prompt=`读取 abstract-skill/SKILL.md 和 input.json，仅分析指定摘要。直接写两份 Markdown 到 output/${paths[0]} 和 output/${paths[1]}：第一份给人看的摘要解读，第二份给 Agent 的摘要 Wiki。一级标题使用提供的论文标题，必须标明 材料范围：仅摘要 和 source_id=${source}。两份文件按 abstract-skill/SKILL.md 的各自结构分别生成：notes 为人读卡片，wiki 为紧凑的Agent研究线索，不能复制相同正文或在卡片里嵌套摘要Wiki。只生成摘要Wiki，不生成全文卡片或正式主题Wiki；不生成源码栏目、待全文核验或补充全文流程。用户要求：${task.input.instructions}`;
       if(task.input.abstract_wiki_only)prompt=`读取 abstract-skill/SKILL.md 和 input.json。仅基于指定来源的原始摘要，按 Agent Wiki 章节生成 output/${paths[0]}。只生成这一份摘要 Wiki，不生成或修改人读卡片、原始资料或全文知识。一级标题使用论文标题，包含材料范围：仅摘要及 source_id=${source}。沿用摘要 Wiki 的紧凑结构、事实与推断区分和证据边界。用户要求：${task.input.instructions}`;
       prompt+='\n知识库统一使用 knowledge_base/。本次准确输出清单（优先于上文任何旧路径示例）：'+paths.map(path=>path+'，稳定ID='+knowledgeDocumentId(path)).join('；')+'。frontmatter id 使用此稳定ID，不使用 basic/key/detail/memory 这样的文件短名。所有相对链接根据实际新目录计算，引用 input.json 的真实 path。仅摘要文件仍按摘要规范，不添加全文frontmatter。';
+      if(task.input.research_exploration)prompt=`读取 literature-skill/SKILL.md、literature-skill/references/research-exploration.md 和 input.json。任务为用户主动研究方向探索，模式 ${task.input.research_exploration}，严格按该模式结构而非通用主题模板。只用实际提供Wiki，不读PDF或历史任务，不自动选择研究问题。项目领域与线索仅作背景，允许发现多个方向。直接写指定 output/${paths[0]}，frontmatter kind: wiki-page、knowledge_version: 2、level: ${task.input.wiki_level}、id: ${knowledgeDocumentId(paths[0])}。来源依据使用实际文档ID与可解析相对链接。材料缺口不等于领域空白，未补充检索不宣称创新性成立。保持全部来源标识与证据边界。用户要求：${task.input.instructions}`;
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
@@ -280,6 +282,7 @@ export class KnowledgeAgent implements TaskRunner {
           event:text=>this.knowledge.event(task.task_id,text),read:(text,images,timeout)=>this.readBatch(task,text,images,directory,timeout)}));
       }
       prompt+='\n知识库统一使用 knowledge_base/。本次准确输出清单（优先于上文任何旧路径示例）：'+paths.map(path=>path+'，稳定ID='+knowledgeDocumentId(path)).join('；')+'。frontmatter id 使用此稳定ID，不使用 basic/key/detail/memory 这样的文件短名。所有相对链接根据实际新目录计算，引用 input.json 的真实 path。仅摘要文件仍按摘要规范，不添加全文frontmatter。';
+      if(task.input.research_exploration)prompt=`读取 literature-skill/SKILL.md、literature-skill/references/research-exploration.md 和 input.json。任务为用户主动研究方向探索，模式 ${task.input.research_exploration}，严格按该模式结构而非通用主题模板。只用实际提供Wiki，不读PDF或历史任务，不自动选择研究问题。项目领域与线索仅作背景，允许发现多个方向。直接写指定 output/${paths[0]}，frontmatter kind: wiki-page、knowledge_version: 2、level: ${task.input.wiki_level}、id: ${knowledgeDocumentId(paths[0])}。来源依据使用实际文档ID与可解析相对链接。材料缺口不等于领域空白，未补充检索不宣称创新性成立。保持全部来源标识与证据边界。用户要求：${task.input.instructions}`;
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
       if(fulltextGeneration)writeFileSync(join(directory,'input.json'),JSON.stringify({...(modelInput as Record<string,unknown>),readings:readingResults},null,2),{mode:0o600});

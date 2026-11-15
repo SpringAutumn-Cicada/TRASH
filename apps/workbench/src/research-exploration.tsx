@@ -1,0 +1,25 @@
+import React,{useEffect,useState} from 'react';
+import type {Source} from '@trash/protocol';
+import {knowledgeDocumentId} from '@trash/protocol/browser';
+import {api,uiError} from './api.js';
+import {ModalLayer} from './modal-layer.js';
+import {ChatMarkdown} from './chat-markdown.js';
+import {ErrorNotice} from './error-notice.js';
+import {projectPath} from './navigation.js';
+
+type Run={id:string;stage:string;tasks:string[];source_ids:string[];result_id?:string;error?:string;created_at:string};
+type Doc={id:string;path:string;text:string};
+export function ResearchExplorationButton({projectId,sources}:{projectId:string;sources:Source[]}){
+ const [open,setOpen]=useState(false),[runs,setRuns]=useState<Run[]>([]),[eligible,setEligible]=useState<string[]>([]),[chosen,setChosen]=useState<string[]>([]),[instructions,setInstructions]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[doc,setDoc]=useState<Doc>();
+ const base='/projects/'+encodeURIComponent(projectId);
+ useEffect(()=>{if(!open)return;let alive=true;
+  const load=async()=>{try{const data=await api<{runs:Run[]}>(base+'/research-exploration');if(alive)setRuns(data.runs);}catch(e){if(alive)setError(uiError(e,'无法读取探索任务'));}};
+  void load();const timer=window.setInterval(()=>void load(),3000);
+  void (async()=>{try{const ids:string[]=[];let page=1;while(true){const data=await api<{documents:{path:string;source_id?:string}[];total:number}>(base+'/markdown-knowledge?limit=100&page='+page);for(const d of data.documents)if(d.path.endsWith('/whoami.md')&&d.source_id)ids.push(d.source_id);if(page++*100>=data.total)break;}if(alive)setEligible(ids);}catch(e){if(alive)setError(uiError(e,'无法读取论文 Wiki'));}})();
+  return()=>{alive=false;window.clearInterval(timer);};
+ },[open,base]);
+ const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await action();setRuns((await api<{runs:Run[]}>(base+'/research-exploration')).runs);}catch(e){setError(uiError(e,'探索操作失败，请检查研究领域配置和论文 Wiki。'));}finally{setBusy(false);}};
+ const start=()=>run(()=>api(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:chosen,instructions})}));
+ const stages:Record<string,string>={summarizing:'分组比较材料',generating:'生成候选方向',completed:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已停止'};
+ return <><button type="button" className="secondary-button" onClick={()=>setOpen(true)}>探索研究方向</button>{open&&<ModalLayer><div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label="探索研究方向"><div className="modal-heading"><h2>探索研究方向</h2><button type="button" className="secondary-button" disabled={busy} onClick={()=>setOpen(false)}>关闭</button></div><p>选择已有全文 Wiki 的论文，比较共识、分歧与已有解法，再提出候选问题。未覆盖不代表领域尚未解决，结果需补充检索后由你选择。</p><p>请先在项目配置填写研究领域。此操作会创建 Agent 任务。</p><div style={{maxHeight:220,overflow:'auto'}}>{sources.filter(s=>eligible.includes(s.source_id)).map(s=><label key={s.source_id}><input type="checkbox" checked={chosen.includes(s.source_id)} disabled={busy} onChange={e=>setChosen(ids=>e.target.checked?[...ids,s.source_id]:ids.filter(id=>id!==s.source_id))}/>{s.title}</label>)}{!eligible.length&&<p>暂无可用全文 Wiki，请先完成单篇分析。</p>}</div><label>补充关注点（可选）<textarea maxLength={5000} value={instructions} onChange={e=>setInstructions(e.target.value)}/></label><button type="button" className="primary-button" disabled={busy||!chosen.length||runs.some(r=>['summarizing','generating'].includes(r.stage))} onClick={()=>void start()}>开始探索所选 {chosen.length} 篇论文</button>{error&&<ErrorNotice>{error}</ErrorNotice>}<h3>探索记录</h3>{runs.map(r=><div key={r.id}><p>{new Date(r.created_at).toLocaleString()} · {stages[r.stage]??r.stage} · {r.source_ids.length} 篇</p>{r.error&&<p>{r.error}</p>}{r.tasks.map(id=><a key={id} href={projectPath(projectId,'tasks',{focus:id})}>查看任务进展 </a>)}{r.result_id&&<button type="button" className="secondary-button" onClick={()=>void run(async()=>setDoc((await api<{document:Doc}>(base+'/markdown-knowledge/document?id='+encodeURIComponent(r.result_id!))).document))}>查看候选方向</button>}{['failed','interrupted','cancelled'].includes(r.stage)&&<button type="button" className="secondary-button" disabled={busy} onClick={()=>void run(()=>api(base+'/research-exploration/'+r.id+'/resume',{method:'POST',body:JSON.stringify({confirm:true})}))}>继续探索</button>}{['summarizing','generating'].includes(r.stage)&&<button type="button" className="secondary-button" disabled={busy} onClick={()=>void run(()=>api(base+'/research-exploration/'+r.id+'/cancel',{method:'POST',body:JSON.stringify({confirm:true})}))}>停止探索</button>}</div>)}{doc&&<article onClick={event=>{const a=(event.target as HTMLElement).closest('a');if(!a)return;const href=a.getAttribute('href')??'';if(href.startsWith('./')||href.startsWith('../')){const path=new URL(href,'https://local/'+doc.path).pathname.slice(1),id=knowledgeDocumentId(path);if(id){event.preventDefault();window.location.href=projectPath(projectId,'wiki',{focus:id});}}}}><ChatMarkdown text={doc.text.replace(/^---\n[\s\S]*?\n---\n/,'')} allowRelativeLinks/></article>}</section></div></ModalLayer>}</>;
+}

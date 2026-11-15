@@ -1,3 +1,4 @@
+import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
@@ -127,7 +128,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, workspaces: ProjectWorkspaces, files: ProjectFiles): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, exploration:ResearchExploration, workspaces: ProjectWorkspaces, files: ProjectFiles): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if(url.pathname.startsWith('/api/v1/pdf-assets/')&&method==='GET'){try{const path=url.pathname.slice('/api/v1/pdf-assets/'.length);const bytes=await pdfViewerAsset(path);response.writeHead(200,{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':bytes.length,'cache-control':'public, max-age=86400'});response.end(bytes);}catch{sendJson(response,404,{error:'NOT_FOUND'});}return;}
@@ -174,6 +175,14 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId)});return;}
+    if(subpath==='research-exploration'&&method==='POST'){
+      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
+      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default('')}).strict().parse(await readJson(request));
+      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions)});return;
+    }
+    const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
+    if(explorationAction&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1]):exploration.cancel(projectId,explorationAction[1])});return;}
     const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
     if(pdfView&&method==='GET'){const source=store.getSource(pdfView[1]);if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}response.writeHead(302,{location:`/pdf-reader?project=${encodeURIComponent(projectId)}&source=${encodeURIComponent(pdfView[1])}&hash=${encodeURIComponent(url.searchParams.get('hash')??'')}`});response.end();return;}
     const pdfRoute=subpath.match(/^sources\/([^/]+)\/pdf(?:\/pages\/(\d+))?$/);
@@ -522,6 +531,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const experiments = new ExperimentService(store);
   const codeAgent = new CodeAgent(store, experiments);
   const analysis = new LiteratureAnalysis(store, knowledge, agent);
+  const exploration=new ResearchExploration(store,knowledge,agent);
   const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)));
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
@@ -549,7 +559,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     let tracked:string|undefined;
     try{tracked=match?decodeURIComponent(match[1]):undefined;}catch{sendJson(response,400,{error:"INVALID_REQUEST"});return;}
     if(tracked)workspaces.requests.set(tracked,(workspaces.requests.get(tracked)??0)+1);
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, workspaces, files).catch(onError).finally(()=>{
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, exploration, workspaces, files).catch(onError).finally(()=>{
       if(tracked){const count=(workspaces.requests.get(tracked)??1)-1;if(count)workspaces.requests.set(tracked,count);else workspaces.requests.delete(tracked);}
     });
   });

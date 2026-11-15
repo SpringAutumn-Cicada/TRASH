@@ -61,6 +61,7 @@ export function parseKnowledge(kind: KnowledgeKind, value: unknown): KnowledgeCo
   return experimentResultSchema.parse(value);
 }
 export const knowledgeTaskInputSchema = z.object({
+  research_exploration:z.enum(["summary","directions"]).optional(),
   abstract_mode:z.boolean().optional(),
   abstract_wiki_only:z.boolean().optional(),
   kind: z.enum(["literature-card", "wiki-page"]), source_ids: z.array(z.string().min(1)).max(100).default([]),
