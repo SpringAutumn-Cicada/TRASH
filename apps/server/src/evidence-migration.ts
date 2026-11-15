@@ -8,7 +8,7 @@ import {paperWikiIssues} from './paper-wiki.js';
 
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 const strip=(text:string)=>text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'');
-const front=(path:string,source:string,role?:string,pdf?:string)=>`---\nknowledge_version: 2\nid: ${knowledgeDocumentId(path)}\nkind: wiki-page\nsource_id: ${source}\nlevel: single\n${role?'page_role: '+role+'\n':''}${pdf?'pdf_hash: '+pdf+'\n':''}---\n`;
+const front=(path:string,source:string,role?:string,pdf?:string,scope?:string)=>`---\nknowledge_version: 2\nid: ${knowledgeDocumentId(path)}\nkind: wiki-page\nsource_id: ${source}\nlevel: single\n${role?'page_role: '+role+'\n':''}${pdf?'pdf_hash: '+pdf+'\n':''}${role==='evidence'?'verification: not-reverified\n':''}${scope?'scope_ref: '+scope+'\n':''}---\n`;
 function plan(md:MarkdownKnowledge,project:string,source:string){
  const prefix=`knowledge_base/papers/${source}/`,all=md.index(project).documents;
  const docs=all.filter(d=>d.path.startsWith(prefix)).map(d=>md.read(project,d.id));
@@ -37,7 +37,7 @@ function plan(md:MarkdownKnowledge,project:string,source:string){
   const relative=posix.relative(posix.dirname(path),prefix+'evidence/'+id+'.md');return `[${id}](${relative.startsWith('.')?relative:'./'+relative})`;
  });
  if(!converted){
-  if(extraScope){const path=prefix+'evidence/ev-reading-scope.md';if(existsSync(md.locate(project,path)))conflicts.push('目标文件已存在：'+path);files.push({path,expected:null,text:front(path,source,'evidence',pdf??'unknown')+'[依据总览](../evidence.md)\n\n# ev-reading-scope\n\n## 支持事实\n\n'+common+'\n\n## 原文定位\n\n保留原依据页的共同版本与范围说明，不新增定位。\n\n## 条件与缺口\n\n本条从原目录前言迁移，未重新核验PDF。\n'});}
+  if(extraScope){const path=prefix+'evidence/ev-reading-scope.md';if(existsSync(md.locate(project,path)))conflicts.push('目标文件已存在：'+path);files.push({path,expected:null,text:front(path,source,'evidence',pdf??'unknown')+'[依据总览](../evidence.md)\n\n# ev-reading-scope\n\n**定位：** 原依据页共同材料说明，未新增原文定位。\n\n**事实：** '+common+'\n\n**边界：** 沿用历史材料范围，未重新核验PDF。\n'});}
   for(const [i,match] of matches.entries()){
    const id=match[1],path=prefix+'evidence/'+id+'.md';
    if(existsSync(md.locate(project,path)))conflicts.push('目标文件已存在：'+path);
@@ -51,8 +51,8 @@ function plan(md:MarkdownKnowledge,project:string,source:string){
     else if(/^(?:支持范围与缺口|缺口|限制|未核实)[:：]/.test(paragraph))limits.push(paragraph);
     else facts.push(paragraph);
    }
-   const scope=ids.has('ev-reading-scope')&&id!=='ev-reading-scope'?'\n\n材料范围沿用 [ev-reading-scope](./ev-reading-scope.md)。':'';
-   const text=front(path,source,'evidence',pdf??'unknown')+`[依据总览](../evidence.md)\n\n# ${id}\n\n## 支持事实\n\n${facts.join('\n\n')||'支持范围见条件与缺口中的原条目；迁移不补造事实。'}\n\n## 原文定位\n\n${locations.join('\n\n')||'原条目未提供单独定位；其余材料说明保留在支持事实中，不新增定位。'}\n\n## 条件与缺口\n\n${limits.join('\n\n')||'原条目未单列缺口；不代表已经独立核验。'}${scope}\n\n本条由旧依据拆分，保留原有范围与判断；迁移未重新阅读PDF。\n`;
+   const scope=ids.has('ev-reading-scope')&&id!=='ev-reading-scope'?'ev-reading-scope':undefined;
+   const text=front(path,source,'evidence',pdf??'unknown',scope)+`[依据总览](../evidence.md)\n\n# ${id}\n\n**定位：** ${locations.join('\n\n')||'原条目未单列定位；材料说明保留于事实，未新增定位。'}\n\n**事实：** ${facts.join('\n\n')||'具体支持内容保留于以下原条目边界中，迁移未补造事实。'}\n\n**边界：** ${limits.join('\n\n').replace(/^支持范围与缺口[:：]\s*/,'')||'原条目未单列缺口，不代表已核验。'}\n`;
    files.push({path,text:rewrite(path,text),expected:null});
   }
   for(const doc of docs){

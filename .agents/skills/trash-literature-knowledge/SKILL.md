@@ -17,7 +17,7 @@ description: 在 TRASH 论文项目中固定四页一批图文阅读并生成单
 
 项目入口为 knowledge_base/index.md。单篇位于 papers/<source_id>/，whoami.md 为论文总览，idcard.md 为题录页，背景、问题、贡献、方法、结果、局限、认识和依据页遵守 references/paper-wiki.md。全部单篇页面为 kind: wiki-page、level: single、knowledge_version: 2，稳定 ID 和路径使用任务指定值。不要生成或读取旧基本、关键、详细卡片及旧单篇记忆文件，不生成兼容入口。
 
-主题、假设、发现和分批总结分别位于 topics/、hypotheses/、discoveries/、summaries/，总览为 overview.md。相对链接按当前页面目录计算。仅独立evidence/ev-*.md依据文档省略论文名与论文总览；其他子页（含依据目录）依次保留论文全名（普通文本）、论文总览链接、当前页一级标题，之间各留一空行。whoami导航覆盖职责页及evidence.md目录，目录标题后仅列出全部独立evidence/ev-*.md条目链接，不写说明文字。独立依据正文首行写[依据总览](../evidence.md)，空一行后写条目标题。导航不作为证据依赖。
+主题、假设、发现和分批总结分别位于 topics/、hypotheses/、discoveries/、summaries/，总览为 overview.md。相对链接按当前页面目录计算。仅独立evidence/ev-*.md依据文档省略论文名与论文总览；其他子页（含依据目录）依次保留论文全名（普通文本）、论文总览链接、当前页一级标题，之间各留一空行。whoami导航覆盖职责页及evidence.md目录，目录标题后仅列出全部独立evidence/ev-*.md条目链接，不写说明文字。独立依据正文首行写[依据总览](../evidence.md)，空一行后写条目标题。导航不作为证据依赖。依据正文采用定位、事实、边界三个加粗字段；公共阅读范围与核验状态按references/paper-wiki.md登记，不逐条重复迁移说明。
 
 ## PDF 全文阅读
 
