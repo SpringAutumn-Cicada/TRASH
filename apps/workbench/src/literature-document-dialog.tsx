@@ -19,7 +19,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
   const [type,setType]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
   const [loading,setLoading]=useState(true),[directoryLoaded,setDirectoryLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[editing,setEditing]=useState(false),[draft,setDraft]=useState('');
-  const [versionsOpen,setVersionsOpen]=useState(false);
+  const [versionSource,setVersionSource]=useState('');
   const [history,setHistory]=useState<{hash:string;text:string}[]>(),[reload,setReload]=useState(0);
   const root=useRef<HTMLDivElement>(null),scroll=useRef<HTMLDivElement>(null),acting=useRef(false);
   const dirty=editing&&draft!==doc?.text;useUnsavedChanges(dirty);
@@ -68,8 +68,8 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
           {history&&<section className="library-document-history"><h4>版本历史</h4>{history.length?history.map(version=><details key={version.hash}><summary>快照 {version.hash.slice(0,10)}</summary><pre>{version.text}</pre></details>):<p>暂无历史版本。</p>}</section>}
         </>:!error&&<p>该内容尚未生成，请先分析这篇论文。</p>}
       </div>
-      {versionsOpen&&doc?.source_id&&<PaperWikiVersionPanel projectId={projectId} sourceId={doc.source_id} onClose={()=>setVersionsOpen(false)} onChanged={()=>{setReload(n=>n+1);onSaved();}} onWorking={setBusy}/>}
-      <footer><span>{editing?(dirty?'有未保存修改':'编辑 Markdown'):doc?.path}</span><div>{editing?<><button type="button" className="secondary-button" disabled={busy} onClick={()=>{if(!dirty||window.confirm('放弃未保存的修改？')){setDraft(doc!.text);setEditing(false);}}}>取消编辑</button><button type="button" className="primary-button" disabled={busy||!dirty} onClick={()=>void run(async()=>{await api(base+'/save',{method:'POST',body:JSON.stringify({path:doc!.path,text:draft,expected:doc!.hash})});setEditing(false);setReload(n=>n+1);onSaved();})}><Save size={14}/>{busy?'正在保存':'保存修改'}</button></>:<><button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'||!doc.source_id} onClick={()=>setVersionsOpen(true)}>版本管理</button><button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'} onClick={()=>{setDraft(doc!.text);setEditing(true);setHistory(undefined);}}>编辑内容</button></>}</div></footer>
+      {versionSource&&<PaperWikiVersionPanel projectId={projectId} sourceId={versionSource} onClose={()=>setVersionSource('')} onChanged={()=>{setReload(n=>n+1);onSaved();}} onWorking={setBusy}/>}
+      <footer><span>{editing?(dirty?'有未保存修改':'编辑 Markdown'):doc?.path}</span><div>{editing?<><button type="button" className="secondary-button" disabled={busy} onClick={()=>{if(!dirty||window.confirm('放弃未保存的修改？')){setDraft(doc!.text);setEditing(false);}}}>取消编辑</button><button type="button" className="primary-button" disabled={busy||!dirty} onClick={()=>void run(async()=>{await api(base+'/save',{method:'POST',body:JSON.stringify({path:doc!.path,text:draft,expected:doc!.hash})});setEditing(false);setReload(n=>n+1);onSaved();})}><Save size={14}/>{busy?'正在保存':'保存修改'}</button></>:<><button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'||!doc.source_id} onClick={()=>setVersionSource(doc!.source_id!)}>版本管理</button><button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'} onClick={()=>{setDraft(doc!.text);setEditing(true);setHistory(undefined);}}>编辑内容</button></>}</div></footer>
     </div>
   </div></ModalLayer>;
 }

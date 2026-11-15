@@ -3,7 +3,7 @@ import {existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,renameSync,unlin
 import {dirname,join,resolve,sep} from 'node:path';
 import type {TrashStore} from '@trash/storage';
 import type {MarkdownKnowledge} from './markdown-knowledge.js';
-import {bibliographyState} from './source-bibliography.js';
+import {bibliographyState,parseIdcard} from './source-bibliography.js';
 
 type Ref={path:string;hash:string};
 type FileVersion={path:string;hash:string;id:string;dependencies:Ref[];source_stamp?:string};
@@ -71,7 +71,8 @@ export class PaperWikiVersions{
   if(!version)fail('请选择版本');
   if(['trash','purge'].includes(action)&&id===list.current_id)fail('不能删除当前版本');
   const blockers=action==='restore'?this.docs().filter(doc=>!doc.path.startsWith(this.prefix)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>path.startsWith(this.prefix)&&version.files.some(file=>file.path===path&&file.hash!==this.docs().find(doc=>doc.path===path)?.hash))).map(doc=>doc.path):[];
-  return {expected:list.expected,action,id,paths:version.files.map(file=>file.path),blockers,message:action==='restore'?'将恢复为一个新版本，保留当前版本；原文已变更时仍显示待更新。':action==='purge'?'彻底删除此历史版本记录，无法撤销；共享快照继续保留。':'版本记录将移入回收站，正文共享快照继续保留。'};
+  const card=version.files.find(file=>file.path===this.prefix+'idcard.md');const proposed=action==='restore'&&card?parseIdcard(version.id.startsWith('current-')?readFileSync(this.path(card.path),'utf8'):this.text(card)):undefined;const source=this.store.getSource(this.source)!;const bibliography_changes=proposed?(['title','authors','publication_date'] as const).filter(field=>proposed[field]!==undefined&&JSON.stringify(proposed[field])!==JSON.stringify(source[field])).map(field=>({field,before:source[field],after:proposed[field]})):[];
+  return {expected:list.expected,action,id,paths:version.files.map(file=>file.path),blockers,bibliography_changes,message:action==='restore'?'将恢复为一个新版本，保留当前版本；原文已变更时仍显示待更新。':action==='purge'?'彻底删除此历史版本记录，无法撤销；共享快照继续保留。':'版本记录将移入回收站，正文共享快照继续保留。'};
  }
  act(input:{action:VersionAction;id?:string;paths?:string[];expected:string;note?:string}){
   if(this.busy())fail('项目有活动任务，完成后可操作');
