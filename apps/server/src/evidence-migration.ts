@@ -37,7 +37,7 @@ function plan(md:MarkdownKnowledge,project:string,source:string){
   const relative=posix.relative(posix.dirname(path),prefix+'evidence/'+id+'.md');return `[${id}](${relative.startsWith('.')?relative:'./'+relative})`;
  });
  if(!converted){
-  if(extraScope){const path=prefix+'evidence/ev-reading-scope.md';if(existsSync(md.locate(project,path)))conflicts.push('目标文件已存在：'+path);files.push({path,expected:null,text:front(path,source,'evidence',pdf??'unknown')+'# ev-reading-scope\n\n## 支持事实\n\n'+common+'\n\n## 原文定位\n\n保留原依据页的共同版本与范围说明，不新增定位。\n\n## 条件与缺口\n\n本条从原目录前言迁移，未重新核验PDF。\n'});}
+  if(extraScope){const path=prefix+'evidence/ev-reading-scope.md';if(existsSync(md.locate(project,path)))conflicts.push('目标文件已存在：'+path);files.push({path,expected:null,text:front(path,source,'evidence',pdf??'unknown')+'[依据总览](../evidence.md)\n\n# ev-reading-scope\n\n## 支持事实\n\n'+common+'\n\n## 原文定位\n\n保留原依据页的共同版本与范围说明，不新增定位。\n\n## 条件与缺口\n\n本条从原目录前言迁移，未重新核验PDF。\n'});}
   for(const [i,match] of matches.entries()){
    const id=match[1],path=prefix+'evidence/'+id+'.md';
    if(existsSync(md.locate(project,path)))conflicts.push('目标文件已存在：'+path);
@@ -52,7 +52,7 @@ function plan(md:MarkdownKnowledge,project:string,source:string){
     else facts.push(paragraph);
    }
    const scope=ids.has('ev-reading-scope')&&id!=='ev-reading-scope'?'\n\n材料范围沿用 [ev-reading-scope](./ev-reading-scope.md)。':'';
-   const text=front(path,source,'evidence',pdf??'unknown')+`# ${id}\n\n## 支持事实\n\n${facts.join('\n\n')||'支持范围见条件与缺口中的原条目；迁移不补造事实。'}\n\n## 原文定位\n\n${locations.join('\n\n')||'原条目未提供单独定位；其余材料说明保留在支持事实中，不新增定位。'}\n\n## 条件与缺口\n\n${limits.join('\n\n')||'原条目未单列缺口；不代表已经独立核验。'}${scope}\n\n本条由旧依据拆分，保留原有范围与判断；迁移未重新阅读PDF。\n`;
+   const text=front(path,source,'evidence',pdf??'unknown')+`[依据总览](../evidence.md)\n\n# ${id}\n\n## 支持事实\n\n${facts.join('\n\n')||'支持范围见条件与缺口中的原条目；迁移不补造事实。'}\n\n## 原文定位\n\n${locations.join('\n\n')||'原条目未提供单独定位；其余材料说明保留在支持事实中，不新增定位。'}\n\n## 条件与缺口\n\n${limits.join('\n\n')||'原条目未单列缺口；不代表已经独立核验。'}${scope}\n\n本条由旧依据拆分，保留原有范围与判断；迁移未重新阅读PDF。\n`;
    files.push({path,text:rewrite(path,text),expected:null});
   }
   for(const doc of docs){
@@ -61,7 +61,7 @@ function plan(md:MarkdownKnowledge,project:string,source:string){
    let next=strip(text);
    if(doc.path===index.path){
     const title=strip(docs.find(d=>d.path===prefix+'whoami.md')?.text??'').match(/^#\s+(.+)$/m)?.[1]??'';
-    next=title+'\n\n[论文总览](./whoami.md)\n\n# 原文依据\n\n本目录仅提供条目导航；实际阅读范围与缺口见各条目。\n\n'+[...ids].map(id=>`- [${id}](./evidence/${id}.md)`).join('\n')+'\n';
+    next=title+'\n\n[论文总览](./whoami.md)\n\n# 原文依据\n\n'+[...ids].map(id=>`- [${id}](./evidence/${id}.md)`).join('\n')+'\n';
     text=front(doc.path,source,'evidence-index')+next;
    }else text=header+rewrite(doc.path,next);
    files.push({path:doc.path,text,expected:doc.hash});
