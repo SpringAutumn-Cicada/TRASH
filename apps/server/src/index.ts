@@ -191,7 +191,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     const candidatesRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/candidates$/);
     if(candidatesRoute&&method==='GET'){sendJson(response,200,{project,candidates:exploration.candidates(projectId,candidatesRoute[1])});return;}
-    if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId)});return;}
+    if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId),capabilities:{multi_topic:true,research_skills:['map','background','synthesis','exploration'],version:15}});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
       const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([])}).strict().parse(await readJson(request));

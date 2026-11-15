@@ -12,7 +12,7 @@ type ResearchMode='directions'|'research-map'|'comparison'|'background'|'topics'
 const modeSkill=(mode:ResearchMode)=>mode==='research-map'?'map' as const:mode==='background'?'background' as const:mode==='directions'?'exploration' as const:'synthesis' as const;
 const modeTitles:Record<ResearchMode,string>={directions:'研究方向探索：候选问题','research-map':'研究地图',comparison:'指定主题综合',background:'研究大背景',topics:'多主题综合'};
 type Topic={id:string;title:string;body:string;source_ids:string[];material_ids:string[];existing_id?:string;status:'candidate'|'pending'|'generating'|'completed'|'failed';task_id?:string;output_id?:string;error?:string};
-type Run={source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
+type Run={retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
 const active=(run:Run)=>['summarizing','generating','discovering','topics'].includes(run.stage);
 export class ResearchExploration {
  constructor(private store:TrashStore,private knowledge:KnowledgeStore,private agent:KnowledgeAgent){
@@ -66,7 +66,7 @@ export class ResearchExploration {
   const reusable=this.list(project).find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
   if(reusable)return reusable;
   const previous=mode==='directions'?undefined:this.list(project).find(r=>r.stage==='completed'&&r.mode===mode&&r.instructions===instructions&&JSON.stringify([...r.source_ids].sort())===JSON.stringify([...selected].sort())&&r.result_id&&all.some(d=>d.id===r.result_id));
-  const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:at,updated_at:at,stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions,question_id:question?.id,question_text:question?.question,mode,topic_ids:topicIds,signature,target_id:previous?.result_id,material_ids:docs.map(d=>d.id),source_hashes:current.map(({path,hash})=>({path,hash}))};
+  const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:at,updated_at:at,stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions,question_id:question?.id,question_text:question?.question,mode,topic_ids:topicIds,signature,target_id:previous?.result_id,material_ids:docs.map(d=>d.id),source_hashes:current.map(({path,hash})=>({path,hash})),...(mode==='topics'?{retained_topics:[...(previous?.retained_topics??[]),...(previous?.topics??[]).filter(t=>t.status==='completed')],directory_expected:previous?.result_id?all.find(d=>d.id===previous.result_id)?.hash:undefined}:{})};
   this.save(run);try{this.schedule(run,docs.map(d=>d.id));}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'探索启动失败';this.save(run);}return run;
  }
  private discoverTopics(run:Run,task:KnowledgeTask){
@@ -75,7 +75,8 @@ export class ResearchExploration {
   const sections=[...doc.text.matchAll(/^## (知识主题|候选线索|研究假设)[：:]\s*(.+)$/gm)];
   if(!sections.length&&!doc.text.includes('未发现可整理主题'))throw new Error('主题发现清单缺少主题条目；保留结果供查看');
   const sourcePages=all.filter(d=>run.source_ids.includes(d.source_id??'')&&d.level==='single'&&(d.group_status===undefined||d.group_status==='current'));
-  const existing=all.filter(d=>d.level==='topic'&&!['research-map','research-background','topic-index'].includes(d.page_role??''));
+  const otherOutputs=new Set(this.list(run.project_id).filter(r=>['research-map','background'].includes(r.mode??'')).map(r=>r.result_id));
+  const existing=all.filter(d=>!otherOutputs.has(d.id)&&d.level==='topic'&&!['research-map','research-background','topic-index'].includes(d.page_role??''));
   const normalize=(s:string)=>s.toLocaleLowerCase().replace(/[\s\p{P}]/gu,'');
   const result:Topic[]=[],seen=new Map<string,Topic>();
   for(let i=0;i<sections.length;i++){
@@ -132,12 +133,13 @@ export class ResearchExploration {
   if(run.directory_expected===undefined)run.directory_expected=before?.hash??null;
   this.save(run);
   const label=(s:string)=>s.replace(/[\\`\[\]*_]/g,'\\$&').replace(/[\r\n]/g,' ');
-  const link=(id:string,title:string)=>{const d=all.find(d=>d.id===id);return d?`[${label(title)}](${posix.relative(posix.dirname(path),d.path)})`:label(title);};
+  const link=(id:string,title:string)=>{const d=all.find(d=>d.id===id);if(!d)return label(title);const relative=posix.relative(posix.dirname(path),d.path);return `[${label(title)}](${relative.startsWith('.')?relative:'./'+relative})`;};
   const status={candidate:'候选线索',pending:'待展开',generating:'生成中',completed:'已完成',failed:'失败，可重试'};
   const topics=run.topics??[];
-  const generated=['## 何时读取','查看本次多个主题的综合结果、候选线索及待展开项。','## 材料范围',`选定${run.source_ids.length}篇论文；实际深入范围与论断来源见发现清单及各主题正文。`,run.discovery_id?link(run.discovery_id,'主题发现清单'):'','## 主题目录',...topics.filter(t=>t.status!=='candidate').map(t=>`- ${t.output_id?link(t.output_id,t.title):label(t.title)}：${status[t.status]}${t.error?'；'+label(t.error):''}`),'## 候选线索',...topics.filter(t=>t.status==='candidate').map(t=>`- ${label(t.title)}：${label(t.error??'尚未形成充分支撑，详见发现清单')}`),'## 后续处理','每次最多展开8个主题；待展开或失败项可继续，已完成主题不会重复执行。候选线索不自动变成研究方向。'].filter(Boolean).join('\n\n');
+  const retained=[...new Map((run.retained_topics??[]).filter(t=>t.output_id&&all.some(d=>d.id===t.output_id)&&!topics.some(n=>n.output_id===t.output_id||n.existing_id===t.output_id)).map(t=>[t.output_id,t])).values()];
+  const generated=['## 何时读取','查看本次多个主题的综合结果、候选线索及待展开项。','## 材料范围',`选定${run.source_ids.length}篇论文；实际深入范围与论断来源见发现清单及各主题正文。`,run.discovery_id?link(run.discovery_id,'主题发现清单'):'','## 主题目录',...topics.filter(t=>t.status!=='candidate').map(t=>`- ${t.output_id?link(t.output_id,t.title):label(t.title)}：${status[t.status]}${t.error?'；'+label(t.error):''}`),...(retained.length?['## 历史主题入口（本轮未覆盖）',...retained.map(t=>'- '+link(t.output_id!,t.title)+'：保留旧入口，不表示本轮已更新')]:[]),'## 候选线索',...topics.filter(t=>t.status==='candidate').map(t=>`- ${label(t.title)}：${label(t.error??'尚未形成充分支撑，详见发现清单')}`),'## 后续处理','每次最多展开8个主题；待展开或失败项可继续，已完成主题不会重复执行。候选线索不自动变成研究方向。'].filter(Boolean).join('\n\n');
   const start='<!-- synthesis-directory:start -->',end='<!-- synthesis-directory:end -->',block=start+'\n'+generated+'\n'+end;
-  let text=`---\nknowledge_version: 2\nid: ${run.directory_id}\nkind: wiki-page\nlevel: topic\npage_role: topic-index\n---\n\n# 文献主题综合目录\n\n${block}\n`;
+  let text=`---\nknowledge_version: 2\nid: ${run.directory_id}\nkind: wiki-page\nlevel: topic\npage_role: topic-index\n---\n\n# 文献主题综合目录${run.instructions.trim()?'：'+label(run.instructions.trim().split('\n')[0].slice(0,80)):''}\n\n${block}\n`;
   if(before){const a=before.text.indexOf(start),b=before.text.indexOf(end);if(a<0||b<a)throw new Error('目录人工内容与生成区发生冲突，已保留主题，请确认目录后继续');text=before.text.slice(0,a)+block+before.text.slice(b+end.length);}
   if(before?.text!==text){const doc=md.save(run.project_id,path,text,run.directory_expected);run.directory_expected=doc.hash;}
   else run.directory_expected=before.hash;
