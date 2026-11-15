@@ -14,10 +14,9 @@ import './markdown-knowledge.css';
 import './wiki-reading.css';
 
 type Document={material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
-const tabs=[['wiki','Wiki']];
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved}:{projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
-  const [type,setType]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
+  const [type]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
   const [loading,setLoading]=useState(true),[directoryLoaded,setDirectoryLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[editing,setEditing]=useState(false),[draft,setDraft]=useState('');
   const [versionSource,setVersionSource]=useState('');
   const [history,setHistory]=useState<{hash:string;text:string}[]>(),[reload,setReload]=useState(0);
@@ -45,7 +44,6 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
     return()=>{active=false;};
   },[base,selected,reload]);
   const reading=useWikiReadingNavigation(selected??'',doc?.id,loading,scroll,id=>{setLinked(id);setHistory(undefined);});
-  const change=(next:string)=>{if(busy||dirty&&!window.confirm('放弃未保存的修改？'))return;setLinked('');setType(next);};
   const run=async(fn:()=>Promise<void>)=>{if(acting.current)return;acting.current=true;setBusy(true);setError('');try{await fn();}catch(e){setError(uiError(e,'操作失败，当前草稿已保留。'));}finally{acting.current=false;setBusy(false);}};
   return <ModalLayer><div className="modal-backdrop library-document-backdrop" onClick={event=>{if(event.currentTarget===event.target)close();}}>
     <div ref={root} className={`library-document-dialog ${(doc?doc.kind==='wiki-page':type==='wiki')?'wiki-reading-surface':''}`} role="dialog" aria-modal="true" aria-labelledby="literature-document-title" onKeyDown={event=>{
@@ -53,7 +51,6 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       if(event.key==='Tab'){const nodes=Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')??[]).filter(node=>node.getClientRects().length);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
     }}>
       <header><div><small>论文内容</small><h3 id="literature-document-title">{doc?.id.includes('--')?doc.title:source?.title??doc?.title??'关联知识'}</h3></div><button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button></header>
-      {source&&<nav className="library-document-tabs" aria-label="内容类型">{tabs.map(([value,label])=><button type="button" key={value} aria-pressed={!linked&&type===value} disabled={busy||!documents.some(d=>Boolean(source)&&d.source_id===source?.source_id&&(value==='wiki'?d.kind==='wiki-page':d.card_type===value))} onClick={()=>change(value)}>{label}</button>)}</nav>}
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       <div ref={scroll} className="library-document-scroll">
         {(loading||!directoryLoaded)?<p role="status"><LoaderCircle className="spin" size={16}/> 正在读取内容…</p>:doc?<>
