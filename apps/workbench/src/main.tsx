@@ -1,3 +1,4 @@
+import {themes,savedTheme,applyTheme,resolveTheme} from './theme.js';
 import {KnowledgeBaseWorkspace} from './knowledge-base.js';
 import { TaskWorkspace } from './task-workspace.js';
 import { PdfReader } from "./pdf-reader.js";
@@ -34,9 +35,9 @@ function rememberedPage(id:string):ProjectPage {
   return projectPages.find(page=>page.id===stored)?.id??"overview";
 }
 function ThemeControl() {
-  const [theme,setTheme]=useState(()=>readPreference("trash-theme")==="blue"?"blue":"default");
-  useEffect(()=>{document.documentElement.dataset.theme=theme;writePreference("trash-theme",theme);},[theme]);
-  return <label className="theme-control"><Palette size={15}/><span className="sr-only">界面主题</span><select aria-label="界面主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="default">默认主题</option><option value="blue">蓝色科技</option></select></label>;
+  const [theme,setTheme]=useState(savedTheme);
+  useEffect(()=>{applyTheme(theme);},[theme]);
+  return <label className="theme-control"><Palette size={15}/><span className="sr-only">界面主题</span><select aria-label="界面主题" value={theme} onChange={e=>setTheme(resolveTheme(e.target.value))}>{themes.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></label>;
 }
 function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projectId:string;page:Exclude<ProjectPage,"overview"|"literature"|"experiments"|"reproductions"|"autodl"|"chat"|"paper"|"data"|"files">;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
   const [sources,setSources]=useState<Source[]>();const [error,setError]=useState("");

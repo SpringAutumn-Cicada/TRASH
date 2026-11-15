@@ -21,3 +21,8 @@
 :root[data-theme="blue"] .error-notice{background:#fff1eb;color:#a5513a;border-color:#f2d7cb}
 :root[data-theme="blue"] .theme-control{background:#fff}
 @media(max-width:500px){.theme-control{gap:4px;padding:0 6px}.theme-control select{max-width:72px;font-size:10px}.topbar-right{gap:7px}.local-indicator{gap:5px}}
+
+/* Semantic tokens: --green remains an alias for existing primary-action styles. */
+:root{--accent:var(--green);--accent-hover:#095540;--accent-bright:var(--green);--accent-soft:var(--green-soft);--page-bg:#f4f6f5;--surface-soft:#f7f9f8;--nav-bg:#f7f9f8;--nav-ink:#26352e;--nav-muted:#75817c;--nav-hover:#edf1ef;--nav-selected:var(--green-soft);--nav-selected-ink:var(--green);--nav-border:var(--line);--accent-line:color-mix(in srgb,var(--accent) 30%,var(--line));--scroll-thumb:#a5b5ae;--success:#23866b;--success-soft:#eaf5ef;--warning:#a67524;--warning-soft:#faf2e2;--danger:#c34e61;--danger-soft:#fceef0;--shadow-soft:0 4px 20px #2523340a}
+:root[data-theme="blue"]{--accent-hover:#174fa8;--page-bg:#f3f7fc;--surface-soft:#f6f9fd;--nav-bg:#f6f9fd;--nav-ink:#1d2b3c;--nav-muted:#687b91;--nav-hover:#edf3fc;--scroll-thumb:#9baec9}
+:root[data-theme="graphite-purple"]{--ink:#252334;--muted:#716b7f;--line:#e1dce9;--surface:#fff;--green:#7654bb;--green-soft:#f0eaf9;--accent:#7654bb;--accent-bright:#9170cb;--accent-hover:#6543a4;--accent-soft:#f0eaf9;--page-bg:#f6f6f8;--surface-soft:#f8f6fb;--nav-bg:#242633;--nav-ink:#f1eef7;--nav-muted:#beb8cc;--nav-hover:#30313f;--nav-selected:#42364f;--nav-selected-ink:#f5efff;--nav-border:#3c3b4b;--accent-line:#d4c5e9;--scroll-thumb:#b5a7c8;--coral:#c34e61;--coral-soft:#fceef0;--teal:#ece5f5;--focus-ring:#9170cb;color:var(--ink);background:var(--page-bg);color-scheme:light}
