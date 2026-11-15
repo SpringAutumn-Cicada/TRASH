@@ -172,7 +172,7 @@ function App() {
     </aside>}
     <div className="workspace-main">
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
-        <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{project?.research_question??"整理文献、记录思路，逐步推进研究。"}</p></div>
+        <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{(project?.research_question||project?.research_area)??"整理文献、记录思路，逐步推进研究。"}</p></div>
         {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>{setAutoDlProfile(undefined);setAutoDlOpen(true);}}><Server size={16}/><span>AutoDL 连接</span></button></div>}
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>{if(canLeave(()=>{setWorkspaceOpen(true);setProjectMenu(false);})){setWorkspaceOpen(true);setProjectMenu(false);}}}><FolderOpen size={15}/>项目配置</button><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
@@ -186,7 +186,7 @@ function App() {
     <BackgroundDatasetTransfers/>
     {leaveDialog}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} initialProfileId={autoDlProfile} onClose={()=>setAutoDlOpen(false)}/>}
-    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} projectTitle={project.title} projectQuestion={project.research_question} onUpdated={updated=>setProjects(previous=>previous.map(item=>item.project_id===updated.project_id?updated:item))} onClose={()=>setWorkspaceOpen(false)} onBrowse={()=>{const proceed=()=>{setWorkspaceOpen(false);goPage("files");};if(canLeave(proceed))proceed();}}/>}
+    {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} projectTitle={project.title} projectQuestion={project.research_question} projectArea={project.research_area} projectInterests={project.research_interests} projectStage={project.research_stage} onUpdated={updated=>setProjects(previous=>previous.map(item=>item.project_id===updated.project_id?updated:item))} onClose={()=>setWorkspaceOpen(false)} onBrowse={()=>{const proceed=()=>{setWorkspaceOpen(false);goPage("files");};if(canLeave(proceed))proceed();}}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}
     {deleteTarget&&<DeleteProjectDialog project={deleteTarget} onClose={()=>setDeleteTarget(undefined)} onDeleted={deleted}/>}
   </div></DirtyContext.Provider>;

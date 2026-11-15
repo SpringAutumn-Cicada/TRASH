@@ -152,10 +152,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     sendJson(response, 201, { project: restoreKnowledge(store, value) }); return;
   }
   if (url.pathname === "/api/v1/projects" && method === "POST") {
-    const input = await readJson<{ title: string; research_question: string; module?: { id: string; version: string }; workspace?: {root?:string;name:string} }>(request);
-    if (!input || typeof input.title !== "string" || typeof input.research_question !== "string") throw Object.assign(new Error("PROJECT_FIELDS_REQUIRED"), { statusCode: 400 });
-    z.object({ title:z.string().trim().min(1).max(120),research_question:z.string().trim().min(1).max(10000),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional(),workspace:z.object({root:z.string().min(1).optional(),name:z.string().min(1)}).strict().optional() }).strict().parse(input);
-    const project = store.createProject({ title: input.title, research_question: input.research_question, module: input.module ?? { id: "apt-provenance", version: "0.1.0" } });
+    const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).default(''),research_area:z.string().trim().min(1).max(500),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).default([]),research_stage:z.enum(['exploration','focused']).default('exploration'),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional(),workspace:z.object({root:z.string().min(1).optional(),name:z.string().min(1)}).strict().optional()}).strict().parse(await readJson(request));
+    const project=store.createProject({title:input.title,research_question:input.research_question,research_area:input.research_area,research_interests:input.research_interests,research_stage:input.research_stage,module:input.module??{id:'apt-provenance',version:'0.1.0'}});
     try{await workspaces.initialize(project.project_id,input.workspace?{...input.workspace,root:input.workspace.root??join(store.root,"workspaces")}:undefined);}
     catch(error){store.db.prepare("DELETE FROM projects WHERE project_id=?").run(project.project_id);workspaceError(error);}
     sendJson(response, 201, { project });
@@ -168,9 +166,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
     if(!subpath&&method==='PATCH'){
-      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().min(1).max(10000).optional()}).strict().parse(await readJson(request));
-      const at=new Date().toISOString();
-      store.db.prepare("UPDATE projects SET data=json_set(data,'$.title',?,'$.research_question',?,'$.updated_at',?),updated_at=? WHERE project_id=?").run(input.title,input.research_question??project.research_question,at,at,projectId);
+      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_area:z.string().trim().min(1).max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
+      if(input.expected_updated_at&&input.expected_updated_at!==project.updated_at){sendJson(response,409,{error:'VERSION_CONFLICT'});return;}
+      const at=new Date().toISOString(),{expected_updated_at,...changes}=input;
+      store.db.prepare('UPDATE projects SET data=?,updated_at=? WHERE project_id=?').run(JSON.stringify({...project,...changes,updated_at:at}),at,projectId);
       sendJson(response,200,{project:store.getProject(projectId)});return;
     }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
