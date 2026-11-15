@@ -19,9 +19,13 @@ function CodeBlock({language,body}:{language:string;body:string}){
 export function ChatMarkdown({text,allowRelativeLinks=false}:{text:string;allowRelativeLinks?:boolean}){
   const renderInline=(value:string)=>inline(value,allowRelativeLinks);
   const lines=markdownReferences(text).text.replace(/\r\n/g,'\n').split('\n'),blocks:React.ReactNode[]=[];
+  const first=lines.findIndex(line=>line.trim());
+  const next=lines.slice(first+1).find(line=>line.trim())?.trim();
+  const paperNameLine=allowRelativeLinks&&first>=0&&!/^[#>`]/.test(lines[first])&&/^\[论文总览\]\((?:\.\.?\/)+whoami\.md\)$/.test(next??'')?first:-1;
   for(let i=0;i<lines.length;){
     const line=lines[i];
     if(!line.trim()){i++;continue;}
+    if(i===paperNameLine){blocks.push(<p key={blocks.length} className="wiki-paper-name">{renderInline(line)}</p>);i++;continue;}
     const fence=line.match(/^\s*(`{3,}|~{3,})(.*)$/);
     if(fence){const language=fence[2].trim(),body:string[]=[];i++;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))body.push(lines[i++]);if(i<lines.length)i++;blocks.push(<CodeBlock key={blocks.length} language={language} body={body.join('\n')}/>);continue;}
     const heading=line.match(/^(#{1,6})\s+(.+)$/);

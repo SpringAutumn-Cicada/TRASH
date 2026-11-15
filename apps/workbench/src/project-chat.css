@@ -102,7 +102,7 @@
 .chat-markdown{line-height:1.9;min-width:0}
 .chat-markdown>p,.chat-markdown blockquote{white-space:pre-wrap}
 .chat-markdown p{margin:10px 0}
-.chat-markdown h2{font-size:19px;line-height:1.6;margin:23px 0 10px}
+.chat-markdown h2,.chat-markdown p.wiki-paper-name{font-size:19px;line-height:1.6;margin:23px 0 10px}
 .chat-markdown h3{font-size:16px;line-height:1.6;margin:19px 0 9px}
 .chat-markdown h4,.chat-markdown h5,.chat-markdown h6{font-size:14px;margin:16px 0 8px}
 .chat-markdown ul,.chat-markdown ol{padding-left:23px;margin:10px 0}
@@ -201,7 +201,7 @@
 .chat-markdown p{margin:12px 0;line-height:1.95}
 .chat-markdown>p:first-child{margin-top:0}
 .chat-markdown>p:last-child{margin-bottom:0}
-.chat-markdown h2{font-size:21px;margin:24px 0 12px}
+.chat-markdown h2,.chat-markdown p.wiki-paper-name{font-size:21px;margin:24px 0 12px}
 .chat-markdown h3{font-size:18px;margin:22px 0 11px}
 .chat-markdown h4,.chat-markdown h5,.chat-markdown h6{font-size:16px}
 .chat-markdown code{font-size:13px;background:var(--chat-canvas);border-color:var(--chat-line)}
@@ -300,3 +300,6 @@
 .chat-control-button{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer}
 .chat-control-button:hover:not(:disabled){background:var(--green-soft)}
 .chat-control-button:disabled{opacity:.35;cursor:not-allowed}
+
+/* Paper identity is visually prominent without changing Markdown heading semantics. */
+.chat-markdown p.wiki-paper-name{font-weight:700;overflow-wrap:anywhere}
