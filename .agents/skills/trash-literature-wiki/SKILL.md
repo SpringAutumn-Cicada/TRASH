@@ -29,4 +29,15 @@ description: 在 TRASH 论文项目中读取完整论文材料，生成或修订
 
 结构校验不等于事实核验。不要补造论文没有提供的数字、机制、因果解释或实验结论。
 
+## 确定性脚本
+
+本 skill 附带 `scripts/`，用于减少机械文件操作和按需读取成本：
+
+- `check_wiki_structure.py <wiki>`：检查固定页面、frontmatter、依据字段和页面角色；
+- `check_wiki_links.py <wiki>`：检查九项导航、相对链接和依据返回链接；
+- `build_evidence_index.py <wiki>`：根据 `evidence/ev-*.md` 重建轻量依据目录；
+- `wiki_context_manifest.py <wiki> [-o <path>]`：生成供 Agent 分层检索的页面与依据索引。
+
+脚本只处理可确定的结构、路径、元数据和索引，不判断论文事实、作者结论或研究价值。生成内容后可先用索引确定读取范围，再按需读取正文和依据。
+
 详细页面职责、依据格式、信息密度和跨页面回读规则见 [references/paper-wiki.md](references/paper-wiki.md)。
