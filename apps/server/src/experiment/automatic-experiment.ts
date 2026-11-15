@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 /* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -11,7 +12,7 @@ import type { Queue } from './reproduction-queue.js';
 export const automaticExperimentInputSchema=z.object({code_id:z.string().min(1),report_id:z.string().min(1),profile_id:z.string().min(1),plan_index:z.number().int().nonnegative(),directory:z.string().startsWith('/').max(2048).refine(value=>value!=='/'&&!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..')),bindings:experimentBindingsSchema.shape.bindings,model_sources:z.record(z.string().startsWith('/').max(2048).refine(value=>!/[\x00-\x1f]/.test(value)&&!value.split('/').includes('..'))).default({}),gpu:z.string().regex(/^(cpu|\d+(,\d+)*)$/),timeout_seconds:z.number().int().min(10).max(604800).default(7200),confirm:z.literal(true)}).strict();
 type Input=z.infer<typeof automaticExperimentInputSchema>;
 function reportFor(service:ExperimentService,project:string,code:string,id:string){return service.environmentAnalysis.report(project,code,id);}
-function bindingPath(service:ExperimentService,project:string,code:string,report:string,profile:string){const key=createHash('sha256').update(JSON.stringify([code,report,profile])).digest('hex');return join(service.store.root,'projects',project,'experiment-bindings',key+'.json');}
+function bindingPath(service:ExperimentService,project:string,code:string,report:string,profile:string){const key=createHash('sha256').update(JSON.stringify([code,report,profile])).digest('hex');return projectRuntime(service.store.root,project,'experiment-bindings',key+'.json');}
 function validateBindings(service:ExperimentService,project:string,report:CodeEnvironmentReport,input:ExperimentBindings){
  service.data.profile(project,input.profile_id);
  const names=report.content.schema_version===2?report.content.code_information?.datasets.map(item=>item.name)??[]:[];

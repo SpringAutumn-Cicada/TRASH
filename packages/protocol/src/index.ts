@@ -16,11 +16,19 @@ export const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const timestampSchema = z.string().datetime({ offset: true });
 const refSchema = z.string().min(1);
 
+export const researchQuestionSchema=z.object({
+  id:z.string().regex(/^question_[A-Za-z0-9_-]+$/),title:z.string().trim().min(1).max(200),question:z.string().trim().min(1).max(10000),status:z.enum(['candidate','evidence-needed','selected','paused','excluded']),rationale:z.string().max(5000).default(''),source_run_id:z.string().optional(),source_candidate_id:z.string().optional(),evidence:z.array(z.object({id:z.string(),path:z.string()})).default([]),created_at:z.string(),updated_at:z.string()
+}).strict();
+export type ResearchQuestion=z.infer<typeof researchQuestionSchema>;
 export const researchProjectSchema = z.object({
   protocol_version: z.literal(PROTOCOL_VERSION),
   project_id: projectIdSchema,
   title: z.string().trim().min(1),
-  research_question: z.string().trim().min(1),
+  research_question: z.string().trim().max(10000).default(""),
+  research_area: z.string().trim().min(1).max(500).optional(),
+  research_interests: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
+  research_stage: z.enum(["exploration","focused"]).optional(),
+  research_questions:z.array(researchQuestionSchema).max(100).optional(),
   module: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]*$/), version: z.string().min(1) }).strict(),
   status: z.enum(["active", "archived"]),
   created_at: timestampSchema,
@@ -110,7 +118,9 @@ export const sourceSchema = z.object({
   title: z.string().trim().min(1),
   authors: z.array(z.string().min(1)),
   year: z.number().int().min(1000).max(3000).optional(),
+  publication_date:z.string().regex(/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/).optional(),
   doi: z.string().optional(),
+  material_scope:z.enum(["fulltext","abstract"]).optional(),
   source_type: z.enum(["pdf", "bibtex", "ris", "markdown", "webpage", "openalex"]),
   source_url: z.string().url().optional(),
   provider_id: z.string().min(1).optional(),
@@ -194,3 +204,20 @@ export * from "./environment.js";
 export * from "./evaluation.js";
 
 export * from './execution.js';
+
+export * from './knowledge-paths.js';
+
+// PDF preparation is independent of knowledge/model task status.
+export type PdfPreparationStatus='queued'|'running'|'ready'|'partial'|'failed'|'cancelled';
+export interface PdfPreparation {
+ id:string; project_id:string; source_id:string; fingerprint:string; revision:string;
+ pdf_hash:string; status:PdfPreparationStatus; phase:string; completed:number; total:number;
+ warnings:string[]; error?:string; created_at:number; updated_at:number;
+}
+export interface PdfFigure {
+ id:string; type:'figure'|'table'; number:string; caption:string; page:number; pages:number[];
+ section?:string; region:{x:number;y:number;width:number;height:number};
+ path?:string; confidence:number; warnings:string[]; references:{page:number;line:string}[];
+}
+
+export {markdownReferences} from './markdown-references.js';

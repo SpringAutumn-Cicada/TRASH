@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 /* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { mkdirSync, existsSync, readdirSync, readFileSync, writeFileSync, renameSync, createWriteStream, createReadStream } from 'node:fs';
 import { truncate, rm } from 'node:fs/promises';
@@ -13,8 +14,8 @@ const input=z.object({id:z.string().uuid(),profile_id:z.string().min(1),name:z.s
 export class DatasetUploadSessions{
  private locks=new Set<string>();private running=new Set<string>();
  constructor(private service:ExperimentService){}
- private directory(project:string,id:string){z.string().uuid().parse(id);return join(this.service.store.root,'projects',project,'dataset-upload-sessions',id);}
- busy(project:string){const root=join(this.service.store.root,'projects',project,'dataset-upload-sessions');return existsSync(root)&&readdirSync(root).some(id=>{if(!/^[a-f0-9-]{36}$/.test(id))return false;try{return ['receiving','transferring'].includes(this.get(project,id).status);}catch{return false;}});}
+ private directory(project:string,id:string){z.string().uuid().parse(id);return projectRuntime(this.service.store.root,project,'dataset-upload-sessions',id);}
+ busy(project:string){const root=projectRuntime(this.service.store.root,project,'dataset-upload-sessions');return existsSync(root)&&readdirSync(root).some(id=>{if(!/^[a-f0-9-]{36}$/.test(id))return false;try{return ['receiving','transferring'].includes(this.get(project,id).status);}catch{return false;}});}
  private save(project:string,session:Session){const root=this.directory(project,session.id);mkdirSync(root,{recursive:true});writeFileSync(join(root,'session.tmp'),JSON.stringify(session),{mode:0o600});renameSync(join(root,'session.tmp'),join(root,'session.json'));}
  get(project:string,id:string):Session{const root=this.directory(project,id);if(!existsSync(join(root,'session.json')))experimentError('UPLOAD_SESSION_NOT_FOUND',404);return JSON.parse(readFileSync(join(root,'session.json'),'utf8'));}
  create(project:string,value:unknown){const data=input.parse(value),root=this.directory(project,data.id);this.service.data.profile(project,data.profile_id);if(existsSync(join(root,'session.json'))){const old=this.get(project,data.id);if(old.size!==data.size||old.filename!==data.filename||old.profile_id!==data.profile_id||old.name!==data.name||old.extract!==data.extract)experimentError('UPLOAD_SESSION_CONFLICT',409);return old;}const session:Session={...data,offset:0,status:'receiving'};this.save(project,session);writeFileSync(join(root,'file.part'),'',{mode:0o600});return session;}

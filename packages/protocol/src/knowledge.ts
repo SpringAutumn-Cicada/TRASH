@@ -45,6 +45,7 @@ export const experimentResultSchema = z.object({
 });
 export const sourceDetailsSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(), authors: names.optional(), year: z.number().int().min(1000).max(3000).optional(), doi: z.string().max(500).optional(),
+  publication_date:z.string().regex(/^[12]\d{3}(?:-(?:0[1-9]|1[0-2]))?$/).optional(),
   tags: names.default([]), reading_status: z.enum(["unread", "reading", "organized"]).default("unread"),
   purposes: z.array(z.enum(["background", "related-work", "method", "baseline", "dataset", "other"])).default([]), normalized_names: z.record(z.string()).default({})
 }).strict();
@@ -60,9 +61,12 @@ export function parseKnowledge(kind: KnowledgeKind, value: unknown): KnowledgeCo
   return experimentResultSchema.parse(value);
 }
 export const knowledgeTaskInputSchema = z.object({
+  research_exploration:z.enum(["summary","directions","evidence-plan"]).optional(),
+  abstract_mode:z.boolean().optional(),
+  abstract_wiki_only:z.boolean().optional(),
   kind: z.enum(["literature-card", "wiki-page"]), source_ids: z.array(z.string().min(1)).max(100).default([]),
   dependencies: z.array(dependencySchema).max(100).default([]), target_id: z.string().optional(),
   title: z.string().min(1).max(500), instructions: z.string().max(10000).default(""),
-  timeout_seconds: z.number().int().min(30).max(7200).default(900), regenerate: z.boolean().default(false)
+  timeout_seconds: z.number().int().min(30).max(7200).default(3600), regenerate: z.boolean().default(false), include_source_wiki: z.boolean().optional(), wiki_level:z.enum(['single','summary','discovery','topic','hypothesis','overview']).optional()
 }).strict();
 export type KnowledgeTaskInput = z.infer<typeof knowledgeTaskInputSchema>;

@@ -321,3 +321,50 @@ export function parseWebpage(html: Uint8Array, url: string): ParsedSource {
   });
   return { source_type: "webpage", title, authors: [], source_url: url, parse_status: segments.length ? "indexed" : "no_text", segments };
 }
+
+/** Read original page labels and per-page text, including pages without a text layer. */
+export type PdfLayoutLine={id:string;page:number;text:string;x:number;y:number;width:number;height:number;fontSize:number;bold:boolean;column:number};
+export async function inspectPdf(bytes:Uint8Array){
+  const task=getDocument({data:new Uint8Array(bytes)});const pdf=await task.promise;
+  try{
+    const labels=await pdf.getPageLabels();
+    const pages:{page:number;label:string;text:string;width:number;height:number;lines:PdfLayoutLine[];warnings:string[]}[]=[];
+    for(let page=1;page<=pdf.numPages;page++){
+      const view=await pdf.getPage(page),viewport=view.getViewport({scale:1}),content=await view.getTextContent();
+      const items=content.items.flatMap(item=>{
+        if(!('str' in item)||!item.str.trim())return [];
+        const [x,y]=viewport.convertToViewportPoint(item.transform[4],item.transform[5]);
+        return [{text:item.str,x,y:Math.max(0,y-Math.abs(item.height)),width:Math.abs(item.width),height:Math.abs(item.height)||10,fontSize:Math.hypot(item.transform[2],item.transform[3])||Math.abs(item.height)||10,bold:/bold|black|heavy/i.test(content.styles[item.fontName]?.fontFamily??'')}];
+      });
+      // Infer a gutter only when both columns have substantial aligned body starts.
+      const left=items.filter(i=>i.x<viewport.width*.3&&i.width<viewport.width*.55&&i.text.length>8);
+      const right=items.filter(i=>i.x>viewport.width*.47&&i.x<viewport.width*.7&&i.width<viewport.width*.5&&i.text.length>8);
+      const gutter=left.length>=8&&right.length>=8?Math.min(...right.map(i=>i.x))-5:undefined;
+      const rows:{items:typeof items;y:number;column:number}[]=[];
+      for(const item of items.sort((a,b)=>a.y-b.y||a.x-b.x)){
+        const column=gutter===undefined?0:item.x<gutter&&item.x+item.width>gutter+viewport.width*.12?-1:item.x>=gutter?1:0;
+        const row=rows.find(r=>r.column===column&&Math.abs(r.y-item.y)<Math.max(2,item.height*.3));
+        if(row)row.items.push(item);else rows.push({items:[item],y:item.y,column});
+      }
+      const lines:PdfLayoutLine[]=rows.map(r=>{const parts=r.items.sort((a,b)=>a.x-b.x);return {id:'',page,text:parts.map(i=>i.text).join(' ').replace(/\s+/g,' ').trim(),x:Math.min(...parts.map(i=>i.x)),y:r.y,width:Math.max(...parts.map(i=>i.x+i.width))-Math.min(...parts.map(i=>i.x)),height:Math.max(...parts.map(i=>i.height)),fontSize:Math.max(...parts.map(i=>i.fontSize)),bold:parts.some(i=>i.bold),column:r.column};});
+      // Full-width lines divide a two-column page into vertical reading bands.
+      const spans=lines.filter(l=>l.column===-1).sort((a,b)=>a.y-b.y);
+      const band=(l:PdfLayoutLine)=>spans.filter(s=>s.y<l.y-2).length;
+      lines.sort((a,b)=>{const ab=band(a),bb=band(b);if(ab!==bb)return ab-bb;if(a.column===-1||b.column===-1)return a.y-b.y;return a.column-b.column||a.y-b.y||a.x-b.x;});
+      lines.forEach((line,index)=>line.id=`p${page}-l${index}`);
+      pages.push({page,label:labels?.[page-1]??String(page),width:viewport.width,height:viewport.height,lines,text:lines.map(l=>l.text).join('\n'),warnings:items.length?gutter!==undefined?['双栏阅读顺序由版面启发式恢复，图表区域仍须图像核对']:[]:['无可用文字层；需要页面图像阅读，未执行OCR']});
+    }
+    const outline:{title:string;page:number;level:number}[]=[];
+    const walk=async(nodes:NonNullable<Awaited<ReturnType<typeof pdf.getOutline>>>,level:number):Promise<void>=>{
+      for(const node of nodes){try{const dest=typeof node.dest==='string'?await pdf.getDestination(node.dest):node.dest;if(dest){const page=typeof dest[0]==='number'?dest[0]+1:await pdf.getPageIndex(dest[0])+1;outline.push({title:node.title,page,level});}}catch{/* A malformed bookmark is a candidate gap, not a fatal parse error. */}if(node.items?.length)await walk(node.items,level+1);}
+    };
+    await walk(await pdf.getOutline()??[],1);
+    return {layoutVersion:2,pageCount:pdf.numPages,pages,outline};
+  }finally{await task.destroy();}
+}
+
+export async function pdfViewerAsset(path:string){
+  if(!/^(cmaps|standard_fonts|wasm)\/[A-Za-z0-9_.-]+$/.test(path))throw new Error('INVALID_PDF_ASSET');
+  const {createRequire}=await import('node:module');const {dirname,join}=await import('node:path');const {readFile}=await import('node:fs/promises');
+  return readFile(join(dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),path));
+}

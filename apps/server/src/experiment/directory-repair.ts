@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 import { synchronizeRepairedSource } from './remote-source-repair.js';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, realpathSync, statSync } from 'node:fs';
@@ -11,7 +12,8 @@ import type { ExperimentService } from './service.js';
 import { automaticExperimentInputSchema, prepareAutomaticExperiment, saveExperimentBindings } from './automatic-experiment.js';
 export interface DirectoryRepair {phase?:'analyzing'|'syncing'|'weights'|'rechecking'|'done';id:string;input:z.infer<typeof automaticExperimentInputSchema>;status:'analyzing'|'checking'|'completed'|'blocked'|'cancelled';message:string;changes:string[];task?:EnvironmentAnalysisTask;report?:CodeEnvironmentReport;plan_index?:number;checks?:{dataset_name:string;path:string;errors:string[]}[];error?:string}
 const active=new Map<string,AbortController>();
-const file=(s:ExperimentService,p:string,id:string)=>{if(!/^env_[a-f0-9-]+$/.test(id))experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);return join(s.store.root,'projects',p,'directory-repairs',id+'.json');};
+export const directoryRepairBusy=(store:{root:string},project:string)=>[...active.keys()].some(path=>path.startsWith(projectRuntime(store.root,project,'directory-repairs')+sep));
+const file=(s:ExperimentService,p:string,id:string)=>{if(!/^env_[a-f0-9-]+$/.test(id))experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);return projectRuntime(s.store.root,p,'directory-repairs',id+'.json');};
 function save(s:ExperimentService,p:string,value:DirectoryRepair){const path=file(s,p,value.id);mkdirSync(join(path,'..'),{recursive:true});writeFileSync(path+'.tmp',JSON.stringify(value),{mode:0o600});renameSync(path+'.tmp',path);}
 export function directoryRepair(s:ExperimentService,p:string,id:string):DirectoryRepair {
  const path=file(s,p,id);if(!existsSync(path))experimentError('ENVIRONMENT_TASK_NOT_FOUND',404);const value=JSON.parse(readFileSync(path,'utf8')) as DirectoryRepair;
@@ -21,7 +23,7 @@ export function directoryRepair(s:ExperimentService,p:string,id:string):Director
  return value;
 }
 export async function startDirectoryRepair(s:ExperimentService,p:string,value:unknown):Promise<DirectoryRepair>{
- if(s.deployments.busyProject(p)||[...active.keys()].some(path=>path.startsWith(join(s.store.root,'projects',p,'directory-repairs')+sep))||s.data.runs(p).some(run=>s.data.active(run))||s.reproductionQueues.list(p).some(queue=>['running','paused'].includes(queue.status)))experimentError('EXPERIMENT_ACTIVE',409);
+ if(s.deployments.busyProject(p)||[...active.keys()].some(path=>path.startsWith(projectRuntime(s.store.root,p,'directory-repairs')+sep))||s.data.runs(p).some(run=>s.data.active(run))||s.reproductionQueues.list(p).some(queue=>['running','paused'].includes(queue.status)))experimentError('EXPERIMENT_ACTIVE',409);
  const checked=await prepareAutomaticExperiment(s,p,value);
  if(checked.ready)experimentError('DIRECTORY_CHECK_PASSED',409);
  const input=checked.input;
@@ -90,7 +92,7 @@ async function finish(s:ExperimentService,p:string,repair:DirectoryRepair,signal
 export function applyDirectoryRepair(s:ExperimentService,p:string,id:string):DirectoryRepair {
  const repair=directoryRepair(s,p,id),key=file(s,p,id);if(active.has(key)||repair.status==='completed')return repair;
  if(repair.task?.status!=='completed')experimentError('DIRECTORY_ANALYSIS_PENDING',409);
- if(s.environmentAnalysis.busy(p)||s.deployments.busyProject(p)||s.reproductionQueues.list(p).some(queue=>['running','paused'].includes(queue.status))||s.data.runs(p).some(run=>s.data.active(run))||[...active.keys()].some(path=>path.startsWith(join(s.store.root,'projects',p,'directory-repairs')+sep)))experimentError('EXPERIMENT_ACTIVE',409);
+ if(s.environmentAnalysis.busy(p)||s.deployments.busyProject(p)||s.reproductionQueues.list(p).some(queue=>['running','paused'].includes(queue.status))||s.data.runs(p).some(run=>s.data.active(run))||[...active.keys()].some(path=>path.startsWith(projectRuntime(s.store.root,p,'directory-repairs')+sep)))experimentError('EXPERIMENT_ACTIVE',409);
  const controller=new AbortController();active.set(key,controller);repair.status='checking';repair.message='正在应用有依据的方案修复并检查缺失权重';repair.error=undefined;save(s,p,repair);
  void finish(s,p,repair,controller.signal).catch(error=>{repair.status=controller.signal.aborted?'cancelled':'blocked';repair.error=error instanceof Error?error.message:'目录修复失败';repair.message='修复受阻，请查看未完成操作及剩余问题。';}).finally(()=>{try{save(s,p,repair);}finally{active.delete(key);}}).catch(()=>{});return repair;
 }

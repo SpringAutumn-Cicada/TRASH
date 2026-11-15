@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { makeId, researchProjectSchema, sourceSchema, type Artifact, type EvidencePassage, type ResearchProject, type Source, type SourceLocator } from "@trash/protocol";
@@ -163,6 +163,7 @@ export class TrashStore {
     const directory = join(this.root, "projects", project.project_id);
     const quarantine = join(this.root, "deleted-projects", `${project.project_id}-${makeId("artifact")}`);
     const hasFiles = existsSync(directory);
+    const externalWorkspace = hasFiles && lstatSync(directory).isSymbolicLink();
     if (hasFiles) {
       mkdirSync(join(this.root, "deleted-projects"), { recursive: true });
       renameSync(directory, quarantine);
@@ -193,7 +194,7 @@ export class TrashStore {
       try { rmSync(quarantine, { recursive: true, force: true }); }
       catch { return { deleted: true, cleanup_pending: true }; }
     }
-    return { deleted: true, cleanup_pending: false };
+    return { deleted: true, cleanup_pending: externalWorkspace };
   }
 
   saveArtifact(projectId: string, name: string, mediaType: string, bytes: Uint8Array): Artifact {
@@ -255,13 +256,20 @@ export class TrashStore {
       }
     });
     transaction();
+    for(const source of sources){
+      const root=join(this.root,'projects',source.project_id);
+      if(existsSync(join(root,'project.yaml'))){
+        const directory=join(root,source.material_scope==='abstract'?'abstract-library':'literature','parsed');mkdirSync(directory,{recursive:true});
+        const path=join(directory,source.source_id+'.json');writeFileSync(path+'.tmp',JSON.stringify({source,segments:segmentsBySource.get(source.source_id)??[]},null,2));renameSync(path+'.tmp',path);
+      }
+    }
     const at = new Date().toISOString();
     for (const projectId of new Set(sources.map(source => source.project_id))) this.db.prepare("UPDATE projects SET updated_at=?,data=json_set(data,'$.updated_at',?) WHERE project_id=?").run(at,at,projectId);
   }
 
-  listSources(projectId: string): Source[] {
+  listSources(projectId: string, includeAbstract=false): Source[] {
     const rows = this.db.prepare("SELECT data FROM sources WHERE project_id = ? ORDER BY imported_at DESC, source_id").all(projectId) as Array<{ data: string }>;
-    return rows.map((row) => sourceSchema.parse(JSON.parse(row.data)));
+    return rows.map((row) => sourceSchema.parse(JSON.parse(row.data))).filter(source=>includeAbstract||source.material_scope!=='abstract');
   }
 
   getSource(sourceId: string): Source | undefined {
@@ -273,7 +281,9 @@ export class TrashStore {
     return this.db.transaction(() => {
       const source = this.getSource(sourceId);
       if (!source || source.project_id !== projectId) throw Object.assign(new Error("SOURCE_NOT_FOUND"), { statusCode: 404 });
-      if (this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(projectId)) throw Object.assign(new Error("PROJECT_HAS_ACTIVE_TASKS"), { statusCode: 409 });
+      // Task input and its captured dependencies are stored together in data.
+      // Keep this source-scoped check inside the deletion transaction.
+      if (this.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') AND instr(data,?)>0 LIMIT 1").get(projectId,sourceId)) throw Object.assign(new Error("SOURCE_HAS_ACTIVE_TASKS"), { statusCode: 409 });
       const versions = this.db.prepare("SELECT data FROM knowledge_versions WHERE project_id=?").all(projectId) as { data: string }[];
       const merged = this.db.prepare("SELECT 1 FROM source_details WHERE source_id<>? AND json_extract(data,'$.merged_into')=? LIMIT 1").get(sourceId, sourceId);
       // Preserve evidence references in every historical version, including Wiki text.
@@ -330,3 +340,7 @@ export class TrashStore {
     return rows.map((row) => ({ source_id: row.source_id, locator: JSON.parse(row.locator_json) as SourceLocator, text: row.content, rank: -row.score }));
   }
 }
+
+export { parseMarkdown as parseKnowledgeMarkdown } from "./knowledge-markdown.js";
+
+export {migratePdfPreparation} from './pdf-preparation.js';

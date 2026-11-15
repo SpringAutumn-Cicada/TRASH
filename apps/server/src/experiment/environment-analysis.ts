@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 import { AdaptationMatchError, applySourceAdaptation, restoreSourceAdaptation } from './source-adaptation.js';
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -23,12 +24,12 @@ export class EnvironmentAnalysisService {
  private running=new Map<string,Active>();private closed=false;
  constructor(private store:TrashStore,private reproductions:ReproductionService){
   for(const project of store.listProjects()){
-   const root=join(store.root,"projects",project.project_id,"environment-analysis");
+   const root=projectRuntime(store.root,project.project_id,'environment-analysis');
    if(!existsSync(root))continue;
    for(const code of readdirSync(root))if(/^repro_[a-f0-9-]+$/.test(code))for(const task of this.tasks(project.project_id,code))if(pending(task)){task.status="interrupted";task.error="服务重启，分析已中断，可点击继续分析。";task.finished_at=new Date().toISOString();this.save(task);}
   }
  }
- private root(project:string,code:string){if(!/^repro_[a-f0-9-]+$/.test(code))experimentError("REPRODUCTION_NOT_FOUND",404);return join(this.store.root,"projects",project,"environment-analysis",code);}
+ private root(project:string,code:string){if(!/^repro_[a-f0-9-]+$/.test(code))experimentError("REPRODUCTION_NOT_FOUND",404);return projectRuntime(this.store.root,project,'environment-analysis',code);}
  private taskRoot(task:EnvironmentAnalysisTask){return join(this.root(task.project_id,task.reproduction_id),task.id);}
  private atomic(path:string,value:unknown){mkdirSync(dirname(path),{recursive:true});const temporary=`${path}.${randomUUID()}.tmp`;writeFileSync(temporary,JSON.stringify(value,null,2),{mode:0o600});renameSync(temporary,path);}
  private save(task:EnvironmentAnalysisTask){this.atomic(join(this.taskRoot(task),"task.json"),task);}
@@ -207,5 +208,5 @@ export class EnvironmentAnalysisService {
   const check=this.scanFreshness(project,code,reportId);this.freshnessChecks.set(key,check);
   try{return await check;}finally{if(this.freshnessChecks.get(key)===check)this.freshnessChecks.delete(key);}
  }
- private async scanFreshness(project:string,code:string,reportId:string){const report=this.report(project,code,reportId),release=this.reproductions.acquire(project);let snapshot:ReproductionSnapshot|undefined;try{snapshot=await this.reproductions.snapshot(project,code,true);const current=fingerprint(snapshot);return {stale:current!==report.code_fingerprint,current_fingerprint:current,checked_at:new Date().toISOString()};}finally{try{if(snapshot)await rm(join(this.store.root,"projects",project,"reproductions","snapshots",snapshot.snapshot_id),{recursive:true,force:true});}finally{release();}}}
+ private async scanFreshness(project:string,code:string,reportId:string){const report=this.report(project,code,reportId),release=this.reproductions.acquire(project);let snapshot:ReproductionSnapshot|undefined;try{snapshot=await this.reproductions.snapshot(project,code,true);const current=fingerprint(snapshot);return {stale:current!==report.code_fingerprint,current_fingerprint:current,checked_at:new Date().toISOString()};}finally{try{if(snapshot)await rm(projectRuntime(this.store.root,project,'reproductions',"snapshots",snapshot.snapshot_id),{recursive:true,force:true});}finally{release();}}}
 }

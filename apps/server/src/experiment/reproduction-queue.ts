@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 /* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join, posix } from 'node:path';
@@ -13,7 +14,7 @@ export class ReproductionQueueService{
  private timer:ReturnType<typeof setInterval>;private busy=false;private closed=false;
  constructor(private service:ExperimentService){for(const project of service.store.listProjects())for(const queue of this.list(project.project_id))if(queue.status==='running'){queue.status='paused';queue.message='服务重启，队列暂停；请先同步已有远端运行状态，再继续';this.save(queue);}this.timer=setInterval(()=>void this.tick().catch(()=>{}),3000);this.timer.unref();}
  close(){this.closed=true;clearInterval(this.timer);}
- private root(project:string){return join(this.service.store.root,'projects',project,'reproduction-queues');}
+ private root(project:string){return projectRuntime(this.service.store.root,project,'reproduction-queues');}
  list(project:string):Queue[]{const root=this.root(project);return existsSync(root)?readdirSync(root).filter(name=>/^rq_[a-f0-9-]+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(join(root,name),'utf8')) as Queue).sort((a,b)=>b.created_at.localeCompare(a.created_at)):[];}
  private save(queue:Queue){mkdirSync(this.root(queue.project_id),{recursive:true});const file=join(this.root(queue.project_id),queue.id+'.json');writeFileSync(file+'.tmp',JSON.stringify(queue),{mode:0o600});renameSync(file+'.tmp',file);}
  async create(project:string,value:unknown){const input=inputSchema.parse(value),s=this.service;if(this.creating.has(project))experimentError('REPRODUCTION_QUEUE_BUSY',409);this.creating.add(project);try{s.terminals.connection(project,input.profile_id);

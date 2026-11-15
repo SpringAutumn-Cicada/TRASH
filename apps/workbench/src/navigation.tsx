@@ -4,7 +4,7 @@ import type { ProjectPage } from "@trash/protocol";
 
 export const projectPages: { id: ProjectPage; label: string }[] = [
   { id: "overview", label: "概览" }, { id: "literature", label: "文献" }, { id: "cards", label: "卡片" },
-  { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }
+  { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "files", label: "项目文件" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }
 ];
 export const DirtyContext = createContext<(id: string, dirty: boolean) => void>(() => {});
 export function useUnsavedChanges(dirty: boolean): () => void {

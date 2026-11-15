@@ -1,3 +1,4 @@
+import { projectRuntime } from "../project-layout.js";
 /* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
@@ -63,8 +64,8 @@ export class DatasetUploadService {
  private transfers=new Map<string,Transfer>();
  private checks=new Set<string>();
  constructor(private data:ExperimentStore,projects:string[],private root:string){for(const project of projects)for(const item of data.datasets(project)){if(item.verification_progress?.status==='running')data.saveDataset({...item,verification_status:'unverified',verified_at:undefined,verification_progress:{...item.verification_progress,status:'failed',message:'后端重启，校验已中断，请重新校验。'}});if(item.transfer_status==='uploading'){data.saveDataset({...item,transfer_status:'interrupted',transfer_message:'后端重启，上传已中断；请检查远端目录。',verification_status:'unverified',verified_at:undefined,verification_progress:item.verification_progress?{...item.verification_progress,status:'failed',message:'后端重启，校验或上传已中断，请核对远端文件。'}:undefined});}}}
- hashes(project:string,id:string):{path:string;sha256:string}[]{const path=join(this.root,'projects',project,'dataset-hashes',id+'.json');return existsSync(path)?JSON.parse(readFileSync(path,'utf8')):[];}
- saveHashes(project:string,id:string,files:{path:string;sha256:string}[]){const directory=join(this.root,'projects',project,'dataset-hashes');mkdirSync(directory,{recursive:true});writeFileSync(join(directory,id+'.json'),JSON.stringify(files),{mode:0o600});}
+ hashes(project:string,id:string):{path:string;sha256:string}[]{const path=projectRuntime(this.root,project,'dataset-hashes',id+'.json');return existsSync(path)?JSON.parse(readFileSync(path,'utf8')):[];}
+ saveHashes(project:string,id:string,files:{path:string;sha256:string}[]){const directory=projectRuntime(this.root,project,'dataset-hashes');mkdirSync(directory,{recursive:true});writeFileSync(join(directory,id+'.json'),JSON.stringify(files),{mode:0o600});}
  busy(project:string){return this.checks.has(project)||[...this.transfers.values()].some(item=>item.project===project);}
  async verify(project:string,id:string,remote:RemoteConnection):Promise<DatasetRef>{
   if(this.checks.has(project))experimentError('DATASET_BUSY',409);

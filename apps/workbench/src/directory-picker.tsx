@@ -9,7 +9,7 @@ const messages: Record<string, string> = {
   LOCAL_DIRECTORY_NOT_FOUND: "目录不存在，请检查路径。", LOCAL_DIRECTORY_ACCESS_DENIED: "没有权限读取此目录。",
   LOCAL_DIRECTORY_EXISTS: "已存在同名文件或文件夹。", LOCAL_DIRECTORY_CREATE_FAILED: "创建失败，请检查目录权限。", INVALID_REQUEST: "请输入有效的路径或文件夹名称。"
 };
-export function DirectoryPicker({ base, initialPath, onSelect, onClose, gitEnabled = true }: { base: string; initialPath: string; onSelect: (path: string) => void; onClose: () => void; gitEnabled?:boolean }) {
+export function DirectoryPicker({ base, initialPath, onSelect, onClose, gitEnabled = true, title, browseOnly = false }: { base: string; initialPath: string; onSelect: (path: string) => void; onClose: () => void; gitEnabled?:boolean;title?:string;browseOnly?:boolean }) {
   const [directory, setDirectory] = useState<Directory>();
   const [path, setPath] = useState(initialPath), [name, setName] = useState(""), [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -62,14 +62,14 @@ export function DirectoryPicker({ base, initialPath, onSelect, onClose, gitEnabl
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
   }}>
-    <div className="modal-heading"><div><h2 id="directory-picker-title">{gitEnabled?"选择仓库目录":"选择代码目录"}</h2><p>浏览运行 TRASH 服务的电脑上的目录。</p></div><button type="button" className="icon-button" aria-label="关闭目录选择" disabled={busy} onClick={onClose}><X size={17}/></button></div>
+    <div className="modal-heading"><div><h2 id="directory-picker-title">{title??(gitEnabled?"选择仓库目录":"选择代码目录")}</h2><p>浏览运行 TRASH 服务的电脑上的目录。</p></div><button type="button" className="icon-button" aria-label="关闭目录选择" disabled={busy} onClick={onClose}><X size={17}/></button></div>
     <form className="directory-location" onSubmit={event => { event.preventDefault(); void open(path); }}><input aria-label="当前目录路径" value={path} onChange={event => setPath(event.target.value)} placeholder="输入绝对路径" disabled={busy}/><button className="secondary-button" disabled={busy}>进入</button></form>
-    <div className="directory-actions"><button type="button" className="secondary-button" disabled={busy || !directory?.parent} onClick={() => void open(directory!.parent!)}><ArrowUp size={14}/>上一级</button><button type="button" className="secondary-button" disabled={busy} onClick={() => void open("")}>主目录</button><button type="button" className="secondary-button" disabled={busy || !directory} onClick={() => setCreating(!creating)}><FolderPlus size={14}/>新建文件夹</button></div>
-    {creating && <form className="directory-location" onSubmit={event => void create(event)}><input autoFocus aria-label="新文件夹名称" value={name} onChange={event => setName(event.target.value)} placeholder="文件夹名称" maxLength={255} disabled={busy}/><button className="primary-button" disabled={busy || !name.trim()}>创建并进入</button></form>}
+    <div className="directory-actions"><button type="button" className="secondary-button" disabled={busy || !directory?.parent} onClick={() => void open(directory!.parent!)}><ArrowUp size={14}/>上一级</button><button type="button" className="secondary-button" disabled={busy} onClick={() => void open("")}>主目录</button>{!browseOnly&&<button type="button" className="secondary-button" disabled={busy || !directory} onClick={() => setCreating(!creating)}><FolderPlus size={14}/>新建文件夹</button>}</div>
+    {!browseOnly && creating && <form className="directory-location" onSubmit={event => void create(event)}><input autoFocus aria-label="新文件夹名称" value={name} onChange={event => setName(event.target.value)} placeholder="文件夹名称" maxLength={255} disabled={busy}/><button className="primary-button" disabled={busy || !name.trim()}>创建并进入</button></form>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
     <div className="directory-list" aria-label="子目录" aria-busy={busy}>{busy ? <p role="status">正在读取目录…</p> : directory?.directories.map(entry => <button type="button" key={entry.path} className="directory-entry" onClick={() => void open(entry.path)}><Folder size={16}/><span>{entry.name}</span><span aria-hidden="true">›</span></button>)}{!busy && directory && !directory.directories.length && <p>此目录下没有子文件夹。</p>}</div>
     <p className="directory-selection">已浏览到：{directory?.path ?? "尚未选择"}</p>
-    {gitEnabled&&<label className="directory-git-option"><input type="checkbox" checked={initializeGit} disabled={busy} onChange={event => setInitializeGit(event.target.checked)}/><span>选择时初始化 Git 仓库<small>已有仓库直接使用；新仓库默认分支为 main，不自动提交文件。</small></span></label>}
-    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="primary-button" disabled={busy || !directory} onClick={() => void select()}>选择此目录</button></div>
+    {!browseOnly&&gitEnabled&&<label className="directory-git-option"><input type="checkbox" checked={initializeGit} disabled={busy} onChange={event => setInitializeGit(event.target.checked)}/><span>选择时初始化 Git 仓库<small>已有仓库直接使用；新仓库默认分支为 main，不自动提交文件。</small></span></label>}
+    <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{browseOnly?"关闭":"取消"}</button>{!browseOnly&&<button type="button" className="primary-button" disabled={busy || !directory} onClick={() => void select()}>选择此目录</button>}</div>
   </div></div></ModalLayer>;
 }

@@ -16,3 +16,28 @@
 .workspace-autodl-connect{display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:none;font-size:12px;white-space:nowrap}
 @media(max-width:600px){.workspace-autodl-connect{padding:8px;font-size:11px}.workspace-autodl-connect svg{width:14px;height:14px}}
 .workspace-autodl-control{display:flex;align-items:center;gap:12px;flex:none;min-width:0}.workspace-autodl-status{display:inline-flex;align-items:center;gap:7px;min-width:0;max-width:210px;font-size:11px;color:var(--muted);white-space:nowrap}.workspace-autodl-status>span{overflow:hidden;text-overflow:ellipsis}.workspace-autodl-status>i{width:7px;height:7px;border-radius:50%;background:#98a2b3;flex:none}.workspace-autodl-status.connected{color:var(--green)}.workspace-autodl-status.connected>i{background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent)}.workspace-autodl-status.unknown>i{background:#d7922c}@media(max-width:899px){.workspace-autodl-control{gap:8px}.workspace-autodl-status{max-width:120px}}@media(max-width:600px){.workspace-autodl-control{gap:6px}.workspace-autodl-status{font-size:10px;max-width:80px}.workspace-autodl-status>i{width:6px;height:6px}}
+
+/* 文献四模块沿用数据页的模块导航。 */
+.literature-workspace .literature-module-content{display:block}
+.literature-workspace .literature-tools{border:0;padding:0;max-width:none}
+.literature-workspace .literature-module-content>[hidden]{display:none}
+.literature-workspace .search-section{margin-top:0;margin-bottom:24px}
+
+.workspace-path{display:block;overflow-wrap:anywhere;white-space:pre-wrap;margin:8px 0}.workspace-settings{max-height:85dvh;overflow:auto}.workspace-settings progress{width:100%}
+
+.source-row-main{position:relative}.literature-page .source-row-container .source-row,.literature-page .source-table-header{padding-right:72px}.source-analyze-button{position:absolute;right:35px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted,#89929e);cursor:pointer}.source-analyze-button:hover:not(:disabled){color:#2563eb;background:#eff6ff;border-color:#dbeafe}.source-analyze-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.source-analyze-button:disabled{opacity:.5;cursor:not-allowed}.source-analysis-status{display:flex;flex-wrap:wrap;gap:12px;padding:0 12px 12px 64px;font-size:12px;color:var(--muted,#89929e)}.source-analysis-status a{color:#2563eb}.source-analysis-status.status-failed{color:#b42318}
+/* Project configuration: fixed header/footer, compact grouped settings. */
+#modal-root .workspace-settings{width:min(700px,calc(100vw - 32px));max-height:88dvh;padding:0;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 22px 70px rgb(15 35 65 / 20%)}
+.workspace-settings>.modal-heading{padding:22px 26px 18px;margin:0;border-bottom:1px solid var(--line);align-items:flex-start}
+.workspace-settings h2{font-size:21px;margin:5px 0 0}.project-settings-eyebrow{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px}
+.project-settings-body{overflow:auto;padding:22px 26px;scrollbar-width:thin;scrollbar-color:var(--line) transparent;display:flex;flex-direction:column;gap:18px;min-height:0}
+.project-settings-section{border:1px solid var(--line);border-radius:11px;padding:18px;background:var(--surface)}
+.project-settings-section h3{margin:0 0 9px;font-size:14px;color:var(--ink)}.project-settings-section p{font-size:12px;line-height:1.7;color:var(--muted);margin:8px 0 12px}
+.project-settings-section label{display:flex;flex-direction:column;gap:7px;margin:14px 0 10px;font-size:12px;font-weight:550;color:var(--ink)}
+.project-settings-section input{box-sizing:border-box;width:100%;min-width:0;padding:10px 12px;font-size:12px;font-weight:400;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
+.project-settings-section .workspace-path{padding:10px 12px;border-radius:7px;background:color-mix(in srgb,var(--green-soft) 45%,var(--surface));font:11px/1.7 ui-monospace,Consolas,monospace;color:var(--ink);margin:7px 0;overflow-wrap:anywhere}
+.project-settings-section button{font-size:12px;padding:8px 12px}.project-name-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}.project-name-actions small{font-size:11px;color:var(--muted)}
+.project-settings-section summary{font-size:12px;cursor:pointer;color:var(--ink);line-height:1.7}.project-migration>summary{font-weight:600;font-size:14px}.project-migration>summary>span{font-size:11px;color:var(--muted);font-weight:400;margin-left:12px}.project-migrate-submit{margin-top:4px}
+.project-migration-history>div[role=status]{padding:12px;border-radius:8px;background:color-mix(in srgb,var(--green-soft) 45%,var(--surface));font-size:12px}.project-migration-history details{margin-top:12px}.project-migration-history details>div{margin:12px 0;padding-top:10px;border-top:1px solid var(--line)}
+.workspace-settings>.modal-actions{padding:14px 26px;margin:0;border-top:1px solid var(--line);flex:none}.project-settings-body>.error-notice{margin:0}
+@media(max-width:520px){.workspace-settings>.modal-heading{padding:18px}.project-settings-body{padding:16px;gap:12px}.project-settings-section{padding:14px}.project-name-actions{align-items:flex-start;flex-direction:column}}

@@ -1,3 +1,5 @@
+import {taskSummary,taskEventPage,eventOptions,streamTaskEvents} from './task-events.js';
+import {bibliographyState,saveBibliographyState} from './source-bibliography.js';
 import { createReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
@@ -6,7 +8,7 @@ import { sourceSchema, knowledgeWriteSchema, sourceDetailsSchema, type Knowledge
 
 export const kinds = { "literature-cards": "literature-card", "wiki-pages": "wiki-page", "experiment-results": "experiment-result" } as const;
 export function requestError(code: string, statusCode = 400): never { throw Object.assign(new Error(code), { statusCode }); }
-export interface TaskRunner { enqueue(projectId: string, input: z.infer<typeof knowledgeTaskInputSchema>, retryOf?: string): KnowledgeTask[]; cancel(projectId: string, taskId: string): void }
+export interface TaskRunner { enqueue(projectId: string, input: z.infer<typeof knowledgeTaskInputSchema>, retryOf?: string): KnowledgeTask[]; cancel(projectId: string, taskId: string): void; resumable?(task:KnowledgeTask):boolean }
 function csv(records: KnowledgeVersion[]): string {
   const escape = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
   return "\uFEFF" + [ ["id", "version", "status", "title", "content"], ...records.map(v => [v.object_id, v.version, v.status, v.title, JSON.stringify(v.content)]) ].map(row => row.map(escape).join(",")).join("\r\n");
@@ -46,14 +48,29 @@ export async function knowledgeRoute(
     if (parts[2] === "details") {
       if (method === "GET") {
         const row = store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(sourceId) as { data: string } | undefined;
-        send(response, 200, { details: row ? JSON.parse(row.data) : sourceDetailsSchema.parse({}), source }); return true;
+        send(response, 200, { details: row ? JSON.parse(row.data) : sourceDetailsSchema.parse({}), source, bibliography:bibliographyState(store,sourceId) }); return true;
       }
       if (method === "PUT") {
         const details = sourceDetailsSchema.parse(await readJson(request));
         const oldDetails=store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(sourceId) as {data:string}|undefined;
         const mergedInto=oldDetails?(JSON.parse(oldDetails.data) as {merged_into?:string}).merged_into:undefined;
         store.db.transaction(() => {
-          const updated = { ...source, ...Object.fromEntries(Object.entries(details).filter(([key]) => ["title", "authors", "year", "doi"].includes(key))) };
+          const updated = { ...source, ...Object.fromEntries(Object.entries(details).filter(([key]) => ["title", "authors", "year", "publication_date", "doi"].includes(key))) };
+          if(details.publication_date)updated.year=Number(details.publication_date.slice(0,4));
+          const metadata=bibliographyState(store,sourceId),manual=new Set(metadata.manual??[]);
+          const before={authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date};
+          if(details.authors!==undefined&&JSON.stringify(details.authors)!==JSON.stringify(source.authors))manual.add('authors');
+          if(details.title!==undefined&&details.title!==source.title)manual.add('title');
+          if((details.publication_date!==undefined&&details.publication_date!==source.publication_date)||(details.year!==undefined&&details.year!==source.year))manual.add('publication_date');
+          // Confirming a suggested value is an explicit human decision, even if unchanged.
+          if(details.title!==undefined&&metadata.suggestion?.title===details.title)manual.add('title');
+          if(details.publication_date!==undefined&&metadata.suggestion?.publication_date===details.publication_date)manual.add('publication_date');
+          if(details.year!==undefined&&!details.publication_date&&details.year!==source.year)delete updated.publication_date;
+          metadata.manual=[...manual];metadata.revision=(metadata.revision??0)+1;
+          if(metadata.suggestion){if(details.authors&&JSON.stringify(details.authors)===JSON.stringify(metadata.suggestion.authors)){manual.add('authors');metadata.manual=[...manual];delete metadata.suggestion.authors;}if(details.title===metadata.suggestion.title)delete metadata.suggestion.title;if(details.publication_date===metadata.suggestion.publication_date)delete metadata.suggestion.publication_date;if(!metadata.suggestion.authors&&!metadata.suggestion.title&&!metadata.suggestion.publication_date)metadata.suggestion=undefined;}
+          const after={authors:updated.authors,title:updated.title,year:updated.year,publication_date:updated.publication_date};
+          if(JSON.stringify(before)!==JSON.stringify(after))metadata.history=[...(metadata.history??[]),{at:new Date().toISOString(),before,after,reason:'user-metadata'}];
+          saveBibliographyState(store,sourceId,metadata);
           if (details.doi) {
             const normalized = details.doi.replace(/^https?:\/\/doi.org\//i, "").trim().toLowerCase();
             if (store.listSources(projectId).some(s => s.source_id !== sourceId && s.doi?.replace(/^https?:\/\/doi.org\//i, "").trim().toLowerCase() === normalized)) requestError("DUPLICATE_DOI", 409);
@@ -82,6 +99,10 @@ export async function knowledgeRoute(
     }
   }
   const kind = kinds[parts[0] as keyof typeof kinds] as KnowledgeKind | undefined;
+  if (kind && kind !== 'experiment-result') {
+    if(method==='GET'){const {markdownVersions}=await import('./markdown-knowledge.js');const records=markdownVersions(store,projectId,kind);const record=parts[1]?records.find(item=>item.object_id===parts[1]):undefined;if(parts[1]&&!record)requestError('NOT_FOUND',404);send(response,200,parts[1]?{record}:{records,total:records.length,page:1,limit:records.length});return true;}
+    requestError('MARKDOWN_DIRECT_WRITE_REQUIRED',409);
+  }
   if (kind) {
     const id = parts[1] ? decodeURIComponent(parts[1]) : undefined;
     if (!id && method === "GET") {
@@ -109,9 +130,6 @@ export async function knowledgeRoute(
       const version = url.searchParams.has("version") ? z.coerce.number().int().positive().parse(url.searchParams.get("version")) : undefined;
       const record = knowledge.get(projectId, kind, id, version);
       if (!record) requestError("NOT_FOUND", 404);
-      if (kind === "wiki-page" && url.searchParams.get("format") === "markdown" && "body" in record.content) {
-        response.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": 'attachment; filename="wiki.md"' }); response.end(`# ${record.title}\n\n${record.content.body}`); return true;
-      }
       send(response, 200, { record, stale: knowledge.stale(record) }); return true;
     }
     if (id && parts.length === 2 && method === "PUT") {
@@ -131,12 +149,21 @@ export async function knowledgeRoute(
     }
   }
   if (parts[0] === "knowledge-tasks") {
-    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId) }); return true; }
+    if (!parts[1] && method === "GET") { send(response, 200, { tasks: knowledge.tasks(projectId).filter(task=>!(task as {archived_duplicate?:boolean}).archived_duplicate&&!(task as {deleted_at?:string}).deleted_at).map(task=>url.searchParams.get('summary')==='true'?taskSummary(store,task):task) }); return true; }
     if (!parts[1] && method === "POST") { send(response, 201, { tasks: runner.enqueue(projectId, knowledgeTaskInputSchema.parse(await readJson(request))) }); return true; }
     const task = knowledge.tasks(projectId).find(t => t.task_id === parts[1]);
     if (!task) requestError("NOT_FOUND", 404);
+    if(!parts[2]&&method==='DELETE'){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      // Logical deletion preserves retry ancestry, workflow references and recovery files.
+      const result=store.db.prepare("UPDATE knowledge_tasks SET data=json_set(data,'$.deleted_at',?) WHERE task_id=? AND project_id=? AND status='failed'").run(new Date().toISOString(),task.task_id,projectId);
+      if(!result.changes)requestError('TASK_DELETE_FAILED_ONLY',409);
+      send(response,200,{deleted:true,files_preserved:true});return true;
+    }
+    if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url),runner.resumable?.bind(runner)));return true;}
+    if(parts[2]==='stream'&&method==='GET'){streamTaskEvents(store,task,request,response,url,runner.resumable?.bind(runner));return true;}
     if (parts[2] === "cancel" && method === "POST") { runner.cancel(projectId, task.task_id); send(response,200,{ok:true}); return true; }
-    if (parts[2] === "retry" && method === "POST") { if (["running","queued"].includes(task.status)) requestError("TASK_ACTIVE",409); send(response,201,{tasks:runner.enqueue(projectId,{...task.input,regenerate:true},task.task_id)}); return true; }
+    if (parts[2] === "retry" && method === "POST") { if (["running","queued"].includes(task.status)) requestError("TASK_ACTIVE",409); send(response,201,{tasks:runner.enqueue(projectId,{...task.input,timeout_seconds:task.input.timeout_seconds===900?1800:task.input.timeout_seconds,regenerate:true},task.task_id)}); return true; }
     if (method === "GET") { send(response,200,{task,events:store.db.prepare("SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq LIMIT 1000").all(task.task_id)}); return true; }
   }
   if (subpath === "wiki-templates" && method === "GET") {
@@ -146,7 +173,8 @@ export async function knowledgeRoute(
     send(response,200,{ schema_version:1,title:"实验运行",method:"",dataset:"",dataset_version:"",task:"",split:"",evaluation_protocol:"",config:{},environment:{},metrics:[{name:"accuracy",value:0,unit:"ratio",condition:""}],attachments:[],notes:"" }); return true;
   }
   if (subpath === "wiki-export" && method === "GET") {
-    const pages=knowledge.list(projectId,"wiki-page");
+    const {markdownVersions}=await import("./markdown-knowledge.js");
+    const pages=markdownVersions(store,projectId,"wiki-page");
     const index=pages.map(p=>`- [${p.title}](#${p.object_id})`).join("\n");
     const body=pages.map(p=>`<a id="${p.object_id}"></a>\n\n# ${p.title}\n\n${"body" in p.content?p.content.body:""}\n\n引用对象：\n${"dependencies" in p.content?p.content.dependencies.map(d=>`- ${d.kind}: ${d.object_id} v${d.version}`).join("\n"):""}`).join("\n\n---\n\n");
     response.writeHead(200,{"content-type":"text/markdown; charset=utf-8","content-disposition":'attachment; filename="project-wiki.md"'});response.end(`# 项目 Wiki\n\n${index}\n\n${body}`);return true;
@@ -158,8 +186,10 @@ export async function knowledgeRoute(
       const file = store.artifactFile(projectId,row.artifact_id);
       return file ? { artifact:file.artifact, bytes:Buffer.from(store.readArtifact(projectId,row.artifact_id)!).toString("base64") } : undefined;
     }).filter(Boolean);
-    const records = (Object.values(kinds) as KnowledgeKind[]).flatMap(k => knowledge.list(projectId,k).flatMap(v => knowledge.history(projectId,k,v.object_id))).sort((a,b)=>a.created_at.localeCompare(b.created_at));
-    send(response,200,{schema_version:1,project,sources:sources.map(source=>({source,segments:store.listSourceSegments(source.source_id),details:(store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(source.source_id) as {data:string}|undefined)?.data})),files,records,attachments:store.db.prepare("SELECT a.* FROM source_attachments a JOIN sources s ON s.source_id=a.source_id WHERE s.project_id=?").all(projectId), reviews:store.db.prepare("SELECT r.* FROM knowledge_reviews r WHERE r.object_id IN (SELECT object_id FROM knowledge_versions WHERE project_id=?)").all(projectId)}); return true;
+    const {MarkdownKnowledge}=await import("./markdown-knowledge.js");
+    const markdown_files=new MarkdownKnowledge(store).list(projectId).documents.map(({path,text})=>({path,text}));
+    const records = (["experiment-result"] as KnowledgeKind[]).flatMap(k => knowledge.list(projectId,k).flatMap(v => knowledge.history(projectId,k,v.object_id))).sort((a,b)=>a.created_at.localeCompare(b.created_at));
+    send(response,200,{schema_version:1,project,markdown_files,sources:sources.map(source=>({source,segments:store.listSourceSegments(source.source_id),details:(store.db.prepare("SELECT data FROM source_details WHERE source_id=?").get(source.source_id) as {data:string}|undefined)?.data})),files,records,attachments:store.db.prepare("SELECT a.* FROM source_attachments a JOIN sources s ON s.source_id=a.source_id WHERE s.project_id=?").all(projectId), reviews:store.db.prepare("SELECT r.* FROM knowledge_reviews r WHERE r.object_id IN (SELECT object_id FROM knowledge_versions WHERE project_id=?)").all(projectId)}); return true;
   }
   return false;
 }
