@@ -26,6 +26,7 @@ export const researchProjectSchema = z.object({
   title: z.string().trim().min(1),
   research_question: z.string().trim().max(10000).default(""),
   research_area: z.string().trim().min(1).max(500).optional(),
+  research_constraints: z.string().trim().max(10000).optional(),
   research_interests: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
   research_stage: z.enum(["exploration","focused"]).optional(),
   research_questions:z.array(researchQuestionSchema).max(100).optional(),

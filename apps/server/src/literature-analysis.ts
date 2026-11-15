@@ -124,6 +124,8 @@ export class LiteratureAnalysis {
     try {
       const markdown=new MarkdownKnowledge(this.store);const docs=markdown.index(project).documents;
       for(const source of eligible){
+        const wiki=docs.filter(d=>d.source_id===source.source_id&&d.kind==='wiki-page'&&d.level==='single'&&(d.group_status===undefined||d.group_status==='current')&&/\/(whoami|research_problem|contributions)\.md$/.test(d.path));
+        if((mode==='synthesis'||mode==='overview')&&wiki.some(d=>d.path.endsWith('/whoami.md'))){value.card_documents!.push(...wiki.map(d=>d.id));value.reused_sources!.push(source.source_id);continue;}
         const prior=this.knowledge.tasks(project).filter(t=>t.input.kind==='literature-card'&&t.input.source_ids[0]===source.source_id&&t.status==='completed').sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
         const same=prior&&(prior.snapshot as {prompt_version?:number}).prompt_version===9&&(prior.snapshot as {bibliography_baselines?:Record<string,{content_hash:string}>}).bibliography_baselines?.[source.source_id]?.content_hash===sourceContentHash(source);
         const pair=docs.filter(d=>d.source_id===source.source_id&&['basic','detail','key'].includes(d.card_type??''));
@@ -148,7 +150,7 @@ export class LiteratureAnalysis {
     const markdown=new MarkdownKnowledge(this.store);const existing=markdown.index(value.project_id).documents.find(record=>(record.title===title||record.aliases?.includes(title)||record.batch_label===title)&&(!level||record.level===level));
     const refs=records.map(r=>markdown.index(value.project_id).documents.find(d=>d.id===r.object_id)!);
     if(existing&&!existing.stale&&existing.dependencies?.length===refs.length&&refs.every(ref=>existing.dependencies?.some(d=>d.path===ref.path&&d.hash===ref.hash))){const old=this.knowledge.tasks(value.project_id).find(t=>t.output_id===existing.id&&t.status==='completed'&&(t.snapshot as {prompt_version?:number}).prompt_version===9);if(old)return [old.task_id];}
-    const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: [], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.id } : {}), instructions: `${instructions}。用户要求：${value.instructions??""}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。缺失来源ID：${(value.missing_sources??[]).join(",")||"无"}。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 3600, regenerate: false, wiki_level:level??(value.overview?"overview":"topic") };
+    const input: KnowledgeTaskInput = { kind: "wiki-page", source_ids: value.reused_sources??[], dependencies: records.map(record => ({ kind: record.kind, object_id: record.object_id, version: record.version })), title, ...(existing ? { target_id: existing.id } : {}), instructions: `${instructions}。用户要求：${value.instructions??""}。本次共有 ${value.source_count} 篇可读文献，缺少正文或摘要跳过 ${value.skipped_count} 篇。缺失来源ID：${(value.missing_sources??[]).join(",")||"无"}。只归纳实际提供的成功结果，不推测缺失材料。`, timeout_seconds: 3600, regenerate: false, wiki_level:level??(value.overview?"overview":"topic") };
     return this.agent.enqueue(value.project_id, input).map(task => task.task_id);
   }
   advance(project: string) {

@@ -170,7 +170,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
     if(!subpath&&method==='PATCH'){
-      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_area:z.string().trim().min(1).max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
+      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_constraints:z.string().trim().max(10000).optional(),research_area:z.string().trim().min(1).max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
       if(input.expected_updated_at&&input.expected_updated_at!==project.updated_at){sendJson(response,409,{error:'VERSION_CONFLICT'});return;}
       if(project.research_questions&&input.research_question!==undefined){sendJson(response,409,{error:'USE_RESEARCH_QUESTIONS'});return;}
       const at=new Date().toISOString(),{expected_updated_at,...changes}=input;
@@ -194,10 +194,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId)});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional()}).strict().parse(await readJson(request));
+      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([])}).strict().parse(await readJson(request));
       const question=input.question_id?projectQuestions(project).find(q=>q.id===input.question_id):undefined;
       if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
-      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question)});return;
+      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids)});return;
     }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
     if(explorationAction&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1]):exploration.cancel(projectId,explorationAction[1])});return;}

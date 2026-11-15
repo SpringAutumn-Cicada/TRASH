@@ -5,7 +5,7 @@ description: 在 TRASH 论文项目中读取完整论文材料，生成或修订
 
 # TRASH 单篇论文 Wiki
 
-本 skill 只处理单篇完整论文的 Wiki 生成、重新分析和局部修订。输入包括论文原始材料、固定四页一批的图文阅读笔记、任务要求和输出目录；不读取旧版卡片或历史 Wiki 作为生成依据。摘要论文使用 `trash-abstract-wiki`，多篇论文综合和研究探索使用 `trash-literature-synthesis`。
+本 skill 只处理单篇完整论文的 Wiki 生成、重新分析和局部修订。输入包括论文原始材料、固定四页一批的图文阅读笔记、任务要求和输出目录；不读取旧版卡片或历史 Wiki 作为生成依据。摘要论文使用 `trash-abstract-wiki`，多篇论文综合使用 `trash-literature-synthesis`，研究方向探索使用 `trash-research-exploration`。
 
 ## 输出范围
 
