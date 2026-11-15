@@ -14,13 +14,16 @@ export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';sourc
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
-export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-knowledge/',import.meta.url));
+export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
 const knowledgeSkillFiles=['SKILL.md','references/wiki.md','references/paper-wiki.md','references/research-exploration.md'];
-export function skillText(){return knowledgeSkillFiles.map(name=>readFileSync(join(skillRoot,name),'utf8')).join('\n\n');}
+const synthesisRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-synthesis/',import.meta.url));
+// References moved during the skill split; retain the existing staged layout.
+const skillFile=(name:string)=>join(name==='references/wiki.md'||name==='references/research-exploration.md'?synthesisRoot:skillRoot,name);
+export function skillText(){return knowledgeSkillFiles.map(name=>readFileSync(skillFile(name),'utf8')).join('\n\n');}
 export function stageKnowledgeSkill(directory:string){
   // Remove obsolete staged rules when continuing a previously created task.
   for(const name of ['basic.md','cards.md']){const path=join(directory,'literature-skill','references',name);if(existsSync(path)){rejectSymlink(path);unlinkSync(path);}}
-  for(const name of knowledgeSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(join(skillRoot,name),'utf8'),{mode:0o600});}
+  for(const name of knowledgeSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(skillFile(name),'utf8'),{mode:0o600});}
 }
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}
