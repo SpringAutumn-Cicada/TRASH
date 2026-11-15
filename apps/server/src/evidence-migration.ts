@@ -58,11 +58,10 @@ function plan(md:MarkdownKnowledge,project:string,source:string){
   for(const doc of docs){
    let text=markdownReferences(doc.text).text;
    const header=text.match(/^(---\n[\s\S]*?\n---\n)/)?.[1];if(!header){conflicts.push(doc.path+'缺少规范元数据');continue;}
-   let next=strip(text);const firstHeading=next.search(/^#\s+.+$/m);
-   if(doc.path!==prefix+'whoami.md'&&firstHeading>=0){const prelude=next.slice(0,firstHeading).trim();const title=strip(docs.find(d=>d.path===prefix+'whoami.md')?.text??'').match(/^#\s+(.+)$/m)?.[1];if(prelude&&!prelude.replace(/\[论文总览\]\([^)]*\)/g,'').split('\n').map(s=>s.trim()).filter(Boolean).every(line=>line===title))conflicts.push(doc.path+'有无法安全移除的标题前内容');else next=next.slice(firstHeading);}
-   next=next.replace(/^\[论文总览\]\([^)]*\)\s*\n/gm,'');
+   let next=strip(text);
    if(doc.path===index.path){
-    next='# 原文依据\n\n本目录仅提供条目导航；实际阅读范围与缺口见各条目。\n\n'+[...ids].map(id=>`- [${id}](./evidence/${id}.md)`).join('\n')+'\n';
+    const title=strip(docs.find(d=>d.path===prefix+'whoami.md')?.text??'').match(/^#\s+(.+)$/m)?.[1]??'';
+    next=title+'\n\n[论文总览](./whoami.md)\n\n# 原文依据\n\n本目录仅提供条目导航；实际阅读范围与缺口见各条目。\n\n'+[...ids].map(id=>`- [${id}](./evidence/${id}.md)`).join('\n')+'\n';
     text=front(doc.path,source,'evidence-index')+next;
    }else text=header+rewrite(doc.path,next);
    files.push({path:doc.path,text,expected:doc.hash});
