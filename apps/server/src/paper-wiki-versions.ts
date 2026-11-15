@@ -40,8 +40,9 @@ export class PaperWikiVersions{
  private save(state:State){this.atomic(this.base+'/state.json',JSON.stringify(state));}
  private blob(value:string){const digest=hash(value),file=this.path(this.base+'/objects/'+digest+'.md');if(!existsSync(file))this.atomic(this.base+'/objects/'+digest+'.md',value);return digest;}
  private text(file:FileVersion){const historical=this.historicalCache?.texts.get(file.hash);if(historical!==undefined)return historical;if(!/^[a-f0-9]{64}$/.test(file.hash))fail('快照hash无效');const text=readFileSync(this.path(this.base+'/objects/'+file.hash+'.md'),'utf8');if(hash(text)!==file.hash)fail('版本快照已损坏');return text;}
- private docs(){return this.markdown.index(this.project,false,true).documents;}
- private live(){return this.markdown.index(this.project).documents.filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix));}
+ private docsCache?:ReturnType<MarkdownKnowledge['index']>['documents'];
+ private docs(){return this.docsCache??=this.markdown.index(this.project,false,true).documents;}
+ private live(){return this.docs().filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix)&&doc.group_status==='current');}
  private files(){return this.live().map(doc=>{const stamp=this.path(`.trash/knowledge-sources/${doc.id}.json`);return {path:doc.path,hash:doc.hash,id:doc.id,dependencies:doc.dependencies??[],source_stamp:existsSync(stamp)?readFileSync(stamp,'utf8'):undefined};});}
  private fingerprint(files:FileVersion[]){return hash(JSON.stringify(files.map(file=>[file.path,file.hash,file.dependencies,file.source_stamp])));}
  private virtual():Version{const files=this.files();return {id:'current-'+this.fingerprint(files),at:this.live().map(doc=>doc.modified).sort().at(-1)??new Date().toISOString(),reason:'当前文件组（首次记录前）',files};}
@@ -53,6 +54,7 @@ export class PaperWikiVersions{
  }
  private currentId(state:State,live:Version){return state.versions.find(version=>!version.trashed_at&&this.fingerprint(version.files)===this.fingerprint(live.files))?.id??live.id;}
  list(){
+  this.docsCache=undefined;
   const state=this.readState(),live=this.virtual(),current_id=this.currentId(state,live),byPath=new Map(live.files.map(file=>[file.path,file.hash]));
   const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!state.historical_records?.[version.id]?.purged&&!state.versions.some(saved=>saved.task_id===version.task_id)).map(version=>({...version,trashed_at:state.historical_records?.[version.id]?.trashed_at}))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
   const current=new Set(live.files.map(file=>file.path));
@@ -143,6 +145,7 @@ export class PaperWikiVersions{
    this.markdown.commit(this.project,texts.map(({file,text})=>({path:file.path,text,expected:existsSync(this.path(file.path))?hash(readFileSync(this.path(file.path),'utf8')):null})),baselines,{preserveSourceVersions:true,skipPaperVersion:true,restorePaperSource:this.source});
    for(const {file} of texts){this.markdown.stamp(this.project,file.id,file.dependencies);if(file.source_stamp)this.atomic(`.trash/knowledge-sources/${file.id}.json`,file.source_stamp);else{const path=this.path(`.trash/knowledge-sources/${file.id}.json`);if(existsSync(path))unlinkSync(path);}}
    // A restore is an explicit new version even when restoring an older identical body.
+   this.docsCache=undefined;
    const state=this.readState(),live=this.virtual();for(const file of live.files)this.blob(readFileSync(this.path(file.path),'utf8'));state.versions.unshift({...live,id:'version_'+randomUUID(),at:new Date().toISOString(),reason:'恢复历史版本'});this.save(state);
    unlinkSync(this.path(this.base+'/restore-pending.json'));
    }catch(error){this.recoverRestore();throw error;}finally{activeRestores.delete(this.project+'|'+this.source);}

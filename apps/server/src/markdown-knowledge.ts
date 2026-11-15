@@ -289,7 +289,7 @@ export class MarkdownKnowledge {
   }
   private groupWrites(project:string,source:string,current:Omit<MarkdownDocument,'text'>[],all:Omit<MarkdownDocument,'text'>[],task_id?:string){
     const root=this.root(project),prefix=`knowledge_base/papers/${source}/`,previous=readPaperGroup(root,source),known=taskGeneratedHashes(this.store,project,source);
-    for(const file of previous?.current??[]){if(!known.has(file.path))known.set(file.path,new Set());known.get(file.path)!.add(file.hash);}
+    // Membership alone is not generation provenance: locally edited bytes remain protected.
     const currentPaths=new Set(current.map(doc=>doc.path));
     const classified=classifyPaperFiles(root,source,all,known,currentPaths),id='archive_'+randomUUID(),at=new Date().toISOString();
     const files=classified.files.filter(file=>file.status==='historical').map(file=>({...file,archive_path:`.trash/paper-groups/${source}/${id}/${file.path.slice(prefix.length)}`}));
