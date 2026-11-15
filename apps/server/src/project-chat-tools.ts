@@ -43,7 +43,7 @@ except urllib.error.HTTPError as error:
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
-navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。
+navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。evidence/get读取独立依据时附带同版本公共范围（最多16000字符）与verification声明；范围缺失、版本不同或超限时根据scope_status和scope_document另行读取，不能推定范围。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。
 list 使用 kind、page、limit（最多50）分页读取索引；search 使用 kind、query 查询标题与正文，返回片段。get 使用 kind、id、offset、length（最多16000字符）按需读取正文，返回 total/next_offset 和 hash。返回不完整必须继续读取，不能声称已读全文。
 Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，先提取比较、再关联项目，不能受项目题目限制。知识主题、候选线索、待验证假设分开，先读references/wiki.md。论文题录统一使用 idcard.md，正文知识使用 Wiki 与证据页；回答报告材料范围。全项目综合必须分批覆盖所有论文知识，并记录缺失项。每次 get 在 knowledge-draft 创建该文件完整工作副本，只有实际读取部分才算已阅读。新文档先写 knowledge_version: 2；Wiki level 为 single/summary/discovery/topic/hypothesis/overview，主题文件必须明确来源。
 Wiki 必须先读取 literature-skill/SKILL.md，直接写 Markdown 到 knowledge-draft/knowledge_base/。论文入口为 papers/<source_id>/whoami.md，题录为 idcard.md，方法、结果和依据等职责页遵循 references/paper-wiki.md。全部为 kind: wiki-page，保留任务指定稳定ID和真实source_id。主题位于 topics/，假设 hypotheses/，发现 discoveries/，分批总结 summaries/，总览 overview.md。
@@ -103,15 +103,18 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
   if(value.operation==='evidence'||value.kind&&value.kind!=='experiment-result'){
     if(value.operation==='list'||value.operation==='search')return markdown.query(projectId,{kind:value.kind,page:value.page,limit:value.limit??30,q:value.operation==='search'?value.query:undefined});
     if(value.operation==='get'||value.operation==='evidence'){
-      const evidence=value.operation==='evidence'?markdown.evidence(projectId,value.id??''):undefined;
+      const candidate=markdown.read(projectId,value.id??'');
+      const evidence=value.operation==='evidence'||('page_role' in candidate&&candidate.page_role==='evidence')?markdown.evidence(projectId,value.id??''):undefined;
       const record=evidence?.record??markdown.read(projectId,value.id??''),offset=value.offset??0,length=value.length??12000;
       const workspace=projectRuntime(store.root,projectId,'agent-workspace'),draft=join(workspace,'knowledge-draft',record.path);mkdirSync(join(draft,'..'),{recursive:true});
       // Never overwrite an existing working copy: it may contain unsaved agent edits.
       if(!existsSync(draft))writeFileSync(draft,record.text,{mode:0o600});
-      const ledger=join(workspace,'knowledge-reads.json');rememberRead(ledger,record.path,record.hash,offset,Math.min(record.text.length,offset+length),record.text.length);
+      const ledger=join(workspace,'knowledge-reads.json');
+      if(evidence?.material_scope){const scope=evidence.material_scope;rememberRead(ledger,scope.path,scope.hash,0,scope.text.length,scope.text.length);if(writable)markdown.recordOperation(projectId,'read-evidence-scope',[{id:scope.id,path:scope.path,hash:scope.hash}],`实际附带公共范围全文 ${scope.text.length} 字符；不代表重新核验PDF。`);}
+      rememberRead(ledger,record.path,record.hash,offset,Math.min(record.text.length,offset+length),record.text.length);
       const {text,...metadata}=record;const end=Math.min(text.length,offset+length);
       if(writable)markdown.recordOperation(projectId,value.operation==='evidence'?'read-evidence':'read', [{id:record.id,path:record.path,hash:record.hash}],`实际返回字符 ${offset}–${end}/${text.length}；${end<text.length?'尚有未读内容':'已到末尾'}；不代表已核验PDF。`);
-      return {record:{...metadata,text:text.slice(offset,end)},offset,total:text.length,next_offset:end<text.length?end:null,working_copy:draft,...(evidence?{source:evidence.source,citations:evidence.citations,note:evidence.note}:{})};
+      return {record:{...metadata,text:text.slice(offset,end)},offset,total:text.length,next_offset:end<text.length?end:null,working_copy:draft,...(evidence?{source:evidence.source,material_scope:evidence.material_scope,scope_status:evidence.scope_status,scope_document:evidence.scope_document,verification:evidence.verification,citations:evidence.citations,note:evidence.note}:{})};
     }
     experimentError('MARKDOWN_DIRECT_WRITE_REQUIRED',409);
   }
