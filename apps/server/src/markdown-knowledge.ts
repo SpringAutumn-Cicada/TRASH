@@ -1,4 +1,4 @@
-import {PaperWikiVersions} from './paper-wiki-versions.js';
+import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
 import {paperCompatibility} from './paper-wiki.js';
 import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId} from '@trash/protocol';
 import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText} from './knowledge-base-migration.js';
@@ -237,10 +237,11 @@ export class MarkdownKnowledge {
   }
   stamp(project:string,id:string,refs:{path:string;hash:string}[],merge=false){const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});if(merge){try{const previous=JSON.parse(readFileSync(file,'utf8')) as {path:string;hash:string}[];refs=[...previous.filter(old=>!refs.some(ref=>ref.path===old.path)),...refs];}catch{/* First stamp. */}}writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
   private recover(project:string){
-    const journal=this.internal(project,'.trash/markdown-transaction.json');if(!existsSync(journal))return;
+    const journal=this.internal(project,'.trash/markdown-transaction.json');if(!existsSync(journal)){recoverPaperVersionWrites(this.store,this,project);return;}
     const batch=JSON.parse(readFileSync(journal,'utf8')) as {committed:boolean;files:{path:string;text:string;before:string|null}[]};
     for(const file of batch.files){const target=this.locate(project,file.path);const current=existsSync(target)?readFileSync(target,'utf8'):null;if(current!==file.text&&current!==file.before)fail('VERSION_CONFLICT');const wanted=batch.committed?file.text:file.before;if(wanted===null){if(existsSync(target))unlinkSync(target);}else{mkdirSync(dirname(target),{recursive:true});const temp=target+'.recovery.tmp';writeFileSync(temp,wanted,{mode:0o600});renameSync(temp,target);}}
     unlinkSync(journal);
+    recoverPaperVersionWrites(this.store,this,project);
   }
   summaryNamePreview(project:string){
     return this.index(project).documents.filter(doc=>doc.level==='summary'&&/^文献知识第\d+层分组\d+$/.test(doc.title)).map(doc=>{

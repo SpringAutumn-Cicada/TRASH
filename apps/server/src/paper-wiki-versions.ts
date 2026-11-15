@@ -12,11 +12,12 @@ type Cleanup={id:string;at:string;files:FileVersion[];restored_at?:string};
 type State={version:1;versions:Version[];cleanups:Cleanup[]};
 export type VersionAction='restore'|'trash'|'untrash'|'purge'|'note'|'cleanup'|'undo-cleanup';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+const activeRestores=new Set<string>();
 function fail(message:string):never{throw Object.assign(new Error(message),{statusCode:409});}
 
 /** Group manifests refer to immutable blobs; ungrouped old files are never inferred as versions. */
 export class PaperWikiVersions{
- constructor(private store:TrashStore,private markdown:MarkdownKnowledge,private project:string,private source:string){if(!/^source_[A-Za-z0-9_-]+$/.test(source)||store.getSource(source)?.project_id!==project)fail('论文不存在');}
+ constructor(private store:TrashStore,private markdown:MarkdownKnowledge,private project:string,private source:string){if(!/^source_[A-Za-z0-9_-]+$/.test(source)||store.getSource(source)?.project_id!==project)fail('论文不存在');if(!activeRestores.has(this.project+'|'+this.source))this.recoverRestore();}
  private get prefix(){return `knowledge_base/papers/${this.source}/`;}
  private path(relative:string){
   const root=this.markdown.root(this.project),target=resolve(root,relative);
@@ -25,6 +26,13 @@ export class PaperWikiVersions{
   return target;
  }
  private get base(){return `.trash/paper-versions/${this.source}`;}
+ private recoverRestore(){
+  const journal=this.path(this.base+'/restore-pending.json');if(!existsSync(journal))return;
+  const backup=JSON.parse(readFileSync(journal,'utf8')) as {files:{path:string;before:string|null}[];source:string;bibliography:string|null};
+  for(const file of backup.files){if(file.before===null){const path=this.path(file.path);if(existsSync(path))unlinkSync(path);}else this.atomic(file.path,file.before);}
+  this.store.db.transaction(()=>{this.store.db.prepare('UPDATE sources SET data=? WHERE source_id=?').run(backup.source,this.source);if(backup.bibliography===null)this.store.db.prepare('DELETE FROM source_bibliography WHERE source_id=?').run(this.source);else this.store.db.prepare('INSERT OR REPLACE INTO source_bibliography(source_id,data) VALUES(?,?)').run(this.source,backup.bibliography);})();
+  unlinkSync(journal);
+ }
  private readState():State{const file=this.path(this.base+'/state.json');return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{version:1,versions:[],cleanups:[]};}
  private atomic(relative:string,text:string){const file=this.path(relative);mkdirSync(dirname(file),{recursive:true});const temp=file+'.'+randomUUID()+'.tmp';writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,file);}
  private save(state:State){this.atomic(this.base+'/state.json',JSON.stringify(state));}
@@ -57,16 +65,16 @@ export class PaperWikiVersions{
  }
  private busy(){return Boolean(this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(this.project));}
  private expected(){return hash(JSON.stringify([this.readState(),this.docs().map(doc=>[doc.path,doc.hash,doc.dependencies])]));}
- private blockers(paths:string[]){const selected=new Set(paths),current=new Set(this.live().map(doc=>doc.path));const refs=this.docs().filter(doc=>!selected.has(doc.path)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>selected.has(path))).map(doc=>doc.path);return [...new Set([...paths.filter(path=>current.has(path)),...refs])];}
+ private blockers(paths:string[]){const selected=new Set(paths),current=new Set(this.live().map(doc=>doc.path));const refs=this.docs().filter(doc=>!selected.has(doc.path)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>selected.has(path))).map(doc=>doc.path);const retained=this.readState().versions.filter(version=>!version.trashed_at&&version.files.some(file=>selected.has(file.path))).map(version=>'历史版本：'+version.id);return [...new Set([...paths.filter(path=>current.has(path)),...refs,...retained])];}
  private getVersion(id:string){const state=this.readState(),live=this.virtual();return id===live.id?live:state.versions.find(version=>version.id===id)??fail('版本不存在');}
- file(version_id:string,path:string){const version=this.getVersion(version_id),file=version.files.find(item=>item.path===path);if(!file)fail('版本中无此文件');const text=version.id.startsWith('current-')?readFileSync(this.path(path),'utf8'):this.text(file);if(hash(text)!==file.hash)fail('文件已变化，请刷新');const current=this.live().find(item=>item.path===path);return {path,text,current_text:current?this.markdown.read(this.project,current.id).text:'',hash:file.hash};}
+ file(version_id:string,path:string){const version=this.getVersion(version_id),file=version.files.find(item=>item.path===path);if(!file){const current=this.live().find(item=>item.path===path);if(!current)fail('版本中无此文件');return {path,text:'',current_text:this.markdown.read(this.project,current.id).text,hash:current.hash};}const text=version.id.startsWith('current-')?readFileSync(this.path(path),'utf8'):this.text(file);if(hash(text)!==file.hash)fail('文件已变化，请刷新');const current=this.live().find(item=>item.path===path);return {path,text,current_text:current?this.markdown.read(this.project,current.id).text:'',hash:file.hash};}
  preview(action:VersionAction,id?:string,paths:string[]=[]){
   const list=this.list();
   if(action==='cleanup'){
    if(!paths.length||paths.some(path=>!list.old_files.some(file=>file.path===path)))fail('只能清理列出的旧文件');
    const blockers=this.blockers(paths);return {expected:list.expected,action,id,paths,blockers,message:'旧文件将移入回收站；不会修改当前Wiki和原始PDF。'};
   }
-  if(action==='undo-cleanup'){const item=this.readState().cleanups.find(item=>item.id===id&&!item.restored_at);if(!item)fail('清理记录不存在');return {expected:list.expected,action,id,paths:item.files.map(file=>file.path),blockers:item.files.filter(file=>existsSync(this.path(file.path))).map(file=>file.path),message:'恢复旧文件；存在同名文件时拒绝覆盖。'};}
+  if(action==='undo-cleanup'){const item=this.readState().cleanups.find(item=>item.id===id&&!item.restored_at);if(!item)fail('清理记录不存在');return {expected:list.expected,action,id,paths:item.files.map(file=>file.path),blockers:item.files.filter(file=>existsSync(this.path(file.path))&&hash(readFileSync(this.path(file.path),'utf8'))!==file.hash).map(file=>file.path),message:'恢复旧文件；存在同名文件时拒绝覆盖。'};}
   const version=id?this.getVersion(id):undefined;
   if(!version)fail('请选择版本');
   if(['trash','purge'].includes(action)&&id===list.current_id)fail('不能删除当前版本');
@@ -83,11 +91,19 @@ export class PaperWikiVersions{
    const texts=version.files.map(file=>({file,text:version.id.startsWith('current-')?readFileSync(this.path(file.path),'utf8'):this.text(file)}));
    for(const item of texts)if(hash(item.text)!==item.file.hash)fail('快照hash不匹配');
    this.capture('恢复前保留');
+   const paths=[...new Set([...version.files.flatMap(file=>[file.path,`.trash/knowledge-sources/${file.id}.json`,`.trash/markdown-dependencies/${file.id}.json`]),this.base+'/state.json'])];
+   bibliographyState(this.store,this.source);
+   const backup={files:paths.map(path=>({path,before:existsSync(this.path(path))?readFileSync(this.path(path),'utf8'):null})),source:(this.store.db.prepare('SELECT data FROM sources WHERE source_id=?').get(this.source) as {data:string}).data,bibliography:(this.store.db.prepare('SELECT data FROM source_bibliography WHERE source_id=?').get(this.source) as {data:string}|undefined)?.data??null};
+   this.atomic(this.base+'/restore-pending.json',JSON.stringify(backup));
+   activeRestores.add(this.project+'|'+this.source);
+   try{
    const baselines={[this.source]:{...this.store.getSource(this.source)!,revision:bibliographyState(this.store,this.source).revision??0}};
    this.markdown.commit(this.project,texts.map(({file,text})=>({path:file.path,text,expected:existsSync(this.path(file.path))?hash(readFileSync(this.path(file.path),'utf8')):null})),baselines,{preserveSourceVersions:true,skipPaperVersion:true});
    for(const {file} of texts){this.markdown.stamp(this.project,file.id,file.dependencies);if(file.source_stamp)this.atomic(`.trash/knowledge-sources/${file.id}.json`,file.source_stamp);else{const path=this.path(`.trash/knowledge-sources/${file.id}.json`);if(existsSync(path))unlinkSync(path);}}
    // A restore is an explicit new version even when restoring an older identical body.
    const state=this.readState(),live=this.virtual();for(const file of live.files)this.blob(readFileSync(this.path(file.path),'utf8'));state.versions.unshift({...live,id:'version_'+randomUUID(),at:new Date().toISOString(),reason:'恢复历史版本'});this.save(state);
+   unlinkSync(this.path(this.base+'/restore-pending.json'));
+   }catch(error){this.recoverRestore();throw error;}finally{activeRestores.delete(this.project+'|'+this.source);}
   }else if(input.action==='cleanup'){
    const state=this.readState(),docs=this.docs(),id='cleanup_'+randomUUID();const files=input.paths!.map(path=>{const doc=docs.find(doc=>doc.path===path)!;const text=readFileSync(this.path(path),'utf8');if(hash(text)!==doc.hash)fail('旧文件已变化');this.blob(text);return {path,hash:doc.hash,id:doc.id,dependencies:doc.dependencies??[]};});
    // Persist recovery information before removing any live pathname.
@@ -97,7 +113,7 @@ export class PaperWikiVersions{
    catch(error){for(const path of moved.reverse())renameSync(this.path(this.base+'/'+id+'/'+path),this.path(path));state.cleanups=state.cleanups.filter(item=>item.id!==id);this.save(state);throw error;}
   }else if(input.action==='undo-cleanup'){
    const state=this.readState(),item=state.cleanups.find(item=>item.id===input.id)!;for(const file of item.files)this.text(file);
-   const restored:string[]=[];try{for(const file of item.files){this.atomic(file.path,this.text(file));restored.push(file.path);}item.restored_at=new Date().toISOString();this.save(state);}catch(error){for(const path of restored)unlinkSync(this.path(path));throw error;}
+   const restored:string[]=[];try{for(const file of item.files){if(!existsSync(this.path(file.path))){this.atomic(file.path,this.text(file));restored.push(file.path);}}item.restored_at=new Date().toISOString();this.save(state);}catch(error){for(const path of restored)unlinkSync(this.path(path));throw error;}
   }else{
    const state=this.readState(),version=state.versions.find(item=>item.id===input.id);if(!version)fail('请先保存当前版本后再操作');
    if(input.action==='trash')version.trashed_at=new Date().toISOString();
@@ -109,4 +125,12 @@ export class PaperWikiVersions{
   }
   this.markdown.recordOperation(this.project,'paper-version',[],`${this.source}：${input.action}`);return this.list();
  }
+}
+
+/** Recover interrupted restores before ordinary reads or writes see a mixed group. */
+export function recoverPaperVersionWrites(store:TrashStore,markdown:MarkdownKnowledge,project:string){
+ const base=join(markdown.root(project),'.trash','paper-versions');
+ if(!existsSync(base))return;
+ if(lstatSync(base).isSymbolicLink())fail('版本目录不能使用符号链接');
+ for(const source of readdirSync(base)){if(!/^source_[A-Za-z0-9_-]+$/.test(source))continue;const directory=join(base,source);if(lstatSync(directory).isSymbolicLink())fail('版本目录不能使用符号链接');if(existsSync(join(directory,'restore-pending.json'))&&!activeRestores.has(project+'|'+source))new PaperWikiVersions(store,markdown,project,source);}
 }
