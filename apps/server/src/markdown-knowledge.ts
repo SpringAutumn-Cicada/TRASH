@@ -10,7 +10,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string};
+export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
@@ -43,11 +43,12 @@ export class MarkdownKnowledge {
     if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
     if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422);
     if(meta.source_id&&this.store.getSource(meta.source_id)?.project_id!==project)fail('SOURCE_NOT_FOUND',404);
+    if(/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(path)&&(meta.page_role!=='evidence'||!(/^(?:[a-f0-9]{64}|unknown)$/.test(meta.pdf_hash??''))))fail('EVIDENCE_METADATA_REQUIRED',422);
     const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
     const section=(heading:string)=>match[2].split(/^##\s+/m).slice(1).find(part=>part.split('\n')[0].trim()===heading)?.split('\n').slice(1).join('\n').trim();
-    return {material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(markdownReferences(match[2]).text.match(/^## (?:概览|一句话认识|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    return {page_role:meta.page_role,pdf_hash:meta.pdf_hash,material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:knowledgeLinks(path,text),aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(markdownReferences(match[2]).text.match(/^## (?:概览|一句话认识|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
@@ -60,7 +61,7 @@ export class MarkdownKnowledge {
     const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
     const migrated=migrationManifest(this.root(project));
     const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
-    for(const path of scan.filter(path=>!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-base-references-6:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    for(const path of scan.filter(path=>!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-evidence-split-7:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
       if(!force&&old[path]?.signature===signature)entries[path]=old[path];
       else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
       if(entries[path].error)errors.push({path,error:entries[path].error!});
@@ -143,7 +144,7 @@ export class MarkdownKnowledge {
       related:(doc.links??[]).filter(link=>!link.evidence).map(link=>({...describe(link.path),relation:link.relation,reason:link.reason})),
       backlinks:docs.filter(d=>d.id!==id).flatMap(d=>{
         const links=(d.links??[]).filter(l=>l.path===doc.path);
-        if(links.length)return links.map(l=>({...describe(d.path),relation:l.relation,reason:l.reason,evidence:l.evidence}));
+        if(links.length)return links.map(l=>({...describe(d.path),relation:l.relation,reason:l.reason,evidence:l.evidence,source_line:l.source_line,source_section:l.source_section,source_anchor:l.source_anchor}));
         return d.dependencies?.some(r=>r.path===doc.path)?[{...describe(d.path),relation:'依据',reason:'生成时作为依据',evidence:true}]:[];
       }),
       broken:(doc.links??[]).filter(link=>!docs.some(d=>d.path===link.path)).map(link=>({...describe(link.path),relation:link.relation,reason:link.reason}))
@@ -168,14 +169,21 @@ export class MarkdownKnowledge {
     const terms=[...new Set([...new Intl.Segmenter('zh',{granularity:'word'}).segment(query.toLowerCase())].filter(item=>item.isWordLike&&item.segment.length>1).map(item=>item.segment))].slice(0,30);
     const score=(d:typeof docs[number])=>terms.reduce((n,t)=>n+Number((d.title+' '+(d.aliases??[]).join(' ')).toLowerCase().includes(t))*8,0);
     const hits=terms.length?new Map((this.store.db.prepare(`SELECT path,(${terms.map(()=>"CASE WHEN instr(lower(text),?)>0 THEN 1 ELSE 0 END").join('+')}) AS score FROM knowledge_search_v2 WHERE project=?`).all(...terms,project) as {path:string;score:number}[]).map(row=>[row.path,row.score])):new Map<string,number>();
-    const ranked=docs.filter(d=>d.kind==='wiki-page'||d.card_type==='key').map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
+    const ranked=docs.filter(d=>d.page_role!=='evidence'&&d.page_role!=='evidence-index'&&!d.path.endsWith('/evidence.md')&&(d.kind==='wiki-page'||d.card_type==='key')).map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
     const selected=ranked.slice(0,6).map(v=>v.d);
     for(const d of [...selected])for(const path of [...(d.dependencies??[]).map(r=>r.path),...(d.links??[]).map(l=>l.path)]){
-      const related=docs.find(item=>item.path===path);if(related&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
+      const related=docs.find(item=>item.path===path);if(related&&related.page_role!=='evidence'&&related.page_role!=='evidence-index'&&!related.path.endsWith('/evidence.md')&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
     }
     let remaining=Math.min(24000,Math.max(1000,budget));const omitted:string[]=[];
     const records=selected.flatMap(d=>{const text=this.read(project,d.id).text;if(text.length>remaining){omitted.push(d.id);return [];}remaining-=text.length;return [{id:d.id,path:d.path,title:d.title,hash:d.hash,stale:d.stale,text}];});
-    return {query,documents:records,omitted,characters:records.reduce((n,d)=>n+d.text.length,0),candidates:ranked.length,note:'仅提供匹配页面及一跳关联；遗漏项可用 get 继续读取，不代表全库覆盖。'};
+    const evidencePaths=new Set(selected.filter(d=>records.some(record=>record.id===d.id)).flatMap(d=>(d.links??[]).filter(link=>link.evidence).map(link=>link.path)));
+    const evidence_candidates=docs.filter(d=>evidencePaths.has(d.path)).map(d=>({id:d.id,path:d.path,title:d.title,hash:d.hash,source_id:d.source_id,summary:d.summary,stale:d.stale}));
+    return {query,documents:records,evidence_candidates,omitted,characters:records.reduce((n,d)=>n+d.text.length,0),candidates:ranked.length,note:'先读匹配职责页及一跳知识关联；evidence_candidates仅为未读目录，按需用evidence/get查支撑与反例，不能声称已查阅。'};
+  }
+  evidence(project:string,id:string){
+    const record=this.read(project,id);
+    if(!/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(record.path)||!('page_role' in record)||record.page_role!=='evidence')fail('EVIDENCE_RECORD_REQUIRED',422);
+    return {record,citations:this.relations(project,id).backlinks.filter(link=>link.evidence),note:'引用位置基于当前正文解析；返回的依据内容不代表重新核验PDF。'};
   }
   recordOperation(project:string,operation:string,documents:{id:string;path:string;hash:string}[],note=''){
     this.store.db.exec('CREATE TABLE IF NOT EXISTS knowledge_memory_events(id TEXT PRIMARY KEY,project TEXT NOT NULL,at TEXT NOT NULL,operation TEXT NOT NULL,data TEXT NOT NULL)');
