@@ -13,21 +13,24 @@ export function paperWikiOutputPaths(output:string,source:string,required:string
  const found=existsSync(join(output,prefix))?knowledgeFiles(output,prefix.slice(0,-1)).filter(path=>knowledgeBasePath.test(path)&&!paperCompatibility(path.slice(prefix.length))):[];
  const paths=[...new Set([...required,...found])];if(paths.filter(path=>!path.slice(prefix.length).startsWith('evidence/')).length>40||paths.filter(path=>path.slice(prefix.length).startsWith('evidence/')).length>80)throw new Error('单篇最多40个知识页、80个依据条目，请合并重复内容');return paths;
 }
-export function paperWikiIssues(source:string,files:{path:string;text:string}[]){
+export type PaperWikiIssue={path:string;reason:string;unsafe:boolean;missing_target?:string;referenced_by?:string[]};
+export function paperWikiIssues(source:string,files:{path:string;text:string}[],invalidPaths:string[]=[]){
  const unresolved=files.map(file=>({path:file.path,ids:markdownReferences(file.text).unresolved}));
  files=files.map(file=>({...file,text:markdownReferences(file.text).text}));
  const prefix=`knowledge_base/papers/${source}/`;const byPath=new Map(files.map(file=>[file.path,file.text]));
- const issues:{path:string;reason:string;unsafe:boolean}[]=[];
+ const issues:PaperWikiIssue[]=[];
+ const available=new Set([...byPath.keys(),...invalidPaths]);
+ const missing=new Map<string,Set<string>>();
  const issue=(path:string,reason:string)=>issues.push({path,reason,unsafe:false});
  for(const file of unresolved)for(const id of file.ids)issue(file.path,'引用式链接缺少定义：'+id);
  const paperTitle=byPath.get(prefix+'whoami.md')?.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').match(/^#\s+(.+)$/m)?.[1]?.trim();
  const graph=new Map<string,string[]>();
- for(const file of files){const links=[...file.text.replace(/```[\s\S]*?```/g,'').matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].flatMap(match=>{const target=resolveKnowledgeLink(file.path,match[1]);if(!target)return [];if(!target.startsWith(prefix)||!byPath.has(target))issue(file.path,'知识导航仅引用本篇实际输出的知识页：'+match[1]);return [target];});graph.set(file.path,links);}
+ for(const file of files){const links=[...file.text.replace(/```[\s\S]*?```/g,'').matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].flatMap(match=>{const target=resolveKnowledgeLink(file.path,match[1]);if(!target)return [];if(!target.startsWith(prefix))issue(file.path,'知识导航仅引用本篇实际输出的知识页：'+match[1]);else if(!available.has(target)){const refs=missing.get(target)??new Set<string>();refs.add(file.path);missing.set(target,refs);}return [target];});graph.set(file.path,links);}
  const reachable=new Set([prefix+'whoami.md']);let changed=true;while(changed){changed=false;for(const path of [...reachable])for(const target of graph.get(path)??[])if(!reachable.has(target)){reachable.add(target);changed=true;}}
  for(const file of files)if(!reachable.has(file.path))issue(prefix+'whoami.md','该知识页未被论文导航或子目录覆盖：'+file.path.slice(prefix.length));
  const records=files.filter(file=>/^evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(file.path.slice(prefix.length)));
- if(!records.length)issue(prefix+'evidence.md','至少提供一个独立依据条目，材料不足也需明确记载');
- for(const name of paperWikiNames)if(!byPath.has(prefix+name))issue(prefix+name,'缺少本篇必需知识页');
+ if(!records.length&&!invalidPaths.some(path=>path.startsWith(prefix+'evidence/'))&&![...missing.keys()].some(path=>path.startsWith(prefix+'evidence/')))issue(prefix+'evidence.md','至少提供一个独立依据条目，材料不足也需明确记载');
+ for(const name of paperWikiNames)if(!available.has(prefix+name))issue(prefix+name,'缺少本篇必需知识页');
  for(const file of files){
   if(!file.path.startsWith(prefix)){issue(file.path,'不得生成其他来源内容');continue;}
   const name=file.path.slice(prefix.length);
@@ -39,7 +42,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
    if(name==='whoami.md'&&!/^#\s+\S/.test(leading[0]??''))issue(file.path,'论文入口从当前页标题开始');
    if(isEvidence&&/\[论文总览\]\(/.test(body))issue(file.path,'独立依据文档不添加论文名与论文总览');
   }else{
-   if(!paperTitle||leading[0]!==paperTitle||!/^\[论文总览\]\([^\s)]+\)$/.test(leading[1]??'')||!/^#\s+\S/.test(leading[2]??''))issue(file.path,'普通知识子页前三个非空行依次为论文全名、论文总览链接、当前页标题');
+   if((paperTitle&&leading[0]!==paperTitle)||(!paperTitle&&!invalidPaths.includes(prefix+'whoami.md'))||!/^\[论文总览\]\([^\s)]+\)$/.test(leading[1]??'')||!/^#\s+\S/.test(leading[2]??''))issue(file.path,'普通知识子页前三个非空行依次为论文全名、论文总览链接、当前页标题');
    if(!(graph.get(file.path)??[]).includes(prefix+'whoami.md'))issue(file.path,'论文总览链接须指向本篇whoami.md');
   }
   if(!isEvidence&&(/\/pdf-view\?|\]\([^)]*\.pdf(?:[?#][^)]*)?\)/i.test(body)))issue(file.path,'PDF原文定位仅放独立evidence/ev-*.md');
@@ -70,7 +73,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
   }
   for(const ref of body.matchAll(/\[([^\]\n]+)\]\(([^\s)]+)\)/g)){
    const resolved=resolveKnowledgeLink(file.path,ref[2]);
-   if(resolved?.startsWith(prefix+'evidence/')){const id=posix.basename(resolved,'.md');if(!byPath.has(resolved)||ref[1]!==id||ref[2].includes('#'))issue(file.path,'依据链接须使用条目名并直达独立文件：'+ref[2]);}
+   if(resolved?.startsWith(prefix+'evidence/')){const id=posix.basename(resolved,'.md');if(ref[1]!==id||ref[2].includes('#'))issue(file.path,'依据链接须使用条目名并直达独立文件：'+ref[2]);}
    if(resolved===prefix+'evidence.md'&&ref[2].includes('#'))issue(file.path,'不再引用统一依据页锚点');
   }
   if(name==='evidence.md'){
@@ -80,6 +83,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
    for(const record of records)if(!(graph.get(file.path)??[]).includes(record.path))issue(file.path,'依据目录遗漏条目：'+record.path);
   }
  }
+ for(const [target,refs] of missing)issues.push({path:target,reason:`缺少被引用文件，影响${refs.size}个页面：${[...refs].map(path=>path.slice(prefix.length)).join('、')}`,unsafe:false,missing_target:target,referenced_by:[...refs]});
  return issues;
 }
 /** Single-paper writing responsibilities; self-check remains targeted and in-turn. */

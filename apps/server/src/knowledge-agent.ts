@@ -2,7 +2,7 @@ import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {researchExplorationIssues} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
 import {readPaperChapters} from './chapter-reader.js';
-import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSelfCheck} from './paper-wiki.js';
+import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSelfCheck,type PaperWikiIssue} from './paper-wiki.js';
 import {knowledgePath,knowledgeDocumentId} from '@trash/protocol';
 import {migrationManifest,migrationPreview,migrateKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractSkill,abstractText,publishAbstract,publishAbstractWiki} from './abstract-library.js';
@@ -307,8 +307,9 @@ export class KnowledgeAgent implements TaskRunner {
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       if(fulltextGeneration)this.knowledge.event(task.task_id,task.attempt_of?'文档生成：继续本次失败链，仅恢复版本与规则匹配的合格草稿':'文档生成：重新分析从空输出开始，历史Wiki不作为输入；PDF笔记独立核验复用');
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
+      let repairIssues:PaperWikiIssue[]=[];
       const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
-        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues},null,2),{mode:0o600});
+        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues,repair_issues:repairIssues},null,2),{mode:0o600});
       };
       const runGeneration=async (instructions:string, protectedFiles:{path:string;text:string}[])=>{
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
@@ -348,14 +349,23 @@ export class KnowledgeAgent implements TaskRunner {
       phase('validation','校验知识页、导航与依据锚点');
       this.knowledge.event(task.task_id,'输出校验：逐项检查 Markdown 文件、大小、格式与来源');
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
-      checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid));saveCheck(checked);
+      checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid,checked.issues.map(item=>item.path)));saveCheck(checked);
       this.knowledge.event(task.task_id,`文档生成：已就绪 ${checked.valid.filter(file=>!checked.issues.some(issue=>issue.path===file.path)).length}/${paths.length} 份（校验合格，尚未发布）`);
       if(checked.issues.length&&!checked.issues.some(item=>item.unsafe)){
-        const bad=new Set(checked.issues.map(issue=>issue.path));const good=checked.valid.filter(file=>!bad.has(file.path));
-        this.knowledge.event(task.task_id,`自动补救（1/1）：${checked.issues.map(item=>`${item.path}：${item.reason}`).join('；')}`);
-        await runGeneration(prompt+`\n这是唯一一次输出补救。只修复以下文件：${JSON.stringify(checked.issues)}。已有合格文件禁止修改；缺失的补写，字段错误的修正，超限的压缩冗余并保留关键证据，不截断正文，不嵌入base64。不重新阅读PDF，使用 readings/ 笔记。${paperBundle?'完成后只核对修复内容与必要关联，不回读全部目标或已保护草稿。':'只核对修复内容和必要关联，不回读全部来源或已保护草稿。'}`,good);
+        const issues=checked.issues as PaperWikiIssue[];
+        repairIssues=issues;saveCheck(checked);
+        const repairPaths=new Set(issues.map(issue=>issue.path));
+        // A new evidence target may also need adding to the existing index.
+        if(paperBundle&&issues.some(issue=>issue.missing_target?.startsWith(`knowledge_base/papers/${source}/evidence/`)))repairPaths.add(`knowledge_base/papers/${source}/evidence.md`);
+        const good=checked.valid.filter(file=>!repairPaths.has(file.path));
+        const grouped=new Map<string,Set<string>>();
+        for(const issue of issues){const files=grouped.get(issue.reason)??new Set<string>();files.add(issue.path);grouped.set(issue.reason,files);}
+        const summary=[...grouped].map(([reason,files])=>`${reason}（${[...files].join('、')}）`).join('；');
+        this.knowledge.event(task.task_id,`自动补救（1/1）：${summary}。详细位置见 output-check.json`);
+        const repairScope=paperBundle?`本轮补救范围优先于初次生成要求：只修改或补写以下 output/ 相对路径：${[...repairPaths].join('、')}。允许创建清单中被引用但缺失的本篇依据或子页；其必要的本篇引用目标也可补齐，遵守原有路径和数量限制。除已列出的依据目录外，其余合格文件禁止修改；仅为必要引用同步目录，不整组重写。`:`只修复以下文件：${JSON.stringify(issues)}。已有合格文件禁止修改。`;
+        await runGeneration(prompt+'\n这是唯一一次输出补救。'+repairScope+`具体问题：${JSON.stringify(issues)}。缺失的补写，字段错误的修正，超限的压缩冗余并保留关键证据，不截断正文，不嵌入base64。不重新阅读PDF，使用已有材料或 readings/ 笔记。只核对修复内容与必要关联，不回读全部目标、来源或已保护草稿。`,good);
         if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
-        checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid));saveCheck(checked);
+        checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid,checked.issues.map(item=>item.path)));saveCheck(checked);
       this.knowledge.event(task.task_id,`文档生成：已就绪 ${checked.valid.filter(file=>!checked.issues.some(issue=>issue.path===file.path)).length}/${paths.length} 份（校验合格，尚未发布）`);
       }
       if(checked.issues.length)throw new Error('Markdown 输出校验失败；已保留工作副本：'+checked.issues.map(item=>`${item.path}：${item.reason}`).join('；'));
