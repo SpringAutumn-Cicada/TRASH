@@ -1,7 +1,7 @@
 import {researchExplorationIssues} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
 import {readPaperChapters} from './chapter-reader.js';
-import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility} from './paper-wiki.js';
+import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSemanticReview} from './paper-wiki.js';
 import {knowledgePath,knowledgeDocumentId} from '@trash/protocol';
 import {migrationManifest,migrationPreview,migrateKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractSkill,abstractText,publishAbstract,publishAbstractWiki} from './abstract-library.js';
@@ -311,7 +311,7 @@ export class KnowledgeAgent implements TaskRunner {
         let timedOut=false;
         const timer=setTimeout(()=>{timedOut=true;if(child)this.terminate(child);},Math.max(1,deadline-Date.now()));
         const completion=new Promise<void>((resolve,reject)=>{child!.once('error',reject);child!.once('close',(code,signal)=>{result.finish();const failure=timedOut?'生成阶段超时；草稿已保留':result.failure(code,signal);if(failure){this.knowledge.event(task.task_id,'模型调用失败：'+redact(failure));reject(new Error(redact(failure)));}else resolve();});});
-        child.stdin?.on('error',()=>{});child.stdin?.end(instructions);
+        child.stdin?.on('error',()=>{});child.stdin?.end(instructions+(paperBundle?'\n\n'+paperWikiSemanticReview:''));
         try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
       };
