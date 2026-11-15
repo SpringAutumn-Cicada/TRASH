@@ -39,10 +39,12 @@ except urllib.error.HTTPError as error:
   stageKnowledgeSkill(path);
   stageKnowledgeSkill(path,'trash-literature-synthesis','synthesis-skill');
   stageKnowledgeSkill(path,'trash-research-exploration','research-skill');
+  stageKnowledgeSkill(path,'trash-research-map','map-skill');
+  stageKnowledgeSkill(path,'trash-research-background','background-skill');
   const oldDraft=join(path,'knowledge-draft');if(existsSync(oldDraft)){const preserved=projectRuntime(store.root,projectId,'tasks',`preserved-chat-draft-${Date.now()}`);mkdirSync(join(preserved,'..'),{recursive:true});renameSync(oldDraft,preserved);};
   // Do not stage project-wide bodies. get creates only the requested working copy.
   writeFileSync(join(path, "PROJECT_TOOLS.md"), `# 当前论文项目工具
-主题地图、比较、大背景和关系维护读取 synthesis-skill/SKILL.md；候选方向筛选读取 research-skill/SKILL.md，单篇生成读取 literature-skill/SKILL.md。简单问答无需发布，不自动串行执行全部技能，不创建实验设计技能。
+研究地图读取 map-skill/SKILL.md，大背景读取 background-skill/SKILL.md，多主题发现、主题比较及关系维护读取 synthesis-skill/SKILL.md；候选方向筛选读取 research-skill/SKILL.md，单篇生成读取 literature-skill/SKILL.md。简单问答无需发布，不自动串行执行全部技能，不创建实验设计技能。
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。

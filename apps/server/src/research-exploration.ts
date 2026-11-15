@@ -9,6 +9,7 @@ import {MarkdownKnowledge} from './markdown-knowledge.js';
 import {projectRuntime} from './project-layout.js';
 
 type ResearchMode='directions'|'research-map'|'comparison'|'background';
+const modeSkill=(mode:ResearchMode)=>mode==='research-map'?'map' as const:mode==='background'?'background' as const:mode==='directions'?'exploration' as const:'synthesis' as const;
 const modeTitles:Record<ResearchMode,string>={directions:'研究方向探索：候选问题','research-map':'研究地图',comparison:'主题比较',background:'研究大背景'};
 type Run={target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'generating'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
 const active=(run:Run)=>['summarizing','generating'].includes(run.stage);
@@ -36,7 +37,7 @@ export class ResearchExploration {
  private enqueue(run:Run,ids:string[],mode:'summary'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'){
   const docs=new MarkdownKnowledge(this.store).index(run.project_id).documents;
   const groupSources=mode==='summary'?[...new Set(docs.filter(d=>ids.includes(d.id)).flatMap(d=>[...(d.source_id?[d.source_id]:[]),...(d.dependencies??[]).flatMap(ref=>ref.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[])]))].filter(id=>run.source_ids.includes(id)):run.source_ids;
-  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>mode==='summary'||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'?modeTitles[run.mode??'directions']+'：材料分组':mode==='evidence-plan'?'研究问题：补证据计划':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:''),wiki_level:mode==='summary'?'summary':['directions','evidence-plan'].includes(mode)?'discovery':'topic',research_exploration:mode,...(mode!=='summary'&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
+  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>mode==='summary'||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'?modeTitles[run.mode??'directions']+'：材料分组':mode==='evidence-plan'?'研究问题：补证据计划':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:''),wiki_level:mode==='summary'?'summary':['directions','evidence-plan'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,...(mode!=='summary'&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
  }
  private schedule(run:Run,ids:string[]){
   const md=new MarkdownKnowledge(this.store),docs=ids.map(id=>md.read(run.project_id,id)),groups:string[][]=[];let group:string[]=[],size=0;
@@ -56,8 +57,9 @@ export class ResearchExploration {
   const topics=all.filter(d=>topicIds.includes(d.id)&&d.kind==='wiki-page'&&['topic','hypothesis','overview','discovery'].includes(d.level??''));
   if(new Set(topicIds).size!==topics.length)throw Object.assign(new Error('DEPENDENCY_NOT_FOUND'),{statusCode:404});
   const current=all.filter(d=>selected.includes(d.source_id??'')&&d.kind==='wiki-page'&&d.level==='single'&&d.path.startsWith('knowledge_base/papers/')&&(d.group_status===undefined||d.group_status==='current'));
-  const docs=[...current.filter(d=>/\/(whoami|research_problem|contributions)\.md$/.test(d.path)),...topics];
-  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:14})).digest('hex');
+  const firstPages=mode==='background'?/\/(whoami|background)\.md$/:mode==='comparison'?/\/(research_problem|insights|method|results)\.md$/:mode==='directions'?/\/(whoami|research_problem|contributions|insights)\.md$/:/\/(whoami|research_problem|contributions)\.md$/;
+  const docs=[...current.filter(d=>firstPages.test(d.path)),...topics];
+  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:15})).digest('hex');
   const reusable=this.list(project).find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&all.some(d=>d.id===r.result_id&&!d.stale));
   if(reusable)return reusable;
   const previous=mode==='directions'?undefined:this.list(project).find(r=>r.stage==='completed'&&r.mode===mode&&r.instructions===instructions&&JSON.stringify([...r.source_ids].sort())===JSON.stringify([...selected].sort())&&r.result_id&&all.some(d=>d.id===r.result_id));
