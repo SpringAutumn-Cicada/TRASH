@@ -17,7 +17,7 @@ description: 在 TRASH 论文项目中固定四页一批图文阅读并生成单
 
 项目入口为 knowledge_base/index.md。单篇位于 papers/<source_id>/，whoami.md 为论文总览，idcard.md 为题录页，背景、问题、贡献、方法、结果、局限、认识和依据页遵守 references/paper-wiki.md。全部单篇页面为 kind: wiki-page、level: single、knowledge_version: 2，稳定 ID 和路径使用任务指定值。不要生成或读取旧基本、关键、详细卡片及旧单篇记忆文件，不生成兼容入口。
 
-主题、假设、发现和分批总结分别位于 topics/、hypotheses/、discoveries/、summaries/，总览为 overview.md。相对链接按当前页面目录计算。每个论文子页在frontmatter之后的前三个非空行依次为论文全名（普通文本，与whoami一级标题一致）、论文总览链接、当前页一级标题，三者之间各留一空行；whoami 导航覆盖全部有效子页。导航不作为证据依赖。
+主题、假设、发现和分批总结分别位于 topics/、hypotheses/、discoveries/、summaries/，总览为 overview.md。相对链接按当前页面目录计算。子页直接以当前页一级标题开始，不添加论文名或论文总览。whoami导航覆盖职责页及evidence.md目录，目录链接独立evidence/ev-*.md条目。导航不作为证据依赖。
 
 ## PDF 全文阅读
 
@@ -25,7 +25,7 @@ description: 在 TRASH 论文项目中固定四页一批图文阅读并生成单
 
 对话中用 pdf-pages 查询原文件 hash、总页数和逐页文字，用 pdf-page 请求 PNG 并实际打开查看。完整阅读必须覆盖全部页面；缺页、图表或公式无法辨认时说明真实范围，不伪称已有 OCR 或已经核验。
 
-引用原文使用 [PDF第N页，原文页标X，章节或图表号](/api/v1/projects/<项目ID>/sources/<来源ID>/pdf-view?hash=<原文件hash>#page=N)。PDF 页序从 1 开始，印刷页标单独写。单篇出处统一归入 evidence.md，知识正文保留必要条件并链接具体依据条目。
+引用原文使用 [PDF第N页，原文页标X，章节或图表号](/api/v1/projects/<项目ID>/sources/<来源ID>/pdf-view?hash=<原文件hash>#page=N)。PDF 页序从 1 开始，印刷页标单独写。单篇出处按条存入 evidence/ev-*.md，显示链接名等于ev-*文件名；evidence.md仅作目录。具体协议见references/paper-wiki.md。
 
 ## 按需检索与证据边界
 
@@ -33,4 +33,4 @@ description: 在 TRASH 论文项目中固定四页一批图文阅读并生成单
 
 项目研究问题可以为空。探索阶段仅有研究领域和关注线索时，先完整理解论文，不强制填写项目关联，不自动补造研究问题。论文research_problem.md记录论文自身问题，不是项目问题。单篇认识只提出候选线索，不能据此宣称领域空白或新颖性。research_questions 中只有 status=selected 的条目是用户已选问题；candidate/evidence-needed 是待核查线索，paused/excluded 不应反复推荐，也不能作为已证实结论。项目已选问题只用于最终关联，不限制开放提取。区分作者结论、综合判断和待验证假设。数字保留数据集、评价条件和指标口径；未知写未核实。不要修改原论文、数据库、缓存或历史文件。最终报告实际文件、材料范围和未核实项，未执行的验证不得写通过。
 
-论文子页顶部论文全名保持普通文本。界面会将该行以与whoami标题一致的字号和字重显示；不要为了放大显示添加`#`、HTML或内联样式，不改变当前页标题和章节层级。
+跨论文归纳先读背景等职责页建立候选共识，再按结论读取支撑条目和反例。使用 evidence 操作或 get 读取独立依据；链接名、目录项或检索片段不代表已读依据。缺失、相互矛盾、关键数字或强结论再查PDF。报告实际读取范围与缺口，不默认把几十篇全部依据塞入上下文。
