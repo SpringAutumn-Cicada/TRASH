@@ -13,6 +13,21 @@ function safeReadingFile(base:string,path:string):Buffer {
 const digest=(data:string|Buffer)=>createHash('sha256').update(data).digest('hex');
 type Batch={id:string;pages:number[];context_hash:string;note_hash:string;status:'notes-produced'|'reused-notes'};
 type State={version:number;source_id:string;pdf_hash:string;batch_size:number;batches:Batch[]};
+// Use the same checkpoint contract for the resume affordance and batch reader.
+export function hasReadingCheckpoint(base:string,source:string,pdfHash:string,instructions:string):boolean {
+ try{
+  const state=JSON.parse(safeReadingFile(base,join(base,'readings',source,'state.json')).toString()) as State;
+  if(state.version!==1||state.source_id!==source||state.pdf_hash!==pdfHash||state.batch_size!==4||!Array.isArray(state.batches))return false;
+  return state.batches.some(batch=>{
+   if(!/^batch-[0-9]{3,}$/.test(batch.id)||!Array.isArray(batch.pages)||batch.pages.length<1||batch.pages.length>4||'provenance' in batch)return false;
+   const index=Number(batch.id.slice(6));
+   if(index<1||batch.pages.some((page,i)=>page!==(index-1)*4+i+1))return false;
+   const context=digest(JSON.stringify({id:batch.id,pages:batch.pages,instructions,batch_size:4,input_mode:'page-images-and-text-v2'}));
+   if(batch.context_hash!==context)return false;
+   try{return digest(safeReadingFile(base,join(base,'readings',source,batch.id+'.md')))===batch.note_hash;}catch{return false;}
+  });
+ }catch{return false;}
+}
 export async function readPaperChapters(options:{pdf:PdfReading;project:string;source:string;directory:string;previousDirectories:string[];instructions:string;deadline:number;active:()=>boolean;event:(text:string)=>void;read:(prompt:string,images:string[],timeout:number)=>Promise<void>}){
  const {pdf,project,source,directory,event}=options;
  const assertActive=()=>{if(!options.active())throw new Error('PDF阅读已取消或中断；已保留批次工作副本');};

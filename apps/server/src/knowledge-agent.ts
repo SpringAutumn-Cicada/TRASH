@@ -1,7 +1,7 @@
 import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {researchExplorationIssues} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
-import {readPaperChapters} from './chapter-reader.js';
+import {readPaperChapters,hasReadingCheckpoint} from './chapter-reader.js';
 import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSelfCheck,type PaperWikiIssue} from './paper-wiki.js';
 import {knowledgePath,knowledgeDocumentId} from '@trash/protocol';
 import {migrationManifest,migrationPreview,migrateKnowledgeBase} from './knowledge-base-migration.js';
@@ -47,7 +47,12 @@ export class KnowledgeAgent implements TaskRunner {
       const all=this.knowledge.tasks(projectId);
       const descends=(candidate:KnowledgeTask)=>{const seen=new Set<string>();let id=candidate.attempt_of;while(id&&!seen.has(id)){if(id===retryOf)return true;seen.add(id);id=all.find(t=>t.task_id===id)?.attempt_of;}return false;};
       const successors=all.filter(descends).sort((a,b)=>Number(['queued','running'].includes(b.status))-Number(['queued','running'].includes(a.status))||b.created_at.localeCompare(a.created_at));
-      if(successors[0]){this.onTaskRetried?.(projectId,retryOf,successors[0]);return [successors[0]];}
+      if(successors[0]){
+        const latest=successors[0];
+        if(['queued','running','completed'].includes(latest.status)){this.onTaskRetried?.(projectId,retryOf,latest);return [latest];}
+        // Continue the latest stopped attempt rather than returning a stopped task forever.
+        retryOf=latest.task_id;
+      }
     }
     if(input.kind==='wiki-page'){
       const current=this.knowledge.tasks(projectId).find(task=>['queued','running'].includes(task.status)&&task.input.kind==='wiki-page'&&task.input.target_id===input.target_id&&task.input.title===input.title&&task.input.wiki_level===input.wiki_level&&task.input.instructions===input.instructions&&JSON.stringify(task.input.dependencies)===JSON.stringify(input.dependencies)&&JSON.stringify(task.input.source_ids)===JSON.stringify(input.source_ids));
@@ -136,12 +141,12 @@ export class KnowledgeAgent implements TaskRunner {
     if(existsSync(draftOutput)&&sourceId&&!task.input.abstract_mode&&(task.input.include_source_wiki||task.input.wiki_level==='single'))draftPaths.splice(0,draftPaths.length,...paperWikiOutputPaths(draftOutput,sourceId,draftPaths));
     if(existsSync(draftOutput)&&this.inspectOutputs(task,draftOutput,draftPaths).valid.some(file=>(task.snapshot as {documents?:{path:string;text:string}[]}).documents?.find(doc=>doc.path===file.path)?.text!==file.text))return true;
     if(!sourceId)return false;
-    for(const prior of this.readingAttempts(candidate))try{
-      const directory=join(projectRuntime(this.store.root,task.project_id,'tasks',prior.task_id),'readings',sourceId);
-      const state=JSON.parse(readFileSync(join(directory,'state.json'),'utf8')) as {version:number;blocks:{id:string;note_hash:string}[];pdf_hash:string};
-      if(state.version!==2||new PdfReading(this.store).original(task.project_id,sourceId).hash!==state.pdf_hash)continue;
-      if(state.blocks.some(block=>{const file=join(directory,block.id+'.md');return /^block-[a-f0-9]{20}$/.test(block.id)&&existsSync(file)&&!lstatSync(file).isSymbolicLink()&&createHash('sha256').update(readFileSync(file)).digest('hex')===block.note_hash;}))return true;
-    }catch{/* Invalid checkpoints remain available but are not reused. */}
+    let pdfHash:string;
+    try{pdfHash=new PdfReading(this.store).original(task.project_id,sourceId).hash;}catch{return false;}
+    for(const prior of this.readingAttempts(candidate,true)){
+      const base=projectRuntime(this.store.root,task.project_id,'tasks',prior.task_id);
+      if(hasReadingCheckpoint(base,sourceId,pdfHash,task.input.instructions))return true;
+    }
     return false;
   }
   isProjectBusy(projectId: string): boolean {
