@@ -37,8 +37,31 @@ export function parseBasicCard(text:string){
   if(authors&&(authors.length>200||authors.some(s=>s.length>200)))throw Object.assign(new Error('BASIC_CARD_INVALID'),{statusCode:422});
   return {authors,title:fields['标题']==='未核实'?undefined:fields['标题'],publication_date:date};
 }
+/** Extract only explicit identity fields; unknown values never erase metadata. */
+export function parseIdcard(text:string){
+  const body=text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'');
+  const fields:Record<string,string>={};
+  for(const line of body.split(/\r?\n/)){
+    const match=line.match(/^\s*[-*]\s+(?:\*\*)?(标题|题名|作者|发表时间|发表年月)(?:\*\*)?[：:]\s*(.*)$/);
+    if(match)fields[match[1]]=match[2].trim().replace(/[。；;]$/,'');
+  }
+  const known=(value:string|undefined)=>value&&!/^(?:未知|未核实|未提供|无|暂无)(?:$|[（(，,。])/.test(value)?value:undefined;
+  const title=known(fields['标题']??fields['题名'])??known(body.split(/\r?\n/).map(line=>line.trim()).find(Boolean));
+  const rawAuthors=known(fields['作者']);
+  const authors=rawAuthors?.split(/[；;、]|\s+and\s+|,\s+|，/).map(name=>name.trim()).filter(Boolean);
+  const date=known(fields['发表时间']??fields['发表年月']);
+  const match=date?.match(/^([12]\d{3})(?:[-年]\s*(0?[1-9]|1[0-2])(?:月|[-日]|$))?/);
+  const publication_date=match?match[1]+(match[2]?'-'+match[2].padStart(2,'0'):''):undefined;
+  return {title:title&&!title.startsWith('#')&&title.length<=500?title:undefined,authors:authors?.length&&authors.length<=200&&authors.every(name=>name.length<=200)?authors:undefined,publication_date};
+}
+export function applyIdcard(store:TrashStore,source:Source,text:string,hash:string,baseline?:{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}){
+  applyBibliography(store,source,parseIdcard(text),hash,baseline,'agent-idcard');
+}
 export function applyBasicCard(store:TrashStore,source:Source,text:string,hash:string,baseline?:{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}){
-  const parsed=parseBasicCard(text),state=bibliographyState(store,source.source_id);
+  applyBibliography(store,source,parseBasicCard(text),hash,baseline,'agent-basic-card');
+}
+function applyBibliography(store:TrashStore,source:Source,parsed:{title?:string;authors?:string[];publication_date?:string},hash:string,baseline:{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}|undefined,reason:string){
+  const state=bibliographyState(store,source.source_id);
   const legacy=store.db.prepare('SELECT data FROM source_details WHERE source_id=?').get(source.source_id) as {data:string}|undefined;
   const legacyDetails=legacy?JSON.parse(legacy.data):{};
   const manual=new Set(state.manual??[]);
@@ -56,6 +79,6 @@ export function applyBasicCard(store:TrashStore,source:Source,text:string,hash:s
     if(manual.has('authors')||!unchanged){if(changed)suggestion.authors=proposed;}else next.authors=proposed;
   }
   const before={authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date},after={authors:next.authors,title:next.title,year:next.year,publication_date:next.publication_date};
-  if(JSON.stringify(before)!==JSON.stringify(after)){store.db.prepare('UPDATE sources SET data=? WHERE source_id=?').run(JSON.stringify(next),source.source_id);state.history=[...(state.history??[]),{at:new Date().toISOString(),before,after,card_hash:hash,reason:'agent-basic-card'}];}
+  if(JSON.stringify(before)!==JSON.stringify(after)){store.db.prepare('UPDATE sources SET data=? WHERE source_id=?').run(JSON.stringify(next),source.source_id);state.history=[...(state.history??[]),{at:new Date().toISOString(),before,after,card_hash:hash,reason}];}
   state.manual=[...manual];state.suggestion=suggestion.authors||suggestion.title||suggestion.publication_date?suggestion:undefined;saveBibliographyState(store,source.source_id,state);
 }

@@ -13,7 +13,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
+interface SourceAnalysisState {bibliography?:{title?:string;authors?:string[];publication_date?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -191,6 +191,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     return next;
   });
 
+  const librarySources=(detail?.sources??[]).map(source=>{const bibliography=analyses.find(item=>item.source_id===source.source_id)?.bibliography;return {...source,...(bibliography?.title?{title:bibliography.title}:{}),...(bibliography?.authors?{authors:bibliography.authors}:{}),...(bibliography?.publication_date?{publication_date:bibliography.publication_date,year:Number(bibliography.publication_date.slice(0,4))}:{})};});
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   const keepOriginal=async(source:Source,item:SourceAnalysisState)=>{
     if(!item.task_id||submissionLock.current.has(source.source_id))return;
@@ -220,7 +221,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
             </div>
             {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
               <div className="library-table-heading"><span>标题 / 作者</span><span>内容</span><span>状态 / 操作</span></div>
-              {detail.sources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
+              {librarySources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
                 const item=analyses.find(entry=>entry.source_id===source.source_id);
                 const activeTaskId=item?.task_id;
                 const fullPending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
@@ -243,7 +244,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                   </div>
                 </article>;
               })}
-              {detail.sources.length>0&&!detail.sources.some(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase()))&&<div className="library-empty library-no-results"><Search size={23}/><strong>没有找到匹配的文献</strong><button type="button" className="text-button" onClick={()=>setLibraryQuery('')}>清空筛选</button></div>}
+              {detail.sources.length>0&&!librarySources.some(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase()))&&<div className="library-empty library-no-results"><Search size={23}/><strong>没有找到匹配的文献</strong><button type="button" className="text-button" onClick={()=>setLibraryQuery('')}>清空筛选</button></div>}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />

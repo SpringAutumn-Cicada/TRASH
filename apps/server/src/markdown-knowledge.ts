@@ -2,7 +2,7 @@ import {paperCompatibility} from './paper-wiki.js';
 import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId} from '@trash/protocol';
 import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText} from './knowledge-base-migration.js';
 import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
-import {parseBasicCard,applyBasicCard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
+import {parseBasicCard,applyBasicCard,applyIdcard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
 import type { KnowledgeVersion } from "@trash/protocol";
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, lstatSync, realpathSync, renameSync, writeFileSync, unlinkSync, appendFileSync } from 'node:fs';
@@ -287,6 +287,7 @@ export class MarkdownKnowledge {
       const complete=journal+'.tmp';writeFileSync(complete,JSON.stringify({...transaction,committed:true}),{mode:0o600});renameSync(complete,journal);unlinkSync(journal);
     }catch(error){this.recover(project);throw error;}
     for(const file of staged.filter(f=>f.doc.card_type==='basic')){const source=this.store.getSource(file.doc.source_id!);if(source)this.store.db.transaction(()=>applyBasicCard(this.store,source,file.text,file.doc.hash,baselines[source.source_id]))();}
+    for(const file of staged.filter(f=>f.doc.source_id&&f.path===`knowledge_base/papers/${f.doc.source_id}/idcard.md`)){const source=this.store.getSource(file.doc.source_id!);if(source)this.store.db.transaction(()=>applyIdcard(this.store,source,file.text,file.doc.hash,baselines[source.source_id]))();}
     const detail=staged.find(f=>f.doc.card_type==='detail'),key=staged.find(f=>f.doc.card_type==='key');if(detail&&key&&detail.doc.source_id===key.doc.source_id){const stamp=this.internal(project,`.trash/markdown-pairs/${key.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({detail:detail.doc.hash,key:key.doc.hash}),{mode:0o600});}
     for(const file of staged.filter(file=>file.doc.kind==='wiki-page')){
       const refs=(file.doc.links??[]).filter(link=>link.evidence).flatMap(link=>{try{const target=this.locate(project,link.path);const old=previousDependencies.get(file.path)?.find(ref=>ref.path===link.path);return existsSync(target)?[old??{path:link.path,hash:digest(readFileSync(target,'utf8'))}]:[{path:link.path,hash:old?.hash??'missing'}];}catch{return [];}});
