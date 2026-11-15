@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 
-from common import REQUIRED_PAGES, frontmatter, first_heading, source_id, pages
+from common import cli_errors, REQUIRED_PAGES, frontmatter, first_heading, source_id, pages
 
 
 def check(root: Path) -> list[str]:
@@ -82,8 +82,13 @@ def check(root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wiki", type=Path)
+    parser.add_argument("--json", action="store_true", help="Emit a machine-readable report")
     args = parser.parse_args()
     errors = check(args.wiki)
+    if args.json:
+        import json
+        print(json.dumps({"ok": not errors, "errors": errors}, ensure_ascii=False))
+        return 1 if errors else 0
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
@@ -93,4 +98,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli_errors(main))

@@ -1,3 +1,4 @@
+import {fileURLToPath} from 'node:url';
 import {execFile} from 'node:child_process';
 import {join,resolve,sep} from 'node:path';
 import {lstatSync,realpathSync,writeFileSync} from 'node:fs';
@@ -10,7 +11,8 @@ export async function prepareWikiOutput(directory:string,source:string){
  let current=output;
  for(const part of ['knowledge_base','papers',source]){current=join(current,part);if(lstatSync(current).isSymbolicLink())throw new Error('Unsafe Wiki output path');}
  if(!realpathSync(root).startsWith(output+sep))throw new Error('Wiki output escapes task');
- const tools=join(directory,'literature-skill','scripts');
+ // Execute maintained code, never the model-writable staged copy.
+ const tools=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/scripts/',import.meta.url));
  const reports:{script:string;milliseconds:number;output:string}[]=[];
  for(const script of ['build_evidence_index.py','check_wiki_structure.py','check_wiki_links.py','wiki_context_manifest.py']){
   const started=Date.now();

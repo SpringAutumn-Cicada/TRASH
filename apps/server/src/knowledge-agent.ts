@@ -238,9 +238,13 @@ export class KnowledgeAgent implements TaskRunner {
     task.status="running";this.knowledge.saveTask(task);this.reserved.add(projectId);
     let directory=projectRuntime(this.store.root,projectId,'tasks',task.task_id);
     let child: ChildProcess | undefined;
+    const started=Date.now();
+    const spans:{phase:string;started_at:string;milliseconds:number;status:string;first_event_ms?:number}[]=[];
+    const measure=(phase:string,at:number,status='completed',first?:number)=>{spans.push({phase,started_at:new Date(at).toISOString(),milliseconds:Date.now()-at,status,first_event_ms:first});writeFileSync(join(directory,'performance.json'),JSON.stringify({version:1,queue_ms:Math.max(0,started-Date.parse(task.created_at)),spans},null,2),{mode:0o600});};
     try {
       mkdirSync(directory,{recursive:true});
       directory=realpathSync(directory);
+      task.snapshot={...(task.snapshot as Record<string,unknown>),prompt_version:13,skill_hash:taskSkillHash(task.input)};this.knowledge.saveTask(task);
       const snapshot=task.snapshot as {sources:{source:{source_id:string;source_type:string};segments:unknown[]}[];documents:ReturnType<MarkdownKnowledge['list']>['documents'];bibliography_baselines?:Record<string,{authors?:string[];title:string;year?:number;publication_date?:string;revision?:number;content_hash:string}>;expectedTargets?:Record<string,string|null>;dependencies?:{id:string;path:string;hash:string}[];previous?:ReturnType<MarkdownKnowledge['list']>['documents'][number]};
       const markdown=new MarkdownKnowledge(this.store);
       const source=task.input.source_ids[0];
@@ -276,6 +280,7 @@ export class KnowledgeAgent implements TaskRunner {
       this.knowledge.event(task.task_id,`Agent 版本：${cliVersion}`);
       if(this.knowledge.tasks(projectId).find(t=>t.task_id===task.task_id)?.status!=="running")return;
       const deadline=Date.now()+task.input.timeout_seconds*1000;
+      const readingStarted=Date.now();
       const readingResults=[];
       for(const material of task.input.abstract_mode||task.input.kind==='wiki-page'?[]:snapshot.sources??[]){
         if(material.source.source_type!=='pdf'){
@@ -286,6 +291,7 @@ export class KnowledgeAgent implements TaskRunner {
           active:()=>!this.closed&&this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status==='running',
           event:text=>this.knowledge.event(task.task_id,text),read:(text,images,timeout)=>this.readBatch(task,text,images,directory,timeout)}));
       }
+      measure('pdf-reading',readingStarted);
       prompt+='\n知识库统一使用 knowledge_base/。本次准确输出清单（优先于上文任何旧路径示例）：'+paths.map(path=>path+'，稳定ID='+knowledgeDocumentId(path)).join('；')+'。frontmatter id 使用此稳定ID，不使用 basic/key/detail/memory 这样的文件短名。所有相对链接根据实际新目录计算，引用 input.json 的真实 path。仅摘要文件仍按摘要规范，不添加全文frontmatter。';
       if(task.input.research_exploration)prompt=`读取 literature-skill/SKILL.md、literature-skill/references/research-exploration.md 和 input.json。任务为用户主动研究方向探索，模式 ${task.input.research_exploration}，严格按该模式结构而非通用主题模板。只用实际提供Wiki，不读PDF或历史任务，不自动选择研究问题。项目领域与线索仅作背景，允许发现多个方向。直接写指定 output/${paths[0]}，frontmatter kind: wiki-page、knowledge_version: 2、level: ${task.input.wiki_level}、id: ${knowledgeDocumentId(paths[0])}。来源依据使用实际文档ID与可解析相对链接。材料缺口不等于领域空白，未补充检索不宣称创新性成立。保持全部来源标识与证据边界。用户要求：${task.input.instructions}`;
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
@@ -306,16 +312,17 @@ export class KnowledgeAgent implements TaskRunner {
         if(Date.now()>=deadline)throw new Error('生成阶段超时；草稿已保留，请继续分析');
         child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
         this.running.set(projectId,{child,task});
+        const generationStarted=Date.now();let firstEvent:number|undefined;
         let logBytes=0;
         const result=new CliTurnResult(message=>this.knowledge.event(task.task_id,redact(message)));
         const log=(chunk:Buffer)=>{if(!this.closed&&logBytes<1024*1024){const message=redact(chunk.toString());logBytes+=Buffer.byteLength(message);this.knowledge.event(task.task_id,message);}};
-        child.stdout?.on('data',(chunk:Buffer)=>result.push(chunk));
+        child.stdout?.on('data',(chunk:Buffer)=>{firstEvent??=Date.now()-generationStarted;result.push(chunk);});
         child.stdout?.on('data',log);child.stderr?.on('data',log);
         let timedOut=false;
         const timer=setTimeout(()=>{timedOut=true;if(child)this.terminate(child);},Math.max(1,deadline-Date.now()));
         const completion=new Promise<void>((resolve,reject)=>{child!.once('error',reject);child!.once('close',(code,signal)=>{result.finish();const failure=timedOut?'生成阶段超时；草稿已保留':result.failure(code,signal);if(failure){this.knowledge.event(task.task_id,'模型调用失败：'+redact(failure));reject(new Error(redact(failure)));}else resolve();});});
         child.stdin?.on('error',()=>{});child.stdin?.end(instructions+(paperBundle?'\n\n'+paperWikiSemanticReview:''));
-        try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
+        try{await completion;}finally{measure('wiki-generation',generationStarted,'finished',firstEvent);clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
       };
       const phase=(name:string,title:string)=>{const path=join(directory,'reading-progress.json');if(existsSync(path)){const current=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...current,phase:name,title,updated_at:new Date().toISOString()}),{mode:0o600});}};
@@ -337,7 +344,7 @@ export class KnowledgeAgent implements TaskRunner {
       }else this.knowledge.event(task.task_id,'全部目标草稿已恢复；无需再次调用模型生成');
       phase('validation','校验知识页、导航与依据锚点');
       this.knowledge.event(task.task_id,'输出校验：逐项检查 Markdown 文件、大小、格式与来源');
-      if(paperBundle){this.knowledge.event(task.task_id,'确定性整理：生成依据目录、检查结构与链接、生成上下文索引');await prepareWikiOutput(directory,source);}
+      if(paperBundle){this.knowledge.event(task.task_id,'确定性整理：生成依据目录、检查结构与链接、生成上下文索引');const at=Date.now();try{await prepareWikiOutput(directory,source);}finally{measure('wiki-tools',at,'finished');}}
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid));saveCheck(checked);
       this.knowledge.event(task.task_id,`文档生成：已就绪 ${checked.valid.filter(file=>!checked.issues.some(issue=>issue.path===file.path)).length}/${paths.length} 份（校验合格，尚未发布）`);
@@ -350,6 +357,7 @@ export class KnowledgeAgent implements TaskRunner {
       this.knowledge.event(task.task_id,`文档生成：已就绪 ${checked.valid.filter(file=>!checked.issues.some(issue=>issue.path===file.path)).length}/${paths.length} 份（校验合格，尚未发布）`);
       }
       if(checked.issues.length)throw new Error('Markdown 输出校验失败；已保留工作副本：'+checked.issues.map(item=>`${item.path}：${item.reason}`).join('；'));
+      if(this.closed||task.status!=='running'||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')throw new Error('任务已停止；检查结果与草稿已保留，未发布');
       const commits=checked.valid.map(({path,text})=>{
         const before=snapshot.documents?.find(doc=>doc.path===path);
         return {path,text,expected:snapshot.expectedTargets?.[path]??before?.hash??null};
@@ -373,12 +381,18 @@ export class KnowledgeAgent implements TaskRunner {
         }
         task.status='completed';task.output_id=`abstract-${source}`;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${paths[0]}（仅摘要，独立存放）`);return;
       }
+      const publicationStarted=Date.now();
       const records=markdown.commit(projectId,commits,snapshot.bibliography_baselines);
+      measure('publishing',publicationStarted);
+      if(paperBundle){
+        try{const cache=projectRuntime(this.store.root,projectId,'wiki-manifests');mkdirSync(cache,{recursive:true});writeFileSync(join(cache,source+'.json'),readFileSync(join(directory,'wiki-context-manifest.json')),{mode:0o600});}
+        catch{this.knowledge.event(task.task_id,'Wiki已发布；派生索引缓存写入失败，可使用现有知识导航');}
+      }
       for(const record of records.filter(r=>r.kind==='wiki-page'))markdown.stamp(projectId,record.id,[...(snapshot.dependencies??[]).filter(r=>!records.some(output=>output.id===r.id)&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash})),...records.filter(r=>r.id!==record.id&&(record.links??[]).some(l=>l.evidence&&l.path===r.path)).map(({path,hash})=>({path,hash}))],true);
       phase('completed','新版论文知识已发布');
       task.status="completed";task.output_id=(paperBundle?records.find(record=>record.path===`knowledge_base/papers/${source}/whoami.md`):undefined)?.id??records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${records.map(record=>record.path).join('、')}`);
 
     }catch(error){if(task.status==="running" && !this.closed){task.status="failed";task.error=redact(error instanceof Error?error.message:"任务失败");this.knowledge.saveTask(task);this.knowledge.event(task.task_id,task.error);}}
-    finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId,task);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}
+    finally {try{if(existsSync(directory))measure('total',started,task.status);}catch{/* Telemetry must not block task cleanup. */}this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId,task);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}
   }
 }

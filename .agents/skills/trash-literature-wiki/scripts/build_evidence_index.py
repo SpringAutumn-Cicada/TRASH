@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from common import frontmatter, first_heading, source_id, pages, atomic_write
+from common import cli_errors, frontmatter, first_heading, source_id, pages, atomic_write
 
 
 def build(root: Path) -> Path:
@@ -15,6 +15,8 @@ def build(root: Path) -> Path:
     entries = sorted(evidence_dir.glob("ev-*.md"))
     if not entries:
         raise ValueError("refusing to build empty evidence index")
+    if not (root / "whoami.md").is_file() or not source_id(root):
+        raise ValueError("missing Wiki identity")
     title = first_heading((root / "whoami.md").read_text(encoding="utf-8")) if (root / "whoami.md").exists() else root.name
     sid = source_id(root) or root.name
     lines = [
@@ -61,4 +63,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(cli_errors(main))

@@ -62,17 +62,16 @@ def local_target(page: Path, target: str, root: Path) -> tuple[Path, str] | None
 
 def frontmatter(text: str) -> dict[str, str]:
     """Parse the simple scalar YAML used by Wiki frontmatter."""
-    if not text.startswith("---"):
-        return {}
-    parts = text.split("---", 2)
-    if len(parts) < 3:
+    match = re.match(r"\A---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)", text)
+    if not match:
         return {}
     result: dict[str, str] = {}
-    for line in parts[1].splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        result[key.strip()] = value.strip().strip("'\"")
+    for line in match[1].splitlines():
+        field = re.fullmatch(r"([a-z_]+):\s*([A-Za-z0-9_-]+)\s*", line)
+        if field:
+            if field[1] in result:
+                raise ValueError(f"duplicate metadata field: {field[1]}")
+            result[field[1]] = field[2]
     return result
 
 
@@ -89,3 +88,13 @@ def source_id(root: Path) -> str | None:
             if value:
                 return value
     return None
+
+
+def cli_errors(main):
+    """Consistent nonzero status without leaking a Python traceback."""
+    import sys
+    try:
+        return main() or 0
+    except (OSError, ValueError, KeyError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        return 2

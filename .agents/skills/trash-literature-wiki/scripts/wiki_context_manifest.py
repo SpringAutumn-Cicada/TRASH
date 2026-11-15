@@ -8,7 +8,7 @@ import json
 import hashlib
 from pathlib import Path
 
-from common import REQUIRED_PAGES, frontmatter, first_heading, source_id, pages, links, atomic_write
+from common import cli_errors, REQUIRED_PAGES, frontmatter, first_heading, source_id, pages, links, atomic_write
 
 
 def build(root: Path) -> dict:
@@ -53,4 +53,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(cli_errors(main))
