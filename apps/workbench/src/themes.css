@@ -66,3 +66,14 @@
 :root ::-webkit-scrollbar-button{display:none}
 :root .project-sidebar{scrollbar-color:var(--nav-muted) transparent}
 :root .project-sidebar ::-webkit-scrollbar-thumb{background:var(--nav-border)}
+
+/* Sidebar component rules load after the base workspace stylesheet; keep dark navigation contrast explicit. */
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-back{background:#30313f;color:#f1eef7;border-color:#575268}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-back:hover{background:#42364f;color:#fff;border-color:#9170cb}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-current-project strong{color:#f1eef7}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-current-project small{color:#beb8cc}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-current-symbol{background:#42364f;color:#f5efff}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link{background:transparent;color:#beb8cc}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link:hover{background:#30313f;color:#fff}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link.active{background:#42364f;color:#f5efff;border-color:#575268}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-secondary{background:#30313f;color:#f1eef7}
