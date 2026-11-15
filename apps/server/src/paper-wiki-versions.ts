@@ -59,36 +59,42 @@ export class PaperWikiVersions{
  private currentId(state:State,live:Version){return state.versions.find(version=>!version.trashed_at&&this.fingerprint(version.files)===this.fingerprint(live.files))?.id??live.id;}
  list(){
   const state=this.readState(),live=this.virtual(),current_id=this.currentId(state,live),byPath=new Map(live.files.map(file=>[file.path,file.hash]));
-  const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!([...state.versions,live].some(saved=>JSON.stringify(saved.files.map(file=>[file.path,file.hash]).sort())===JSON.stringify(version.files.map(file=>[file.path,file.hash]).sort()))))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
+  const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!state.versions.some(saved=>saved.task_id===version.task_id))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
   const current=new Set(live.files.map(file=>file.path));
   const old=this.docs().filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix)&&!current.has(doc.path)).map(doc=>({path:doc.path,hash:doc.hash,title:doc.document_title??doc.title,blockers:this.blockers([doc.path])}));
-  return {current_id,versions,historical_publications:this.historical().publications,old_files:old,cleanups:state.cleanups.map(item=>({...item,files:item.files.map(({path,hash})=>({path,hash}))})),expected:this.expected(),busy:this.busy()};
+  return {current_id,versions,historical_analysis_count:this.historical().versions.length,old_files:old,cleanups:state.cleanups.map(item=>({...item,files:item.files.map(({path,hash})=>({path,hash}))})),expected:this.expected(),busy:this.busy()};
  }
  /** Replay only recorded publications. Never fill historical holes with live files. */
- private historicalCache?:{versions:Version[];texts:Map<string,string>;publications:number};
+ private historicalCache?:{versions:Version[];texts:Map<string,string>};
  private historical(){
   if(this.historicalCache)return this.historicalCache;
   const rows=this.store.db.prepare("SELECT id,at,data FROM knowledge_memory_events WHERE project=? AND operation='publish' ORDER BY at,id").all(this.project) as {id:string;at:string;data:string}[];
-  const state=new Map<string,FileVersion>(),texts=new Map<string,string>(),groups=new Map<string,Version>();let publications=0;
+  const taskEvents=this.store.db.prepare("SELECT e.task_id,e.at,e.message,t.data FROM knowledge_task_events e JOIN knowledge_tasks t ON t.task_id=e.task_id WHERE t.project_id=? AND t.status='completed' AND e.message LIKE 'Markdown 已发布：%' ORDER BY e.at").all(this.project) as {task_id:string;at:string;message:string;data:string}[];
+  const completed=taskEvents.filter(event=>{try{const task=JSON.parse(event.data);return ['literature-card','paper-wiki','wiki-page'].includes(task.input?.kind)&&task.input?.source_ids?.includes(this.source);}catch{return false;}}).map(event=>({...event,paths:JSON.stringify(event.message.slice('Markdown 已发布：'.length).split('、').filter(path=>path.startsWith(this.prefix)).sort())}));
+  const state=new Map<string,FileVersion>(),texts=new Map<string,string>(),groups=new Map<string,Version>();
   for(const row of rows){
    let documents:{id:string;path:string;hash:string}[];try{documents=JSON.parse(row.data).documents??[];if(!Array.isArray(documents))continue;}catch{continue;}
    const updates=documents.filter(doc=>typeof doc.path==='string'&&doc.path.startsWith(this.prefix)&&!doc.path.slice(this.prefix.length).split('/').some(part=>part==='..'||part==='.')&&/^[A-Za-z0-9_-]+$/.test(doc.id)&&/^[a-f0-9]{64}$/.test(doc.hash));
-   if(!updates.length)continue;publications++;
+   if(!updates.length)continue;
    for(const doc of updates){state.set(doc.path,{...doc,dependencies:[]});if(texts.has(doc.hash))continue;
     const snapshot=this.path(`.trash/markdown-history/${doc.id}/${doc.hash}.md`);
     if(existsSync(snapshot)&&lstatSync(snapshot).size<=1024*1024){const text=readFileSync(snapshot,'utf8');if(hash(text)===doc.hash)texts.set(doc.hash,text);}
    }
+   // Legacy logs have no shared publication ID. Require the exact published path set
+   // and the task's completion event immediately after the publication, never a time bucket.
+   const publishedPaths=JSON.stringify(updates.map(doc=>doc.path).sort());
+   const matches=completed.filter(event=>event.paths===publishedPaths&&Date.parse(event.at)>=Date.parse(row.at)&&Date.parse(event.at)-Date.parse(row.at)<=5000);
+   if(matches.length!==1)continue;const task=matches[0];
    const entry=state.has(this.prefix+'whoami.md')?this.prefix+'whoami.md':this.prefix+'index.md';if(!state.has(entry))continue;
    const pending=[entry],visited=new Set<string>(),files:FileVersion[]=[],missing=new Set<string>();
    while(pending.length){const path=pending.pop()!;if(visited.has(path))continue;visited.add(path);const file=state.get(path);if(!file){missing.add(path);continue;}files.push(file);const text=texts.get(file.hash);if(text===undefined){missing.add(path);continue;}
     const targets=knowledgeLinks(path,text).map(link=>link.path),scope=text.match(/^scope_ref:\s*(ev-[a-z0-9_-]+)\s*$/m)?.[1];if(scope&&path.includes('/evidence/'))targets.push(this.prefix+'evidence/'+scope+'.md');
     pending.push(...targets.filter(target=>target.startsWith(this.prefix)&&!visited.has(target)));
    }
-   files.sort((a,b)=>a.path.localeCompare(b.path));const signature=hash(JSON.stringify(files.map(file=>[file.path,file.hash]))),previous=groups.get(signature);
-   if(previous){previous.publication_count=(previous.publication_count??1)+1;if(updates.length>1)previous.reason='历史批量发布';continue;}
-   groups.set(signature,{id:'historical-'+signature,at:row.at,reason:updates.length>1?'历史批量发布':'历史编辑发布',files,historical:true,publication_id:row.id,missing_paths:[...missing].sort(),publication_count:1});
+   files.sort((a,b)=>a.path.localeCompare(b.path));
+   if(!groups.has(task.task_id))groups.set(task.task_id,{id:'historical-'+task.task_id,at:task.at,reason:JSON.parse(task.data).input.kind==='wiki-page'?'历史Wiki整理':'历史论文分析',task_id:task.task_id,files,historical:true,publication_id:row.id,missing_paths:[...missing].sort()});
   }
-  return this.historicalCache={versions:[...groups.values()].reverse(),texts,publications};
+  return this.historicalCache={versions:[...groups.values()].reverse(),texts};
  }
  private busy(){return Boolean(this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(this.project));}
  private expected(){return hash(JSON.stringify([this.readState(),this.docs().map(doc=>[doc.path,doc.hash,doc.dependencies])]));}
