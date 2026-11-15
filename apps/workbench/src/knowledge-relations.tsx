@@ -4,13 +4,15 @@ import {api,uiError} from './api.js';
 import {ErrorNotice} from './error-notice.js';
 import './knowledge-relations.css';
 type Edge={id?:string;path:string;title:string;relation:string;reason:string;missing:boolean;stale?:boolean;changed?:boolean;source_anchor?:string;source_section?:string;source_line?:number};
-type Relations={evidence:Edge[];related:Edge[];backlinks:Edge[];broken:Edge[]};
+type Relations={catalog?:Edge[];scope?:Edge[];evidence:Edge[];related:Edge[];backlinks:Edge[];broken:Edge[]};
 export function KnowledgeRelations({projectId,id,hash,onOpen}:{projectId:string;id:string;hash:string;onOpen:(id:string,anchor?:string)=>void}){
  const [open,setOpen]=useState(false),[result,setResult]=useState<Relations>(),[error,setError]=useState('');
  useEffect(()=>{let active=true;setResult(undefined);setError('');if(open)void api<Relations>(`/projects/${encodeURIComponent(projectId)}/markdown-knowledge/relations?id=${encodeURIComponent(id)}`).then(data=>{if(active)setResult(data);}).catch(e=>{if(active)setError(uiError(e,'无法读取关联知识。'));});return()=>{active=false;};},[projectId,id,hash,open]);
- return <details className="knowledge-relations" open={open} onToggle={event=>setOpen(event.currentTarget.open)}><summary><Link2 size={14}/>关联知识{result&&<span>{result.evidence.length+result.related.length+result.backlinks.length}</span>}</summary>
+ return <details className="knowledge-relations" open={open} onToggle={event=>setOpen(event.currentTarget.open)}><summary><Link2 size={14}/>关联知识{result&&<span>{result.evidence.length+result.related.length+result.backlinks.length+(result.catalog?.length??0)+(result.scope?.length??0)}</span>}</summary>
   {error?<ErrorNotice>{error}</ErrorNotice>:!result?<p role="status"><LoaderCircle size={14} className="spin"/> 正在读取关联…</p>:<>
-   <RelationGroup title="引用依据" items={result.evidence} empty="尚未记录知识文档依据。" onOpen={onOpen}/>
+   <RelationGroup title="正文引用依据" items={result.evidence} empty="尚未记录知识文档依据。" onOpen={onOpen}/>
+   {Boolean(result.catalog?.length)&&<RelationGroup title="目录收录（导航）" items={result.catalog!} empty="" onOpen={onOpen}/>}
+   {Boolean(result.scope?.length)&&<RelationGroup title="公共阅读范围关联" items={result.scope!} empty="" onOpen={onOpen}/>}
    <RelationGroup title="相关主题" items={result.related} empty="暂无相关主题链接。" onOpen={onOpen}/>
    <RelationGroup title="被哪些页面引用" items={result.backlinks} empty="暂无反向引用。" onOpen={onOpen}/>
    {result.broken.length>0&&<p className="knowledge-relation-warning">有 {result.broken.length} 个链接尚无对应文档，可在编辑时修正。</p>}

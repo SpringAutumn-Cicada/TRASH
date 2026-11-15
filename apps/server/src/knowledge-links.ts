@@ -1,7 +1,7 @@
 import {markdownReferences,knowledgeBasePath,legacyKnowledgePath} from '@trash/protocol';
 import {posix} from 'node:path';
 
-export type KnowledgeLink={path:string;fragment?:string;label:string;relation:string;reason:string;evidence:boolean;source_line:number;source_section:string;source_anchor:string};
+export type KnowledgeLink={usage?:'citation'|'catalog'|'scope'|'navigation'|'related';path:string;fragment?:string;label:string;relation:string;reason:string;evidence:boolean;source_line:number;source_section:string;source_anchor:string};
 const knowledgePath=/^(wiki|literature\/cards)\/[A-Za-z0-9_-]+\.md$/;
 export function resolveKnowledgeLink(from:string,href:string):string|undefined {
   // Only local Markdown paths are knowledge edges; PDF/web links remain citations.
@@ -22,10 +22,12 @@ export function knowledgeLinks(path:string,text:string):KnowledgeLink[] {
       const prefix=clean.slice(0,match.index).replace(/^\s*[-*+]\s*/,'').trim();
       const navigation=(['论文总览','返回论文入口'].includes(match[1])&&target.endsWith('/whoami.md'))||path.endsWith('/evidence.md')||target.endsWith('/evidence.md')&&!match[2].includes('#');
       const evidence=!navigation&&(target.endsWith('/evidence.md')||/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(target)||/^(?:依据|证据|引用依据|证据依据)\s*[:：]/.test(prefix)||/^(?:引用依据|证据依据)$/.test(section));
-      const relation=navigation?'导航':evidence?'依据':prefix.match(/^(支持|限制|对比|分歧|扩展|验证|相关|导航|前置|总结|上级)\s*[:：]/)?.[1]??'相关';
+      const catalog=path.endsWith('/evidence.md')&&/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(target);
+      const usage=catalog?'catalog':navigation?'navigation':evidence?'citation':'related';
+      const relation=catalog?'目录收录':navigation?'导航':evidence?'依据':prefix.match(/^(支持|限制|对比|分歧|扩展|验证|相关|导航|前置|总结|上级)\s*[:：]/)?.[1]??'相关';
       const next=lines[i+1]??'';
       const reason=(clean.replace(match[0],match[1]).replace(/^\s*[-*+]\s*/,'')+(next.match(/^\s{2,}\S/)?' '+next.trim():'')).trim().slice(0,360);
-      if(!links.some(link=>link.path===target&&link.fragment===match[2].split('#')[1]&&link.relation===relation&&link.reason===reason))links.push({path:target,fragment:match[2].split('#')[1],label:match[1],relation,reason,evidence,source_line:i+1,source_section:section,source_anchor:section.toLowerCase().trim().replace(/\s+/g,'-')});
+      if(!links.some(link=>link.path===target&&link.fragment===match[2].split('#')[1]&&link.relation===relation&&link.reason===reason))links.push({path:target,fragment:match[2].split('#')[1],label:match[1],relation,reason,evidence:evidence&&!catalog,usage,source_line:i+1,source_section:section,source_anchor:section.toLowerCase().trim().replace(/\s+/g,'-')});
     }
   }
   return links;

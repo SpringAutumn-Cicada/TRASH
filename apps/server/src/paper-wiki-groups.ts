@@ -4,7 +4,7 @@ import type {TrashStore} from '@trash/storage';
 import type {MarkdownDocument} from './markdown-knowledge.js';
 
 export type GroupFile={path:string;hash:string};
-export type PaperGroup={version:1;source_id:string;at:string;task_id?:string;current:GroupFile[];archives:{id:string;at:string;files:(GroupFile&{archive_path:string})[]}[]};
+export type PaperGroup={version:1;source_id:string;at:string;task_id?:string;current:GroupFile[];retained?:{path:string;hash:string;status:GroupStatus;reason:string}[];archives:{id:string;at:string;files:(GroupFile&{archive_path:string})[]}[]};
 export type GroupStatus='current'|'historical'|'retained'|'unassigned';
 export const groupPath=(source:string)=>`.trash/paper-groups/${source}/current.json`;
 export function groupPhysical(root:string,path:string){
@@ -37,8 +37,8 @@ export function taskGeneratedHashes(store:TrashStore,project:string,source:strin
  }
  return known;
 }
-export function classifyPaperFiles(root:string,source:string,docs:Omit<MarkdownDocument,'text'>[],known?:Map<string,Set<string>>){
- const {current,group}=paperMembership(root,source,docs),prefix=`knowledge_base/papers/${source}/`;
+export function classifyPaperFiles(root:string,source:string,docs:Omit<MarkdownDocument,'text'>[],known?:Map<string,Set<string>>,currentOverride?:Set<string>){
+ const membership=paperMembership(root,source,docs),current=currentOverride??membership.current,group=membership.group,prefix=`knowledge_base/papers/${source}/`;
  // Keep the entire transitive dependency chain of any outside reference.
  const protectedPaths=new Set<string>(),pending=docs.filter(doc=>!doc.path.startsWith(prefix)).flatMap(doc=>[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)]).filter(path=>path.startsWith(prefix));
  const byPath=new Map(docs.map(doc=>[doc.path,doc]));while(pending.length){const path=pending.pop()!;if(protectedPaths.has(path))continue;protectedPaths.add(path);const doc=byPath.get(path);pending.push(...[...(doc?.links??[]).map(link=>link.path),...(doc?.dependencies??[]).map(ref=>ref.path)].filter(path=>path.startsWith(prefix)));}
