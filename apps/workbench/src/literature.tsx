@@ -77,7 +77,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
         for(let page=2;documents.length<first.total;page++){const next=await api<{documents:KnowledgeSummary[]}>(`${base}/markdown-knowledge?limit=100&page=${page}`);if(!next.documents.length)break;documents.push(...next.documents);}
         const completion=result.filter(item=>item.status==='completed').map(item=>item.task_id).sort().join(',');
         if(active&&completion!==completedAnalysis.current){completedAnalysis.current=completion;const updated=await api<ProjectDetail>(`${base}`);if(active)setDetail(updated);}
-        if(active)setAnalyses(result.map(item=>{const docs=documents.filter(d=>d.source_id===item.source_id);return {...item,hasKey:docs.some(d=>d.card_type==='key'),hasDetail:docs.some(d=>d.card_type==='detail'),hasCards:['detail','key'].every(type=>docs.some(d=>d.card_type===type)),hasWiki:docs.some(d=>d.kind==='wiki-page'),stale:docs.some(d=>d.stale)};}));
+        if(active)setAnalyses(result.map(item=>{const docs=documents.filter(d=>d.source_id===item.source_id);return {...item,hasKey:docs.some(d=>d.card_type==='key'),hasDetail:docs.some(d=>d.card_type==='detail'),hasCards:['detail','key'].every(type=>docs.some(d=>d.card_type===type)),hasWiki:item.hasWiki??docs.some(d=>d.kind==='wiki-page'),stale:item.stale??docs.some(d=>d.stale)};}));
       }catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}
       finally{loadingStatus=false;}
     };

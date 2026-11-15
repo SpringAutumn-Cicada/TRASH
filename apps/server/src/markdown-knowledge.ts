@@ -25,6 +25,22 @@ export function stageKnowledgeSkill(directory:string){
   for(const name of ['basic.md','cards.md']){const path=join(directory,'literature-skill','references',name);if(existsSync(path)){rejectSymlink(path);unlinkSync(path);}}
   for(const name of knowledgeSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(skillFile(name),'utf8'),{mode:0o600});}
 }
+/** A paper's status follows its current entry graph, never unrelated leftover files. */
+export function currentPaperWiki(documents:Pick<MarkdownDocument,'path'|'source_id'|'kind'|'stale'|'links'|'dependencies'>[],source:string){
+  const prefix=`knowledge_base/papers/${source}/`;
+  const pages=documents.filter(doc=>doc.source_id===source&&doc.kind==='wiki-page');
+  const byPath=new Map(pages.map(doc=>[doc.path,doc]));
+  const entry=prefix+'whoami.md';
+  if(!byPath.has(entry))return {hasWiki:pages.length>0,stale:pages.some(doc=>doc.stale),current_paths:pages.map(doc=>doc.path),retired_paths:[] as string[]};
+  const current=new Set([entry]),pending=[entry];
+  while(pending.length){
+    const page=byPath.get(pending.pop()!);
+    for(const path of [...(page?.links??[]).map(link=>link.path),...(page?.dependencies??[]).map(ref=>ref.path)]){
+      if(path.startsWith(prefix)&&!current.has(path)){current.add(path);pending.push(path);}
+    }
+  }
+  return {hasWiki:true,stale:[...current].some(path=>!byPath.has(path)||byPath.get(path)?.stale===true),current_paths:[...current],retired_paths:pages.filter(doc=>!current.has(doc.path)).map(doc=>doc.path)};
+}
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}
   root(project:string){if(!this.store.getProject(project))fail('PROJECT_NOT_FOUND',404);const root=join(this.store.root,'projects',project);mkdirSync(root,{recursive:true});return realpathSync(root);}

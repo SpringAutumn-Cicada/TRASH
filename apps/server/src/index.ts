@@ -7,7 +7,7 @@ import {closeTaskStreams} from './task-events.js';
 import {bibliographyState,parseIdcard} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
 import { createResearchFolder } from "./project-layout.js";
-import { MarkdownKnowledge } from "./markdown-knowledge.js";
+import { currentPaperWiki, MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
 import { directoryRepairBusy } from "./experiment/directory-repair.js";
@@ -356,7 +356,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const tasks=knowledge.tasks(projectId).filter(t=>!(t as {dismissed_reanalysis?:boolean}).dismissed_reanalysis&&t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
       sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);const idcard=docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/idcard.md`);let bibliography:ReturnType<typeof parseIdcard>|undefined;
       if(idcard){try{bibliography=parseIdcard(markdown.read(projectId,idcard.id).text);const manual=bibliographyState(store,source.source_id).manual??[];for(const field of ['title','authors','publication_date'] as const)if(manual.includes(field))delete bibliography[field];}catch{/* Keep original source metadata when no readable idcard is available. */}}
-      return {bibliography,source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
+      const wiki=currentPaperWiki(docs,source.source_id);
+      return {bibliography,hasWiki:wiki.hasWiki,stale:wiki.stale,currentWikiFiles:wiki.current_paths.length,oldWikiFiles:wiki.retired_paths.length,source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
     }
     const keepOriginal=subpath.match(/^sources\/([^/]+)\/keep-original$/);
     if(keepOriginal&&method==='POST'){
