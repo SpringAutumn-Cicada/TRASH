@@ -5,7 +5,7 @@ import { api, uiError } from "./api.js";
 
 type Progress = { total: number; completed: number; failed: number; active: number };
 type Analysis = { active_tasks?:{task_id:string;title:string;status:string}[]; analysis_id: string; stage: string; active: boolean; source_count: number; skipped_count: number; cards: Progress; groups: Progress; wiki: Progress; error?: string; covered_sources?:string[];missing_sources?:string[];reused_sources?:string[];topic_count?:number;candidate_count?:number;can_resume?:boolean;incremental?:boolean;plan?:{reuse:number;补齐:number;重读:number;综合:number} };
-const stages: Record<string, string> = { "cards-only":"逐篇更新知识", discovery:"从文献发现主题",cards: "逐篇整理卡片与线索", groups: "分组归纳文献知识", wiki: "形成项目主题 Wiki", completed: "分析完成，内容已可用", partial: "部分完成，请查看失败任务", failed: "分析失败", cancelled: "已停止，生成内容保留", interrupted: "服务重启，流程已中断" };
+const stages: Record<string, string> = { "cards-only":"逐篇更新知识", discovery:"从文献发现主题",cards: "逐篇整理论文知识与线索", groups: "分组归纳文献知识", wiki: "形成项目主题 Wiki", completed: "分析完成，内容已可用", partial: "部分完成，请查看失败任务", failed: "分析失败", cancelled: "已停止，生成内容保留", interrupted: "服务重启，流程已中断" };
 export function LiteratureAnalysisButton({ projectId, sourceCount, blocked, onChanged }: { projectId: string; sourceCount: number; blocked: boolean; onChanged: () => void }) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [mode,setMode]=useState('synthesis');
@@ -13,7 +13,7 @@ export function LiteratureAnalysisButton({ projectId, sourceCount, blocked, onCh
   const menu=useRef<HTMLDivElement>(null);
   const trigger=useRef<HTMLButtonElement>(null);
   useEffect(()=>{const close=(event:PointerEvent)=>{if(!menu.current?.contains(event.target as Node))setMenuOpen(false);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&menuOpen){setMenuOpen(false);trigger.current?.focus();}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[menuOpen]);
-  const options=[{id:'synthesis',label:'综合已有卡片',description:'从已有关键卡片发现主题，形成研究记忆与总览，不重新读取 PDF。'},{id:'all',label:'补齐更新并综合',description:'补齐缺失、更新变化的论文，再从文献发现主题，再生成研究记忆与总览。'},{id:'missing',label:'补齐缺失分析',description:'仅处理缺少卡片的论文，不做跨论文综合。'},{id:'changed',label:'更新已有分析',description:'更新需要重新分析的论文，来源未变则复用。'},{id:'overview',label:'更新项目总览',description:'仅根据已有主题 Wiki 更新项目总览。'}];
+  const options=[{id:'synthesis',label:'综合已有 Wiki',description:'从当前论文 Wiki 发现主题，形成研究记忆与总览，不重新读取 PDF。'},{id:'all',label:'补齐更新并综合',description:'补齐缺失、更新变化的论文，再从文献发现主题，再生成研究记忆与总览。'},{id:'missing',label:'补齐缺失分析',description:'仅处理缺少论文知识的论文，不做跨论文综合。'},{id:'changed',label:'更新已有分析',description:'更新需要重新分析的论文，来源未变则复用。'},{id:'overview',label:'更新项目总览',description:'仅根据已有主题 Wiki 更新项目总览。'}];
   const selected=options.find(option=>option.id===mode)!;
   const notified = useRef(""); const changed = useRef(onChanged); changed.current = onChanged;
   const base = `/projects/${encodeURIComponent(projectId)}/literature-analysis`;
