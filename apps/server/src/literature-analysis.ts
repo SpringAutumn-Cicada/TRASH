@@ -21,10 +21,10 @@ export class LiteratureAnalysis {
   constructor(private store: TrashStore, private knowledge: KnowledgeStore, private agent: KnowledgeAgent) {
     for (const project of store.listProjects()) {
       const analysis = this.read(project.project_id);
-      if (analysis && active(analysis)) { analysis.stage = "interrupted"; analysis.error = "服务重启，分析流程已中断；可重新点击分析，已保存内容保留。"; this.save(analysis); }
+      if (analysis && !analysis.incremental && active(analysis)) { analysis.stage = "interrupted"; analysis.error = "服务重启，分析流程已中断；可重新点击分析，已保存内容保留。"; this.save(analysis); }
     }
     agent.onTaskRetried=(project,previousId,task)=>{
-      const value=this.read(project);if(!value)return;
+      const value=this.read(project);if(!value||value.incremental)return;
       const stages=[{ids:value.card_tasks,stage:value.mode==='missing'||value.mode==='changed'?'cards-only':'cards'}, {ids:value.group_tasks,stage:'groups'}, {ids:value.discovery_tasks??[],stage:'discovery'}, {ids:value.wiki_tasks,stage:'wiki'}] as const;
       const group=stages.find(group=>group.ids.includes(previousId));if(!group)return;
       for(let i=0;i<group.ids.length;i++)if(group.ids[i]===previousId)group.ids[i]=task.task_id;
@@ -36,32 +36,11 @@ export class LiteratureAnalysis {
       }
       this.save(value);
     };
-    agent.onTaskSettled = (project,task) => {this.advance(project);this.integrate(project,task);};
-  }
-  // Persist only future standalone completions; do not enqueue historical content on startup.
-  private integrations(project:string){
-    const file=join(projectRuntime(this.store.root,project,'literature-integration'),'queue.json');
-    let entries:{task_id:string;source_id:string;analysis_id?:string;status:string;error?:string}[]=[];
-    try{entries=JSON.parse(readFileSync(file,'utf8'));}catch{/* New queue. */}
-    return {file,entries};
-  }
-  private integrate(project:string,task?:KnowledgeTask){
-    const queue=this.integrations(project),current=this.read(project);
-    if(task?.status==='completed'&&task.input.include_source_wiki&&!current?.card_tasks.includes(task.task_id)&&!queue.entries.some(e=>e.task_id===task.task_id))queue.entries.push({task_id:task.task_id,source_id:task.input.source_ids[0],status:'pending'});
-    for(const entry of queue.entries)if(entry.analysis_id===current?.analysis_id&&current&&active(current))entry.status='running';
-    for(const entry of queue.entries)if(entry.status==='running'&&current&&entry.analysis_id===current.analysis_id&&!active(current)){entry.status=current.stage==='completed'?'completed':'failed';entry.error=current.error;}
-    if(!current||!active(current)){
-      const next=queue.entries.find(e=>e.status==='pending');
-      if(next){
-        // Mark before enqueueing: callbacks may reenter after task settlement.
-        next.status='running';mkdirSync(join(queue.file,'..'),{recursive:true});writeFileSync(queue.file,JSON.stringify(queue.entries),{mode:0o600});
-        try{const result=this.start(project,'synthesis',{source_ids:[next.source_id],incremental:true,integration_task:next.task_id});next.analysis_id=result?.analysis_id;if(!result?.active){next.status=result?.stage==='completed'?'completed':'failed';next.error=result?.error;}}catch(error){next.status='failed';next.error=error instanceof Error?error.message:'增量整合失败';}
-      }
-    }
-    mkdirSync(join(queue.file,'..'),{recursive:true});const temp=queue.file+'.tmp';writeFileSync(temp,JSON.stringify(queue.entries),{mode:0o600});renameSync(temp,queue.file);
+    // Only advance explicitly requested batch work; standalone papers end at publication.
+    agent.onTaskSettled = project => {this.advance(project);};
   }
   resume(project:string){
-    const value=this.read(project);if(!value)return null;if(active(value))return this.status(project);
+    const value=this.read(project);if(!value)return null;if(value.incremental)return this.status(project);if(active(value))return this.status(project);
     if(value.stage==='completed')return this.status(project);
     // Resume the earliest incomplete stage, then rebuild downstream summaries.
     const stages=[{ids:value.card_tasks,stage:value.mode==='missing'||value.mode==='changed'?'cards-only':'cards'},
@@ -88,6 +67,7 @@ export class LiteratureAnalysis {
   private tasks(project: string, ids: string[]) { const all = this.knowledge.tasks(project); return ids.map(id => all.find(task => task.task_id === id)).filter((task): task is KnowledgeTask => Boolean(task)); }
   private reconcile(project:string){
     const value=this.read(project);if(!value)return;
+    if(value.incremental)return value; // Historical auto-integration records are read-only.
     const all=this.knowledge.tasks(project);let changed=false;
     const stages=[{ids:value.card_tasks,stage:value.mode==='missing'||value.mode==='changed'?'cards-only':'cards'},{ids:value.group_tasks,stage:'groups'},{ids:value.discovery_tasks??[],stage:'discovery'},{ids:value.wiki_tasks,stage:'wiki'}] as const;
     for(const group of stages)for(let i=0;i<group.ids.length;i++){
@@ -106,10 +86,10 @@ export class LiteratureAnalysis {
   status(project: string) {
     const value = this.reconcile(project); if (!value) return null;
     const summarize = (ids: string[]) => { const tasks = this.tasks(project, ids); return { total: ids.length, completed: tasks.filter(task => task.status === "completed").length, failed: ids.length - tasks.filter(task => task.status === "completed" || pending(task)).length, active: tasks.filter(pending).length }; };
-    return { ...value, active_tasks:this.knowledge.tasks(project).filter(pending).map(t=>({task_id:t.task_id,title:t.input.title,status:t.status})), can_resume:!active(value)&&[...value.card_tasks,...value.group_tasks,...(value.discovery_tasks??[]),...value.wiki_tasks].some(id=>['failed','interrupted','cancelled'].includes(this.tasks(project,[id])[0]?.status??'')), cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: active(value) };
+    return { ...value, active_tasks:this.knowledge.tasks(project).filter(pending).map(t=>({task_id:t.task_id,title:t.input.title,status:t.status})), auto_integration_disabled:Boolean(value.incremental),can_resume:!value.incremental&&!active(value)&&[...value.card_tasks,...value.group_tasks,...(value.discovery_tasks??[]),...value.wiki_tasks].some(id=>['failed','interrupted','cancelled'].includes(this.tasks(project,[id])[0]?.status??'')), cards: summarize(value.card_tasks), groups: summarize([...(value.group_history??[]),...value.group_tasks,...(value.discovery_tasks??[])]), wiki: summarize(value.wiki_tasks), active: !value.incremental&&active(value) };
   }
-  start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string;incremental?:boolean;integration_task?:string}={}) {
-    const current = this.read(project); if (current && active(current)) return this.status(project);
+  start(project: string, mode:'all'|'missing'|'changed'|'synthesis'|'overview'='all',options:{source_ids?:string[];title?:string;instructions?:string}={}) {
+    const current = this.read(project); if (current && !current.incremental && active(current)) return this.status(project);
     const allSources=this.store.listSources(project);if(options.source_ids?.some(id=>!allSources.some(s=>s.source_id===id)))experimentError('SOURCE_NOT_FOUND',404);
     const sources=options.source_ids?.length?allSources.filter(s=>options.source_ids!.includes(s.source_id)):allSources;
     const eligible = sources.filter(source => this.store.listSourceSegments(source.source_id).some(segment => segment.text.trim()) || Boolean(source.abstract?.trim()) || source.source_type==='pdf');
@@ -119,7 +99,7 @@ export class LiteratureAnalysis {
     const plan={reuse:0,补齐:0,重读:0,综合:0};
     for(const source of eligible){const pair=existingDocs.filter(d=>d.source_id===source.source_id&&['basic','detail','key'].includes(d.card_type??''));const complete=existingDocs.some(d=>d.path===`knowledge_base/papers/${source.source_id}/whoami.md`)||pair.length===3&&existingDocs.some(d=>d.source_id===source.source_id&&d.kind==='wiki-page');if(mode==='synthesis'||mode==='overview'){if(complete)plan.reuse++;else plan.补齐++;plan.综合++;}else if(complete&&mode!=='changed')plan.reuse++;else if(pair.length)plan.补齐++;else plan.重读++;}
     value.plan=plan;
-    value.mode=mode;value.incremental=options.incremental;value.integration_task=options.integration_task;value.card_documents=[];value.theme_title=options.title;value.instructions=options.instructions;value.reused_sources=[];value.covered_sources=[];value.missing_sources=[];
+    value.mode=mode;value.card_documents=[];value.theme_title=options.title;value.instructions=options.instructions;value.reused_sources=[];value.covered_sources=[];value.missing_sources=[];
     this.save(value);
     try {
       const markdown=new MarkdownKnowledge(this.store);const docs=markdown.index(project).documents;
@@ -154,7 +134,7 @@ export class LiteratureAnalysis {
     return this.agent.enqueue(value.project_id, input).map(task => task.task_id);
   }
   advance(project: string) {
-    const value = this.reconcile(project); if (!value || !active(value)) return;
+    const value = this.reconcile(project); if (!value || value.incremental || !active(value)) return;
     try {
       const ids = ["cards","cards-only"].includes(value.stage) ? value.card_tasks : value.stage === "groups" ? value.group_tasks : value.stage==='discovery' ? value.discovery_tasks??[] : value.wiki_tasks;
       if (this.tasks(project, ids).some(pending)) return;
