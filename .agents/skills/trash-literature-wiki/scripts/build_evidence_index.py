@@ -6,12 +6,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from common import frontmatter, first_heading, source_id
+from common import frontmatter, first_heading, source_id, pages, atomic_write
 
 
 def build(root: Path) -> Path:
+    pages(root)
     evidence_dir = root / "evidence"
     entries = sorted(evidence_dir.glob("ev-*.md"))
+    if not entries:
+        raise ValueError("refusing to build empty evidence index")
     title = first_heading((root / "whoami.md").read_text(encoding="utf-8")) if (root / "whoami.md").exists() else root.name
     sid = source_id(root) or root.name
     lines = [
@@ -31,8 +34,20 @@ def build(root: Path) -> Path:
         "# 依据总览",
         "",
     ]
+    existing = root / "evidence.md"
+    if existing.exists():
+        text = existing.read_text(encoding="utf-8")
+        if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+            raise ValueError("existing index has invalid frontmatter")
+        header, body = text[4:].split("\n---\n", 1)
+        if frontmatter(text).get("id") != f"wiki-{sid}--evidence":
+            raise ValueError("existing index stable id mismatch")
+        after_heading = body.split("# ", 1)[-1].split("\n", 1)[-1]
+        if any(line.strip() and not line.lstrip().startswith("- [") for line in after_heading.splitlines()):
+            raise ValueError("index contains manual content; preserve and resolve explicitly")
+        lines = ["---", header, "---", "", title, "", "[论文总览](./whoami.md)", "", "# 依据总览", ""]
     lines.extend(f"- [{path.stem}](./evidence/{path.name})" for path in entries)
-    (root / "evidence.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write(root / "evidence.md", "\n".join(lines) + "\n")
     return root / "evidence.md"
 
 
