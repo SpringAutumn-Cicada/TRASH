@@ -19,7 +19,7 @@ import { type KnowledgeTaskInput } from "@trash/protocol";
 import { requestError, type TaskRunner } from "./knowledge.js";
 
 const taskSkill=(input:KnowledgeTaskInput)=>input.research_exploration&&['directions','evidence-plan'].includes(input.research_exploration)?'trash-research-exploration' as const:input.kind==='wiki-page'&&input.wiki_level!=='single'?'trash-literature-synthesis' as const:'trash-literature-wiki' as const;
-const taskPromptVersion=(input:KnowledgeTaskInput,paperBundle:boolean)=>paperBundle?13:input.abstract_mode?10:14;
+const taskPromptVersion=(input:KnowledgeTaskInput,paperBundle:boolean)=>paperBundle?14:input.abstract_mode?10:14;
 function researchPrompt(input:KnowledgeTaskInput,path:string){
  const skill=taskSkill(input),reference=skill==='trash-research-exploration'?'research-exploration':'synthesis';
  return `读取 literature-skill/SKILL.md、literature-skill/references/${reference}.md 和 input.json，使用 ${skill}，模式 ${input.research_exploration}。按对应模式结构输出，不套单篇模板。先用已提供的轻量正文与 material_index 筛选，再按需读取 output/ 中的来源工作副本；索引不代表已读。补读方法、结果或具体依据仅围绕当前判断，不固定读取全部材料。只写 output/${path}，frontmatter knowledge_version: 2、kind: wiki-page、level: ${input.wiki_level}、id: ${knowledgeDocumentId(path)}。不修改来源工作副本，不读PDF、历史任务或自动联网。研究条件在 input.project.research_constraints，缺项集中说明，不猜测；不要改变已选、暂缓或排除问题。summary 模式必须有“## 何时读取”“## 覆盖方向”“## 材料范围”“## 批次标识”，批次标识填写“${input.title}”。原始source_id、页ID和可解析相对链接逐层保留，关键判断就近引用，在“## 引用依据”说明实际使用来源与对应论点；未读取项列为缺口。材料缺口不等于领域空白，未补查最接近和近期工作不宣称新颖性成立。只给方向性最小验证，不设计完整实验或运行实验。利用本次已读材料自查，有具体疑点才补读相关片段，不全文回读、不增加审核调用或检查脚本。用户要求：${input.instructions}`;
@@ -132,6 +132,7 @@ export class KnowledgeAgent implements TaskRunner {
     const draftPaths=task.input.kind==='literature-card'&&sourceId?[`literature/cards/idcard-${sourceId}.md`,...(task.input.include_source_wiki?[`wiki/wiki-${sourceId}.md`]:[])]:task.input.target_id?[`wiki/${task.input.target_id}.md`]:[];
     if(sourceId&&!task.input.abstract_mode&&(task.input.include_source_wiki||task.input.wiki_level==='single'))draftPaths.splice(0,draftPaths.length,...paperWikiPaths(sourceId));
     const draftOutput=join(projectRuntime(this.store.root,task.project_id,'tasks',task.task_id),'output');
+    if(existsSync(draftOutput)&&sourceId&&!task.input.abstract_mode&&(task.input.include_source_wiki||task.input.wiki_level==='single'))draftPaths.splice(0,draftPaths.length,...paperWikiOutputPaths(draftOutput,sourceId,draftPaths));
     if(existsSync(draftOutput)&&this.inspectOutputs(task,draftOutput,draftPaths).valid.some(file=>(task.snapshot as {documents?:{path:string;text:string}[]}).documents?.find(doc=>doc.path===file.path)?.text!==file.text))return true;
     if(!sourceId)return false;
     for(const prior of this.readingAttempts(candidate))try{
@@ -259,6 +260,7 @@ export class KnowledgeAgent implements TaskRunner {
         sources:snapshot.sources,
         instructions:task.input.instructions,
         outputs:paths.map(path=>({path,id:knowledgeDocumentId(path)})),
+        output_scope:{required:true,additional:`knowledge_base/papers/${source}/{evidence/ev-*.md,method/<slug>.md,results/<slug>.md}`,description:'outputs是最低必需项，按技能补齐正文引用的依据与必要子页，不是全部允许输出'},
         reading_rule_version:(task.snapshot as {reading_rule_version?:number}).reading_rule_version,
         input_version:2
       }:snapshot.reference_documents?.length?{...(task.snapshot as object),reference_documents:undefined,material_index:(snapshot.reference_documents??[]).map(({id,path,title,source_id,stale})=>({id,path,title,source_id,stale}))}:task.snapshot;
@@ -302,6 +304,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(this.closed||this.knowledge.tasks(projectId).find(item=>item.task_id===task.task_id)?.status!=='running')return;
       if(Date.now()>=deadline)throw new Error('全文阅读超时；批次笔记已保留，未发布最终知识');
       this.restoreDrafts(task,output,paths);
+      if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       if(fulltextGeneration)this.knowledge.event(task.task_id,task.attempt_of?'文档生成：继续本次失败链，仅恢复版本与规则匹配的合格草稿':'文档生成：重新分析从空输出开始，历史Wiki不作为输入；PDF笔记独立核验复用');
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
@@ -321,7 +324,7 @@ export class KnowledgeAgent implements TaskRunner {
         const timer=setTimeout(()=>{timedOut=true;if(child)this.terminate(child);},Math.max(1,deadline-Date.now()));
         const completion=new Promise<void>((resolve,reject)=>{child!.once('error',reject);child!.once('close',(code,signal)=>{result.finish();const failure=timedOut?'生成阶段超时；草稿已保留':result.failure(code,signal);if(failure){this.knowledge.event(task.task_id,'模型调用失败：'+redact(failure));reject(new Error(redact(failure)));}else resolve();});});
         child.stdin?.on('error',()=>{});child.stdin?.end(instructions+(paperBundle?'\n\n'+paperWikiSelfCheck:''));
-        try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);saveCheck(this.inspectOutputs(task,output,paths));}
+        try{await completion;}finally{clearTimeout(timer);preserveFiles(protectedFiles);if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));saveCheck(this.inspectOutputs(task,output,paths));}
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
       };
       const phase=(name:string,title:string)=>{const path=join(directory,'reading-progress.json');if(existsSync(path)){const current=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...current,phase:name,title,updated_at:new Date().toISOString()}),{mode:0o600});}};
@@ -339,7 +342,8 @@ export class KnowledgeAgent implements TaskRunner {
       };
       if(needed.length){
         this.knowledge.event(task.task_id,`文档生成：已就绪 ${preserved.length}/${paths.length} 份（已恢复合格草稿，尚未发布）`);
-        await runGeneration(prompt+`\n本次只生成或修复以下 output/ 相对路径：${needed.join('、')}。其余已合格文件禁止修改。每份必须落盘，不以最终回复替代文件。单文件硬上限1048576字节，不嵌入图片base64，不复制整篇原文。`,preserved);
+        const generationScope=paperBundle?`以下 output/ 相对路径是本次尚需完成的必需项，不是全部允许输出：${needed.join('、')}。同时按 skill 在 knowledge_base/papers/${source}/ 内生成正文引用所需的 evidence/ev-*.md，并按需增加 method/<slug>.md 和 results/<slug>.md；将新增页纳入本篇导航或依据目录，不生成其他论文文件。已恢复的合格草稿禁止修改；若其引用的目标缺失，应补齐目标。`:`本次只生成或修复以下 output/ 相对路径：${needed.join('、')}。其余已合格文件禁止修改。`;
+        await runGeneration(prompt+'\n'+generationScope+'每份必须落盘，不以最终回复替代文件。单文件硬上限1048576字节，不嵌入图片base64，不复制整篇原文。',preserved);
       }else this.knowledge.event(task.task_id,'全部目标草稿已恢复；无需再次调用模型生成');
       phase('validation','校验知识页、导航与依据锚点');
       this.knowledge.event(task.task_id,'输出校验：逐项检查 Markdown 文件、大小、格式与来源');
