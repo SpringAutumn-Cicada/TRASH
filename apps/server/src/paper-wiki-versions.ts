@@ -10,7 +10,7 @@ type Ref={path:string;hash:string};
 type FileVersion={path:string;hash:string;id:string;dependencies:Ref[];source_stamp?:string};
 type Version={id:string;at:string;reason:string;note?:string;task_id?:string;files:FileVersion[];trashed_at?:string;historical?:boolean;missing_paths?:string[];publication_count?:number;publication_id?:string};
 type Cleanup={id:string;at:string;files:FileVersion[];restored_at?:string};
-type State={version:1;versions:Version[];cleanups:Cleanup[]};
+type State={version:1;versions:Version[];cleanups:Cleanup[];historical_records?:Record<string,{trashed_at?:string;purged?:boolean}>};
 export type VersionAction='restore'|'trash'|'untrash'|'purge'|'note'|'cleanup'|'undo-cleanup';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const activeRestores=new Set<string>();
@@ -59,7 +59,7 @@ export class PaperWikiVersions{
  private currentId(state:State,live:Version){return state.versions.find(version=>!version.trashed_at&&this.fingerprint(version.files)===this.fingerprint(live.files))?.id??live.id;}
  list(){
   const state=this.readState(),live=this.virtual(),current_id=this.currentId(state,live),byPath=new Map(live.files.map(file=>[file.path,file.hash]));
-  const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!state.versions.some(saved=>saved.task_id===version.task_id))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
+  const versions=[...(current_id===live.id&&live.files.length?[live]:[]),...state.versions,...this.historical().versions.filter(version=>!state.historical_records?.[version.id]?.purged&&!state.versions.some(saved=>saved.task_id===version.task_id)).map(version=>({...version,trashed_at:state.historical_records?.[version.id]?.trashed_at}))].map(version=>({...version,files:version.files.map(({path,hash})=>({path,hash})),knowledge_count:version.files.filter(file=>!file.path.includes('/evidence/')).length,evidence_count:version.files.filter(file=>file.path.includes('/evidence/')).length,changes:[...new Set([...version.files.map(file=>file.path),...byPath.keys()])].flatMap(path=>{const previous=version.files.find(file=>file.path===path)?.hash,current=byPath.get(path);return previous===current?[]:[{path,kind:!previous?'current-only':!current?'version-only':'modified'}];})}));
   const current=new Set(live.files.map(file=>file.path));
   const old=this.docs().filter(doc=>doc.source_id===this.source&&doc.path.startsWith(this.prefix)&&!current.has(doc.path)).map(doc=>({path:doc.path,hash:doc.hash,title:doc.document_title??doc.title,blockers:this.blockers([doc.path])}));
   return {current_id,versions,historical_analysis_count:this.historical().versions.length,old_files:old,cleanups:state.cleanups.map(item=>({...item,files:item.files.map(({path,hash})=>({path,hash}))})),expected:this.expected(),busy:this.busy()};
@@ -99,7 +99,7 @@ export class PaperWikiVersions{
  private busy(){return Boolean(this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(this.project));}
  private expected(){return hash(JSON.stringify([this.readState(),this.docs().map(doc=>[doc.path,doc.hash,doc.dependencies])]));}
  private blockers(paths:string[]){const selected=new Set(paths),current=new Set(this.live().map(doc=>doc.path));const refs=this.docs().filter(doc=>!selected.has(doc.path)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>selected.has(path))).map(doc=>doc.path);const retained=this.readState().versions.filter(version=>!version.trashed_at&&version.files.some(file=>selected.has(file.path))).map(version=>'历史版本：'+version.id);return [...new Set([...paths.filter(path=>current.has(path)),...refs,...retained])];}
- private getVersion(id:string){const state=this.readState(),live=this.virtual();return id===live.id?live:state.versions.find(version=>version.id===id)??this.historical().versions.find(version=>version.id===id)??fail('版本不存在');}
+ private getVersion(id:string){const state=this.readState(),live=this.virtual();return id===live.id?live:state.versions.find(version=>version.id===id)??this.historical().versions.filter(version=>!state.historical_records?.[version.id]?.purged).map(version=>({...version,trashed_at:state.historical_records?.[version.id]?.trashed_at})).find(version=>version.id===id)??fail('版本不存在');}
  file(version_id:string,path:string){const version=this.getVersion(version_id),file=version.files.find(item=>item.path===path);if(!file){const current=this.live().find(item=>item.path===path);if(!current)fail('版本中无此文件');return {path,text:'',current_text:this.markdown.read(this.project,current.id).text,hash:current.hash};}if(version.historical&&!this.historical().texts.has(file.hash))fail('此历史文件快照缺失，无法读取；未使用当前正文替代');const text=version.id.startsWith('current-')?readFileSync(this.path(path),'utf8'):this.text(file);if(hash(text)!==file.hash)fail('文件已变化，请刷新');const current=this.live().find(item=>item.path===path);return {path,text,current_text:current?this.markdown.read(this.project,current.id).text:'',hash:file.hash};}
  preview(action:VersionAction,id?:string,paths:string[]=[]){
   const list=this.list();
@@ -109,7 +109,11 @@ export class PaperWikiVersions{
   }
   if(action==='undo-cleanup'){const item=this.readState().cleanups.find(item=>item.id===id&&!item.restored_at);if(!item)fail('清理记录不存在');return {expected:list.expected,action,id,paths:item.files.map(file=>file.path),blockers:item.files.filter(file=>existsSync(this.path(file.path))&&hash(readFileSync(this.path(file.path),'utf8'))!==file.hash).map(file=>file.path),message:'恢复旧文件；存在同名文件时拒绝覆盖。'};}
   const version=id?this.getVersion(id):undefined;
-  if(version?.historical)fail('历史发布组仅供查阅比较；旧记录未保存完整来源状态，不能直接覆盖当前Wiki');
+  if(version?.historical){
+   if(!['trash','untrash','purge'].includes(action))fail('旧记录未保存完整来源状态，不能直接恢复正文或修改备注');
+   if(action==='purge'&&!version.trashed_at)fail('请先移入回收站');
+   return {expected:list.expected,action,id,paths:version.files.map(file=>file.path),blockers:[],message:action==='purge'?'彻底移除此历史组的展示记录，不能撤销；当前Wiki、其他版本及原始发布快照保留。':action==='untrash'?'将此历史组移回版本列表，不覆盖当前Wiki。':'将此历史组移入回收站，可随时移回；当前Wiki及共享文件保留。'};
+  }
   if(!version)fail('请选择版本');
   if(['trash','purge'].includes(action)&&id===list.current_id)fail('不能删除当前版本');
   const blockers=action==='restore'?this.docs().filter(doc=>!doc.path.startsWith(this.prefix)&&[...(doc.links??[]).map(link=>link.path),...(doc.dependencies??[]).map(ref=>ref.path)].some(path=>path.startsWith(this.prefix)&&version.files.some(file=>file.path===path&&file.hash!==this.docs().find(doc=>doc.path===path)?.hash))).map(doc=>doc.path):[];
@@ -120,7 +124,13 @@ export class PaperWikiVersions{
   if(this.busy())fail('项目有活动任务，完成后可操作');
   if(input.expected!==this.expected())fail('版本或文件已变化，请刷新后重试');
   const preview=this.preview(input.action,input.id,input.paths);if(preview.blockers.length)fail('操作被有效引用或现存文件阻止：'+preview.blockers.join('、'));
-  if(input.action==='restore'){
+  if(input.id&&!['cleanup','undo-cleanup'].includes(input.action)&&this.getVersion(input.id).historical){
+   const state=this.readState(),records=state.historical_records??={};
+   if(input.action==='trash')records[input.id]={trashed_at:new Date().toISOString()};
+   if(input.action==='untrash')delete records[input.id];
+   if(input.action==='purge')records[input.id]={purged:true};
+   this.save(state);
+  }else if(input.action==='restore'){
    const version=this.getVersion(input.id!);if(version.trashed_at)fail('请先从回收站恢复该版本');
    const texts=version.files.map(file=>({file,text:version.id.startsWith('current-')?readFileSync(this.path(file.path),'utf8'):this.text(file)}));
    for(const item of texts)if(hash(item.text)!==item.file.hash)fail('快照hash不匹配');
