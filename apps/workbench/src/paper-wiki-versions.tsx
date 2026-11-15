@@ -1,0 +1,39 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {Clock3,Files,GitCompareArrows,History,LoaderCircle,RefreshCw,X} from 'lucide-react';
+import {api,uiError} from './api.js';
+import {ErrorNotice} from './error-notice.js';
+import './paper-wiki-versions.css';
+
+type VersionFile={path:string;hash:string};
+type Version={id:string;at:string;reason:string;note?:string;task_id?:string;trashed_at?:string;knowledge_count:number;evidence_count:number;files:VersionFile[];changes:{path:string;kind:string}[]};
+type VersionList={current_id:string;expected:string;busy:boolean;versions:Version[];old_files:{path:string;hash:string;title:string;blockers:string[]}[];cleanups:{id:string;at:string;restored_at?:string;files:VersionFile[]}[]};
+const date=(value:string)=>new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+const shortPath=(path:string)=>path.split('/').slice(3).join('/');
+const body=(text:string)=>text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'');
+
+export function PaperWikiVersionPanel({projectId,sourceId,onClose,onChanged,onWorking}:{projectId:string;sourceId:string;onClose:()=>void;onChanged:()=>void;onWorking:(working:boolean)=>void}){
+ const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge/paper-versions`;
+ const [data,setData]=useState<VersionList>(),[error,setError]=useState(''),[loading,setLoading]=useState(true),[tab,setTab]=useState<'versions'|'old'|'trash'>('versions');
+ const [compare,setCompare]=useState<Version>(),[file,setFile]=useState<{path:string;text:string;current_text:string}>(),[fileBusy,setFileBusy]=useState(false),[metadata,setMetadata]=useState(false),[limit,setLimit]=useState(600);
+ const panel=useRef<HTMLElement>(null),request=useRef(0);
+ const load=async()=>{setLoading(true);setError('');try{setData(await api<VersionList>(`${base}?source_id=${encodeURIComponent(sourceId)}`));}catch(cause){setError(uiError(cause,'无法读取版本记录'));}finally{setLoading(false);}};
+ useEffect(()=>{let active=true;const previous=document.activeElement as HTMLElement|null;panel.current?.querySelector<HTMLButtonElement>('button')?.focus();void api<VersionList>(`${base}?source_id=${encodeURIComponent(sourceId)}`).then(value=>{if(active)setData(value);}).catch(cause=>{if(active)setError(uiError(cause,'无法读取版本记录'));}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;request.current++;if(previous?.isConnected)previous.focus();};},[base,sourceId]);
+ const openFile=async(version:Version,path:string)=>{const generation=++request.current;setFile(undefined);setFileBusy(true);setLimit(600);try{const value=await api<{path:string;text:string;current_text:string}>(`${base}/file?source_id=${encodeURIComponent(sourceId)}&version_id=${encodeURIComponent(version.id)}&path=${encodeURIComponent(path)}`);if(generation===request.current)setFile(value);}catch(cause){if(generation===request.current)setError(uiError(cause,'无法读取版本文件'));}finally{if(generation===request.current)setFileBusy(false);}};
+ const renderLines=(text:string,other:string,kind:string)=>{const lines=(metadata?text:body(text)).split('\n'),set=new Set((metadata?other:body(other)).split('\n'));return <pre>{lines.slice(0,limit).map((line,index)=><span className={set.has(line)?'':'pv-line-'+kind} key={index}><i>{index+1}</i>{line||' '}{'\n'}</span>)}</pre>;};
+ return <><aside className="paper-version-panel" ref={panel} aria-label="Wiki版本管理" onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();if(compare){setCompare(undefined);setFile(undefined);}else onClose();}}}>
+  <div className="pv-heading"><div><small>论文 Wiki</small><h3><History size={19}/>版本管理</h3></div><button type="button" className="icon-button" aria-label="关闭版本管理" onClick={onClose}><X size={18}/></button></div>
+  <div className="pv-tabs" role="tablist" aria-label="版本分类">{([['versions','版本记录'],['old','旧文件']] as const).map(([value,label])=><button type="button" role="tab" aria-selected={tab===value} key={value} onClick={()=>{setTab(value);setCompare(undefined);setFile(undefined);}}>{label}{value==='old'&&Boolean(data?.old_files.length)&&<span>{data!.old_files.length}</span>}</button>)}<button type="button" className="icon-button" aria-label="刷新版本列表" onClick={()=>void load()}><RefreshCw size={14}/></button></div>
+  {error&&<ErrorNotice>{error}</ErrorNotice>}
+  {data?.busy&&<p className="pv-notice">项目有任务运行，可以查看和比较，任务结束后可恢复或清理。</p>}
+  <div className="pv-content">
+   {loading?<p className="pv-empty"><LoaderCircle size={18} className="spin"/> 正在读取版本…</p>:tab==='versions'?<>
+    <p className="pv-caption">按整组内容保存。版本状态不代表原文已独立核验。</p>
+    {!data?.versions.some(version=>!version.trashed_at)&&<div className="pv-empty"><Files size={26}/><p>还没有可查看的版本</p><small>成功发布后会自动记录整组 Wiki。</small></div>}
+    {data?.versions.filter(version=>!version.trashed_at).map(version=>{const current=version.id===data.current_id;return <article className={`pv-card ${current?'pv-current':''}`} key={version.id}><span className="pv-dot"/><div className="pv-card-title"><strong>{current?'当前版本':'历史版本'}</strong><time dateTime={version.at}>{date(version.at)}</time></div><p className="pv-count">{version.knowledge_count} 个知识页 <span>·</span> {version.evidence_count} 个依据</p><p className="pv-reason">{version.note||version.reason}</p><div className="pv-card-actions"><button type="button" className="pv-link" onClick={()=>{setCompare(version);setFile(undefined);}}><GitCompareArrows size={14}/>{current?'查看文件':'比较'}</button></div><details className="pv-details"><summary>版本详情</summary><dl><dt>版本标识</dt><dd>{version.id}</dd>{version.task_id&&<><dt>来源任务</dt><dd>{version.task_id}</dd></>}<dt>变化文件</dt><dd>{version.changes.length} 个（与当前组比较）</dd></dl></details></article>;})}
+   </>:tab==='old'?<div className="pv-empty"><Files size={26}/><p>{data?.old_files.length??0} 个未归属旧文件</p><small>未被当前组引用的文件单独管理，不推造历史版本。</small></div>:<div className="pv-empty"><History size={26}/><p>回收站</p></div>}
+  </div>
+  <div className="pv-bottom"><button type="button" className="pv-link" onClick={()=>{setTab(tab==='trash'?'versions':'trash');setCompare(undefined);setFile(undefined);}}><Clock3 size={14}/>{tab==='trash'?'返回版本记录':'回收站'}</button><small>当前版本保持可读</small></div>
+ </aside>
+ {compare&&<section className="pv-comparison" aria-label="版本内容比较"><div className="pv-compare-heading"><div><small>{date(compare.at)}</small><h3>{compare.id===data?.current_id?'当前文件':'与当前版本比较'}</h3></div><button type="button" className="icon-button" aria-label="关闭比较" onClick={()=>{request.current++;setCompare(undefined);setFile(undefined);setFileBusy(false);}}><X size={18}/></button></div><div className="pv-file-list">{[...new Set([...compare.files.map(item=>item.path),...(data?.versions.find(version=>version.id===data.current_id)?.files.map(item=>item.path)??[])])].map(path=>{const change=compare.changes.find(item=>item.path===path);const exists=compare.files.some(item=>item.path===path);return <button type="button" key={path} disabled={!exists} className={file?.path===path?'pv-selected':''} onClick={()=>void openFile(compare,path)}><span>{shortPath(path)}</span><small>{change?({'modified':'已修改','current-only':'仅当前版本','version-only':'仅所选版本'}[change.kind]):'未变化'}</small></button>;})}</div><div className="pv-diff-toolbar"><span>{file?shortPath(file.path):'选择文件查看正文差异'}</span><label><input type="checkbox" checked={metadata} onChange={event=>setMetadata(event.target.checked)}/>显示元数据</label></div>{fileBusy?<p className="pv-empty">正在读取文件…</p>:file?<><div className="pv-diff"><div><h4>所选版本</h4>{renderLines(file.text,file.current_text,'removed')}</div><div><h4>当前版本</h4>{renderLines(file.current_text,file.text,'added')}</div></div>{Math.max(file.text.split('\n').length,file.current_text.split('\n').length)>limit&&<button type="button" className="secondary-button" onClick={()=>setLimit(value=>value+600)}>继续显示后续内容</button>}</>:null}</section>}
+ </>;
+}
