@@ -1,11 +1,12 @@
 import {resolveKnowledgeLink} from './knowledge-links.js';
 import {markdownReferences,knowledgeDocumentId,knowledgeBasePath} from '@trash/protocol';
 import {knowledgeFiles} from './knowledge-base-migration.js';
-import {existsSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {join,posix} from 'node:path';
 
-export const paperWikiNames=['whoami.md','idcard.md','background.md','research_problem.md','contributions.md','method/method.md','results/results.md','limitations.md','insights.md','evidence.md'];
-export const paperWikiNavigation=[['题录','idcard.md'],['背景','background.md'],['研究问题','research_problem.md'],['贡献','contributions.md'],['方法','method/method.md'],['实验与结果','results/results.md'],['局限','limitations.md'],['可复用认识','insights.md'],['依据总览','evidence.md']] as const;
+const outputContract=JSON.parse(readFileSync(new URL('../../../.agents/skills/trash-literature-wiki/contract.json',import.meta.url),'utf8')) as {required_pages:string[];navigation:[string,string][]};
+export const paperWikiNames=outputContract.required_pages;
+export const paperWikiNavigation=outputContract.navigation;
 export const paperWikiPaths=(source:string)=>paperWikiNames.map(name=>`knowledge_base/papers/${source}/${name}`);
 export const paperCompatibility=(name:string)=>['basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||(name.startsWith('evidence/')&&!/^evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(name));
 export function paperWikiOutputPaths(output:string,source:string,required:string[]){
