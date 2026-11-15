@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import type {TrashStore} from '@trash/storage';
 
-export const abstractSkill=()=>readFileSync(fileURLToPath(new URL('../../../.agents/skills/trash-abstract-wiki/SKILL.md',import.meta.url)),'utf8');
+export const abstractSkill=()=>readFileSync(fileURLToPath(new URL('../../../.agents/skills/trash-abstract-literature/SKILL.md',import.meta.url)),'utf8');
 export function abstractFile(store:TrashStore,project:string,source:string,area:'materials'|'notes'|'wiki'|'history'='notes',version?:string){
   if(!/^source_[a-zA-Z0-9_-]+$/.test(source))throw new Error('SOURCE_NOT_FOUND');
   const root=join(store.root,'projects',project);

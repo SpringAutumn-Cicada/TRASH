@@ -1,7 +1,7 @@
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
 import { projectRuntime } from "./project-layout.js";
-import { MarkdownKnowledge, stageChatSkills } from "./markdown-knowledge.js";
+import { MarkdownKnowledge, stageKnowledgeSkill } from "./markdown-knowledge.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -36,14 +36,14 @@ try:
 except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
 `);
-  stageChatSkills(path);
+  stageKnowledgeSkill(path);
   const oldDraft=join(path,'knowledge-draft');if(existsSync(oldDraft)){const preserved=projectRuntime(store.root,projectId,'tasks',`preserved-chat-draft-${Date.now()}`);mkdirSync(join(preserved,'..'),{recursive:true});renameSync(oldDraft,preserved);};
   // Do not stage project-wide bodies. get creates only the requested working copy.
   writeFileSync(join(path, "PROJECT_TOOLS.md"), `# 当前论文项目工具
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
-navigation 可传 id=source_ID 获取hash匹配的轻量单篇manifest（不计为正文已读）；未生成或过期则返回实时导航。navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。evidence/get读取独立依据时附带同版本公共范围（最多16000字符）与verification声明；范围缺失、版本不同或超限时根据scope_status和scope_document另行读取，不能推定范围。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。
+navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。evidence/get读取独立依据时附带同版本公共范围（最多16000字符）与verification声明；范围缺失、版本不同或超限时根据scope_status和scope_document另行读取，不能推定范围。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。
 list 使用 kind、page、limit（最多50）分页读取索引；search 使用 kind、query 查询标题与正文，返回片段。get 使用 kind、id、offset、length（最多16000字符）按需读取正文，返回 total/next_offset 和 hash。返回不完整必须继续读取，不能声称已读全文。
 Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，先提取比较、再关联项目，不能受项目题目限制。知识主题、候选线索、待验证假设分开，先读references/wiki.md。论文题录统一使用 idcard.md，正文知识使用 Wiki 与证据页；回答报告材料范围。全项目综合必须分批覆盖所有论文知识，并记录缺失项。每次 get 在 knowledge-draft 创建该文件完整工作副本，只有实际读取部分才算已阅读。新文档先写 knowledge_version: 2；Wiki level 为 single/summary/discovery/topic/hypothesis/overview，主题文件必须明确来源。
 Wiki 必须先读取 literature-skill/SKILL.md，直接写 Markdown 到 knowledge-draft/knowledge_base/。论文入口为 papers/<source_id>/whoami.md，题录为 idcard.md，方法、结果和依据等职责页遵循 references/paper-wiki.md。全部为 kind: wiki-page，保留任务指定稳定ID和真实source_id。主题位于 topics/，假设 hypotheses/，发现 discoveries/，分批总结 summaries/，总览 overview.md。
@@ -70,19 +70,7 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
     if(!value.page)experimentError('INVALID_REQUEST',400);const page=await pdf.page(projectId,value.id,value.page,value.scale??2200);return {...page,instruction:'必须使用图像查看工具实际打开 path 才能声称看过此页图像。',citation:`/api/v1/projects/${projectId}/sources/${value.id}/pdf-view?hash=${page.hash}#page=${value.page}`};
   }
   const markdown=new MarkdownKnowledge(store);
-  if(value.operation==='navigation'){
-    if(value.id&&/^source_[A-Za-z0-9_-]+$/.test(value.id)){
-      try{
-        const file=projectRuntime(store.root,projectId,'wiki-manifests',value.id+'.json');
-        if(lstatSync(file).isSymbolicLink()||lstatSync(file).size>1024*1024)throw new Error('invalid manifest');
-        const manifest=JSON.parse(readFileSync(file,'utf8')) as {source_id:string;pages:Record<string,{path:string;hash:string}>};
-        const docs=markdown.index(projectId).documents;
-        if(manifest.source_id!==value.id||Object.values(manifest.pages).some(page=>!docs.some(doc=>doc.path===`knowledge_base/papers/${value.id}/${page.path}`&&doc.hash===page.hash)))throw new Error('stale manifest');
-        return {manifest,content_read:false,instruction:'索引不是正文或依据已读记录；按路径和ID读取实际内容'};
-      }catch{/* Derived or stale manifests are optional; use live navigation. */}
-    }
-    return markdown.navigation(projectId,{page:value.page,limit:value.limit,q:value.query});
-  }
+  if(value.operation==='navigation')return markdown.navigation(projectId,{page:value.page,limit:value.limit,q:value.query});
   if(value.operation==='relations')return markdown.relations(projectId,value.id??'');
   if(value.operation==='maintenance')return markdown.health(projectId);
   if(value.operation==='memory-log')return markdown.operations(projectId,value.page);

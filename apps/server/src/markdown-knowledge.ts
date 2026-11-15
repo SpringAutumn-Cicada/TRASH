@@ -14,25 +14,13 @@ export type MarkdownDocument={id:string;kind:'literature-card'|'wiki-page';sourc
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
-export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
-const knowledgeSkillFiles=['SKILL.md','references/paper-wiki.md','contract.json',...readdirSync(join(skillRoot,'scripts')).filter(name=>name.endsWith('.py')).sort().map(name=>'scripts/'+name)];
-export const synthesisSkillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-synthesis/',import.meta.url));
-const synthesisSkillFiles=['SKILL.md','references/wiki.md','references/research-exploration.md'];
+export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-knowledge/',import.meta.url));
+const knowledgeSkillFiles=['SKILL.md','references/wiki.md','references/paper-wiki.md','references/research-exploration.md'];
 export function skillText(){return knowledgeSkillFiles.map(name=>readFileSync(join(skillRoot,name),'utf8')).join('\n\n');}
-export function synthesisSkillText(){return synthesisSkillFiles.map(name=>readFileSync(join(synthesisSkillRoot,name),'utf8')).join('\n\n');}
 export function stageKnowledgeSkill(directory:string){
   // Remove obsolete staged rules when continuing a previously created task.
   for(const name of ['basic.md','cards.md']){const path=join(directory,'literature-skill','references',name);if(existsSync(path)){rejectSymlink(path);unlinkSync(path);}}
   for(const name of knowledgeSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(join(skillRoot,name),'utf8'),{mode:0o600});}
-}
-export function stageSynthesisSkill(directory:string){
-  for(const name of synthesisSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(join(synthesisSkillRoot,name),'utf8'),{mode:0o600});}
-}
-export function stageChatSkills(directory:string){
-  stageSynthesisSkill(directory);
-  const target=join(directory,'literature-skill','references','paper-wiki.md');
-  mkdirSync(dirname(target),{recursive:true});
-  writeFileSync(target,readFileSync(join(skillRoot,'references/paper-wiki.md'),'utf8'),{mode:0o600});
 }
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}
