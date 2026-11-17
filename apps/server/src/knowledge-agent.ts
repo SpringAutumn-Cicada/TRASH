@@ -1,6 +1,6 @@
 import {isTopicBundle,topicPaths,topicOutputPaths,topicGroupIssues,topicPrompt} from './topic-wiki.js';
 import {PaperWikiVersions} from './paper-wiki-versions.js';
-import {researchExplorationIssues} from './research-exploration-format.js';
+import {researchExplorationIssues,RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS,RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS,RESEARCH_SUMMARY_HARD_MAX_CHARACTERS} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
 import {readPaperChapters,hasReadingCheckpoint} from './chapter-reader.js';
 import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSelfCheck,paperWikiWorkFile,type PaperWikiIssue} from './paper-wiki.js';
@@ -24,7 +24,7 @@ const taskSkill=(input:KnowledgeTaskInput)=>input.research_skill?researchSkills[
 const taskPromptVersion=(input:KnowledgeTaskInput,paperBundle:boolean)=>paperBundle?15:input.abstract_mode?10:17;
 function researchPrompt(input:KnowledgeTaskInput,path:string,topicEntry?:string){
  const skill=taskSkill(input),role=input.wiki_level==='summary'?'':skill==='trash-research-map'?'research-map':skill==='trash-research-background'?'research-background':input.research_exploration==='topic-discovery'?'topic-discovery':skill==='trash-literature-synthesis'?'topic-synthesis':'',reference=skill==='trash-research-exploration'?'、literature-skill/references/research-exploration.md':skill==='trash-literature-synthesis'?'、literature-skill/references/synthesis.md':'';
- const citationRule=input.research_exploration==='summary'?'summary 使用 [S1]、[S2] 等短引用，引用定义只出现一次；完整路径、页ID、哈希和版本由后台索引保存，正文只保留影响主题判断的逐篇差异。目标约 6000–8000 字符，硬上限 10000 字符；超限时压缩重复引用定义、完整目录和重复解释，不能截断有效论证。后续精确机制、数字或争议回原始 Wiki 补读。':'原始 source_id、页 ID 和可解析相对入口按核查需要保留，关键判断就近引用，在“## 引用依据”说明实际使用来源与对应论点。';
+ const citationRule=input.research_exploration==='summary'?`summary 使用 [S1]、[S2] 等短引用，引用定义只出现一次；完整路径、页ID、哈希和版本由后台索引保存，正文只保留影响主题判断的逐篇差异。目标约 ${RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS}–${RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS} 字符，硬上限 ${RESEARCH_SUMMARY_HARD_MAX_CHARACTERS} 字符；超限时压缩重复引用定义、完整目录和重复解释，不能截断有效论证。后续精确机制、数字或争议回原始 Wiki 补读。`:'原始 source_id、页 ID 和可解析相对入口按核查需要保留，关键判断就近引用，在“## 引用依据”说明实际使用来源与对应论点。';
  return `读取 literature-skill/SKILL.md${reference} 和 input.json，使用 ${skill}，模式 ${input.research_exploration}。按对应模式结构输出，不套单篇模板。先用已提供的轻量正文与 material_index 筛选，再按需读取 output/ 中的来源工作副本；索引不代表已读。补读方法、结果或具体依据仅围绕当前判断，不固定读取全部材料。${topicEntry?topicPrompt(topicEntry,input.title):`只写 output/${path}`}，本次标题“${input.title}”，${topicEntry?'各页元数据按上述组协议填写。':`${role?`frontmatter page_role: ${role}，`:''}frontmatter knowledge_version: 2、kind: wiki-page、level: ${input.wiki_level}、id: ${knowledgeDocumentId(path)}。`}不修改来源工作副本，不读PDF、历史任务或自动联网。研究条件在 input.project.research_constraints，缺项集中说明，不猜测；不要改变已选、暂缓或排除问题。summary 模式必须有“## 何时读取”“## 覆盖方向”“## 材料范围”“## 批次标识”，批次标识填写“${input.title}”。${citationRule}未读取项列为缺口。材料缺口不等于领域空白，未补查最接近和近期工作不宣称新颖性成立。不设计完整实验或运行实验；仅方向探索可给方向性最小验证，主题综合不选择研究方向。利用本次已读材料自查，有具体疑点才补读相关片段，不全文回读、不增加审核调用或检查脚本。用户要求：${input.instructions}`;
 }
 const redact = (s: string) => s.replace(/(Bearer\s+)[\w.-]+/gi,"$1[REDACTED]").replace(/\bsk-[\w-]+\b/g,"[REDACTED]").replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi,"$1[REDACTED]");
@@ -300,7 +300,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(topicEntry||task.input.research_exploration)prompt=researchPrompt(task.input,paths[0],topicEntry);
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
 
-      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='summary')prompt+='\n中间总结只沉淀影响主题判断的内容：逐篇问题、关键机制、实质差异、成立条件及必要的分歧/反例/未知，再归纳共识。来源用 [S1]、[S2] 等短引用，引用定义只出现一次；完整路径、页ID、哈希和版本由后台索引维护。目标约 6000–8000 字符，硬上限 10000 字符；超限时压缩重复引用、目录及重复解释，不得截断有效论证。后续轮次重新压缩为最小有效记录。混合材料不得假称统一主题。';
+      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='summary')prompt+=`\n中间总结只沉淀影响主题判断的内容：逐篇问题、关键机制、实质差异、成立条件及必要的分歧/反例/未知，再归纳共识。来源用 [S1]、[S2] 等短引用，引用定义只出现一次；完整路径、页ID、哈希和版本由后台索引维护。目标约 ${RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS}–${RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS} 字符，硬上限 ${RESEARCH_SUMMARY_HARD_MAX_CHARACTERS} 字符；超限时压缩重复引用、目录及重复解释，不得截断有效论证。后续轮次重新压缩为最小有效记录。混合材料不得假称统一主题。`;
       if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='topic-discovery')prompt+='\n依据 references/synthesis.md 发现主题。必须有来源覆盖，逐篇记录主题归属或暂未纳入原因。正式新主题至少两篇实质相关来源；不充分者留候选。核对已有主题问题边界，不能只看名称。判机制补读方法，判效果补读结果，相关材料可从来源副本按需读。';
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
@@ -324,7 +324,7 @@ export class KnowledgeAgent implements TaskRunner {
       if(topicEntry||task.input.research_exploration)prompt=researchPrompt(task.input,paths[0],topicEntry);
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
 
-      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='summary')prompt+='\n中间总结只沉淀影响主题判断的内容：逐篇问题、关键机制、实质差异、成立条件及必要的分歧/反例/未知，再归纳共识。来源用 [S1]、[S2] 等短引用，引用定义只出现一次；完整路径、页ID、哈希和版本由后台索引维护。目标约 6000–8000 字符，硬上限 10000 字符；超限时压缩重复引用、目录及重复解释，不得截断有效论证。后续轮次重新压缩为最小有效记录。混合材料不得假称统一主题。';
+      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='summary')prompt+=`\n中间总结只沉淀影响主题判断的内容：逐篇问题、关键机制、实质差异、成立条件及必要的分歧/反例/未知，再归纳共识。来源用 [S1]、[S2] 等短引用，引用定义只出现一次；完整路径、页ID、哈希和版本由后台索引维护。目标约 ${RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS}–${RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS} 字符，硬上限 ${RESEARCH_SUMMARY_HARD_MAX_CHARACTERS} 字符；超限时压缩重复引用、目录及重复解释，不得截断有效论证。后续轮次重新压缩为最小有效记录。混合材料不得假称统一主题。`;
       if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='topic-discovery')prompt+='\n依据 references/synthesis.md 发现主题。必须有来源覆盖，逐篇记录主题归属或暂未纳入原因。正式新主题至少两篇实质相关来源；不充分者留候选。核对已有主题问题边界，不能只看名称。判机制补读方法，判效果补读结果，相关材料可从来源副本按需读。';
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
       if(fulltextGeneration)writeFileSync(join(directory,'input.json'),JSON.stringify({...(modelInput as Record<string,unknown>),readings:readingResults},null,2),{mode:0o600});
