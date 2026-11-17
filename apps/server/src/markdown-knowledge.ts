@@ -1,3 +1,4 @@
+import {topicGroupIssues,topicManifest} from './topic-wiki.js';
 import {paperMembership,groupPath,readPaperGroup,groupPhysical,classifyPaperFiles,taskGeneratedHashes,type GroupStatus,type PaperGroup} from './paper-wiki-groups.js';
 import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
 import {paperCompatibility,paperWikiIssues} from './paper-wiki.js';
@@ -12,7 +13,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={group_status?:GroupStatus;id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
+export type MarkdownDocument={topic_id?:string;group_status?:GroupStatus;id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409,detail?:string):never{throw Object.assign(new Error(code),{statusCode,detail});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
@@ -76,7 +77,7 @@ export class MarkdownKnowledge {
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
     const section=(heading:string)=>match[2].split(/^##\s+/m).slice(1).find(part=>part.split('\n')[0].trim()===heading)?.split('\n').slice(1).join('\n').trim();
-    return {page_role:meta.page_role,pdf_hash:meta.pdf_hash,scope_ref:meta.scope_ref,verification:meta.verification,material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:[...knowledgeLinks(path,text),...(meta.page_role==='evidence'&&meta.scope_ref&&path.split('/').at(-1)!==meta.scope_ref+'.md'?[{path:join(dirname(path),meta.scope_ref+'.md'),label:meta.scope_ref,relation:'范围关联',reason:'共同阅读范围（元数据）',evidence:false,usage:'scope' as const,source_line:0,source_section:'',source_anchor:''}]:[])],aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(markdownReferences(match[2]).text.match(/^## (?:概览|一句话认识|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    return {topic_id:meta.topic_id,page_role:meta.page_role,pdf_hash:meta.pdf_hash,scope_ref:meta.scope_ref,verification:meta.verification,material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:[...knowledgeLinks(path,text),...(meta.page_role==='evidence'&&meta.scope_ref&&path.split('/').at(-1)!==meta.scope_ref+'.md'?[{path:join(dirname(path),meta.scope_ref+'.md'),label:meta.scope_ref,relation:'范围关联',reason:'共同阅读范围（元数据）',evidence:false,usage:'scope' as const,source_line:0,source_section:'',source_anchor:''}]:[])],aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(markdownReferences(match[2]).text.match(/^## (?:概览|一句话认识|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
@@ -89,7 +90,7 @@ export class MarkdownKnowledge {
     const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
     const migrated=migrationManifest(this.root(project));
     const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
-    for(const path of scan.filter(path=>!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-group-usage-9:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    for(const path of scan.filter(path=>!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-topic-group-10:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
       if(!force&&old[path]?.signature===signature)entries[path]=old[path];
       else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
       if(entries[path].error)errors.push({path,error:entries[path].error!});
@@ -313,7 +314,7 @@ export class MarkdownKnowledge {
     this.writeBatch(project,plan.writes);this.recordOperation(project,'paper-group-migration',[],`${source}：归档${plan.group.archives.length>previousArchiveCount?plan.group.archives.at(-1)?.files.length??0:0}个已确认历史文件；不确定文件保留`);return plan.group;
   }
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
-  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={},options:{preserveSourceVersions?:boolean;skipPaperVersion?:boolean;deferPaperVersion?:boolean;taskId?:string;fullPaperSource?:string;restorePaperSource?:string}={}){
+  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={},options:{preserveSourceVersions?:boolean;skipPaperVersion?:boolean;deferPaperVersion?:boolean;taskId?:string;fullPaperSource?:string;restorePaperSource?:string;fullTopicId?:string}={}){
     this.recover(project);
     if(!files.length||files.length>128||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const manifest=migrationManifest(this.root(project));const nextPath=manifest?.paths[original.path]??knowledgePath(original.path,text.match(/^level:\s*(\S+)/m)?.[1]);const file={...original,path:manifest?nextPath:original.path,text:manifest&&nextPath!==original.path?rewriteKnowledgeText(text,original.path,nextPath,manifest.paths):text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
@@ -342,6 +343,13 @@ export class MarkdownKnowledge {
       if(!targets.some(file=>file.path===prefix+'whoami.md')||targets.some(file=>!file.path.startsWith(prefix)||file.doc.source_id!==options.fullPaperSource))fail('INVALID_PAPER_GROUP',422);
       const issues=paperWikiIssues(options.fullPaperSource,targets);if(issues.length)fail('INVALID_PAPER_GROUP: '+issues.map(issue=>issue.reason).join('；'),422);
     }
+    if(options.fullTopicId){
+      // Agent validates source scope and citations; commit independently validates group structure and live links.
+      const available=this.index(project).documents;
+      const sources=[...new Set(available.flatMap(doc=>doc.source_id?[doc.source_id]:[]))];
+      const checked=topicGroupIssues(options.fullTopicId,targets,sources,available.map(doc=>doc.path));
+      if(checked.length)fail('INVALID_TOPIC_GROUP: '+checked.map(issue=>issue.reason).join('；'),422);
+    }
     // All checks and writes are synchronous: no other server request can interleave this commit.
     const beforeDocuments=this.index(project,false,true).documents;
     const previousDependencies=new Map(beforeDocuments.map(d=>[d.path,d.dependencies??[]]));
@@ -362,6 +370,13 @@ export class MarkdownKnowledge {
       const selected=new Set([...previous.current.map(file=>file.path),...targets.filter(file=>file.doc.source_id===source).map(file=>file.path)]);
       const pending=[...selected];while(pending.length){const doc=map.get(pending.pop()!);for(const link of doc?.links??[])if(link.path.startsWith(`knowledge_base/papers/${source}/`)&&map.has(link.path)&&!selected.has(link.path)){selected.add(link.path);pending.push(link.path);}}
       groupWrites.push({path:groupPath(source),text:JSON.stringify({...previous,at:new Date().toISOString(),current:[...selected].flatMap(path=>{const doc=map.get(path);return doc?[{path,hash:doc.hash}]:[];})})});
+    }
+    if(options.fullTopicId){
+      const id=options.fullTopicId,previous=topicManifest(this.root(project),id);
+      const current=targets.map(file=>({path:file.path,hash:file.doc.hash}));
+      if(previous?.current.some(file=>!current.some(next=>next.path===file.path)))fail('TOPIC_GROUP_PAGE_REMOVED',422);
+      const manifest={version:1,topic_id:id,revision:(previous?.revision??0)+1,at:new Date().toISOString(),task_id:options.taskId,current};
+      groupWrites.push({path:`.trash/topic-groups/${id}.json`,text:JSON.stringify(manifest)},{path:`.trash/topic-group-history/${id}/${manifest.revision}.json`,text:JSON.stringify(manifest)});
     }
     const historyWrites=staged.flatMap(file=>[...(file.before===null?[]:[{path:`.trash/markdown-history/${file.doc.id}/${digest(file.before)}.md`,text:file.before}]),{path:`.trash/markdown-history/${file.doc.id}/${file.doc.hash}.md`,text:file.text}]);
     const stamps:{path:string;text:string|null}[]=[];
