@@ -89,7 +89,7 @@ export class MarkdownKnowledge {
   index(project:string,force=false,includeRetired=false){
     let cache=indexCaches.get(this.store);if(!cache){cache=new Map();indexCaches.set(this.store,cache);}
     const cached=cache.get(project);
-    const copy=(value:IndexedKnowledge)=>({documents:value.documents.filter(doc=>includeRetired||!doc.group_status||doc.group_status==='current').map(doc=>({...doc,links:doc.links?.map(link=>({...link})),dependencies:doc.dependencies?.map(ref=>({...ref})),aliases:doc.aliases?.slice()})),errors:value.errors.map(error=>({...error}))});
+    const copy=(value:IndexedKnowledge):IndexedKnowledge=>({documents:value.documents.filter(doc=>includeRetired||!doc.group_status||doc.group_status==='current').map(doc=>({...doc,links:doc.links?.map(link=>({...link})),dependencies:doc.dependencies?.map(ref=>({...ref})),aliases:doc.aliases?.slice()})),errors:value.errors.map(error=>({...error}))});
     if(!force&&cached&&cached.until>Date.now())return copy(cached.value);
     this.recover(project);
     this.store.db.exec("CREATE TABLE IF NOT EXISTS knowledge_search_v2(project TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(project,path))");
