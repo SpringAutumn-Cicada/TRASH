@@ -202,6 +202,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
     if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional()}).strict().parse(await readJson(request));if(input.topic_id&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id):exploration.cancel(projectId,explorationAction[1])});return;}
+    const rediscoverRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/rediscover$/);
+    if(rediscoverRoute&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1])});return;}
     const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
     if(pdfView&&method==='GET'){const source=store.getSource(pdfView[1]);if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}response.writeHead(302,{location:`/pdf-reader?project=${encodeURIComponent(projectId)}&source=${encodeURIComponent(pdfView[1])}&hash=${encodeURIComponent(url.searchParams.get('hash')??'')}`});response.end();return;}
     const pdfRoute=subpath.match(/^sources\/([^/]+)\/pdf(?:\/pages\/(\d+))?$/);

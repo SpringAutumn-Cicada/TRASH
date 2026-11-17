@@ -44,6 +44,16 @@ export class ResearchExploration {
   });
  }
  detail(project:string,id:string){const run=this.list(project).find(run=>run.id===id);if(!run)throw Object.assign(new Error('NOT_FOUND'),{statusCode:404});return run;}
+ rediscover(project:string,id:string){
+  const previous=this.detail(project,id);
+  if(previous.mode!=='topics')throw Object.assign(new Error('TOPIC_REDISCOVERY_ONLY'),{statusCode:422});
+  if(active(previous))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
+  if(this.list(project).some(run=>active(run)))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
+  const tasks=this.knowledge.tasks(project),outputs=[...new Set(previous.history_tasks.map(taskId=>tasks.find(task=>task.task_id===taskId)).filter(task=>task?.status==='completed'&&task.output_id&&['summary','summary-working'].includes(task.input.research_exploration??'')).map(task=>task!.output_id!))];
+  if(!outputs.length)throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
+  const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:[...previous.source_ids],created_at:at,updated_at:at,stage:'discovering',tasks:[],history_tasks:[],round:0,instructions:previous.instructions,mode:'topics',material_ids:outputs,summary_work_ids:outputs,signature:createHash('sha256').update(JSON.stringify({mode:'topics',source_ids:previous.source_ids,materials:outputs,at})).digest('hex')};
+  this.save(run);try{run.tasks=[this.enqueue(run,outputs,'topic-discovery').task_id];this.save(run);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'重新发现主题失败';this.save(run);}return run;
+ }
  candidates(project:string,id:string){
   const run=this.detail(project,id);if(run.stage!=='completed'||!run.result_id||run.question_id||run.mode&&run.mode!=='directions')return [];
   const md=new MarkdownKnowledge(this.store),doc=md.read(project,run.result_id),matches=[...doc.text.matchAll(/^## 候选方向[：:]\s*(.+)$/gm)];

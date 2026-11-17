@@ -46,6 +46,7 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const openFor=(value:ResearchMode)=>{setMode(value);setCreating(false);setFocusedId('');setDoc(undefined);setCandidates([]);setError('');setOpen(true);};
  const start=()=>run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:chosen,instructions,question_id:questionId,mode:questionId?'directions':mode,topic_ids:topicIds})});setFocusedId(data.run.id);setCreating(false);});
  const resume=(r:Run,topic?:Topic)=>run(()=>api(base+'/research-exploration/'+r.id+'/resume',{method:'POST',body:JSON.stringify({confirm:true,...(topic?{topic_id:topic.id}:{})})}));
+ const rediscover=(r:Run)=>{if(!window.confirm('复用已整理材料重新发现主题？不会重新分析论文或 PDF。'))return;void run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration/'+r.id+'/rediscover',{method:'POST',body:JSON.stringify({confirm:true})});setFocusedId(data.run.id);setCreating(false);});};
  const showResult=(r:Run,id:string,withCandidates=false)=>run(async()=>{if(['topics','comparison'].includes(r.mode??'')){setReadingId(id);return;}setDoc((await api<{document:Doc}>(base+'/markdown-knowledge/document?id='+encodeURIComponent(id))).document);setResultRun(r.id);setCandidates(withCandidates?(await api<{candidates:Candidate[]}>(base+'/research-exploration/'+r.id+'/candidates')).candidates:[]);});
  const title=questionId?'定向补证据':['topics','comparison'].includes(mode)?'主题综合':modes[mode];
  const available=sources.filter(s=>eligible.includes(s.source_id));
@@ -56,7 +57,7 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const history=matching.filter(r=>r.id!==featured?.id);
  const result=(r:Run,id:string,withCandidates=false)=>void showResult(r,id,withCandidates);
  const stop=(r:Run)=>{if(!window.confirm('停止当前任务？已完成内容和草稿会保留，可稍后继续。'))return;void run(()=>api(base+'/research-exploration/'+r.id+'/cancel',{method:'POST',body:JSON.stringify({confirm:true})}));};
- const card=(r:Run)=><ResearchRunCard run={r} projectId={projectId} busy={busy} blocked={hasActive} onResult={result} onResume={(item,topic)=>{setFocusedId(item.id);setCreating(false);void resume(item,topic);}} onStop={stop} sourceTitles={r.source_ids.map(id=>sources.find(source=>source.source_id===id)?.title??'来源已移除')}/>;
+ const card=(r:Run)=><ResearchRunCard run={r} projectId={projectId} busy={busy} blocked={hasActive} onResult={result} onResume={(item,topic)=>{setFocusedId(item.id);setCreating(false);void resume(item,topic);}} onRediscover={rediscover} onStop={stop} sourceTitles={r.source_ids.map(id=>sources.find(source=>source.source_id===id)?.title??'来源已移除')}/>;
  return <>
   {!questionId&&<><button type="button" className="secondary-button" onClick={()=>openFor('research-map')}>研究地图</button><button type="button" className="secondary-button" onClick={()=>openFor('background')}>大背景</button><button type="button" className="secondary-button" onClick={()=>openFor('topics')}>主题综合</button></>}
   <button type="button" className="secondary-button" onClick={()=>openFor('directions')}>{questionId?'定向补证据':'探索研究方向'}</button>

@@ -7,7 +7,7 @@ export const researchActive=(stage:string)=>['summarizing','generating','discove
 const stages:Record<string,string>={summarizing:'整理材料',generating:'组织研究内容',discovering:'发现主题',topics:'综合主题',partial:'本轮已结束',completed:'已完成',failed:'处理失败',interrupted:'已中断',cancelled:'已停止'};
 const statuses:Record<string,string>={running:'处理中',generating:'处理中',completed:'已完成',queued:'排队中',pending:'待展开',failed:'失败',interrupted:'已中断',cancelled:'已停止',missing:'记录缺失',candidate:'候选线索'};
 const duration=(seconds:number)=>seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分${seconds%60?` ${seconds%60} 秒`:''}`;
-export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onStop,sourceTitles}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic)=>void;onStop:(run:ResearchRun)=>void;sourceTitles:string[]}){
+export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onRediscover,onStop,sourceTitles}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic)=>void;onRediscover:(run:ResearchRun)=>void;onStop:(run:ResearchRun)=>void;sourceTitles:string[]}){
  const p=r.progress,working=researchActive(r.stage),now=Date.now();
  const last=p?.last_activity_at?Date.parse(p.last_activity_at):NaN;
  const age=Number.isFinite(last)?Math.max(0,Math.floor((now-last)/1000)):undefined;
@@ -32,6 +32,7 @@ export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,
   </div>
   <div className="research-current-buttons">
    {r.result_id&&<button type="button" className="primary-button" disabled={busy} onClick={()=>onResult(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}
+   {r.mode==='topics'&&r.stage==='completed'&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可重新发现':undefined} onClick={()=>onRediscover(r)}>重新发现主题</button>}
    {canResume&&<button type="button" className={r.result_id?'secondary-button':'primary-button'} disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可继续':undefined} onClick={()=>onResume(r)}>{r.stage==='partial'?'继续综合':'继续处理'}</button>}
    {canResume&&blocked&&<small>已有分析任务运行，完成后可继续。</small>}
    {working&&<button type="button" className="text-button research-stop-button" disabled={busy} onClick={()=>onStop(r)}>停止任务</button>}
