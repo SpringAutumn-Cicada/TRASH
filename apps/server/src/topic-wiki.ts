@@ -52,7 +52,7 @@ export function topicManifest(root:string,id:string){
 }
 
 export function topicVersions(root:string,id:string){
- if(!/^wiki-[A-Za-z0-9_-]+$/.test(id))throw new Error('INVALID_TOPIC_ID');
+ if(!/^(?:topic|wiki)-[\p{L}\p{N}_-]+$/u.test(id))throw new Error('INVALID_TOPIC_ID');
  const directory=join(root,'.trash/topic-group-history',id);
  if(!existsSync(directory))return [];
  return readdirSync(directory).filter(name=>/^\d+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(join(directory,name),'utf8')) as {revision:number;at:string;current:{path:string;hash:string}[]}).sort((a,b)=>b.revision-a.revision);

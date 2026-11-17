@@ -72,7 +72,7 @@ export class MarkdownKnowledge {
     if(!meta.id||meta.id.length>180||knowledgeDocumentId(path)!==meta.id)fail('KNOWLEDGE_FILE_INVALID',422,`id 与路径不匹配：实际 ${meta.id??'缺失'}，期望 ${knowledgeDocumentId(path)}`);
     if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
     if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422,`论文元数据要求 level: single、source_id 与路径一致；实际 level=${meta.level??'缺失'}、source_id=${meta.source_id??'缺失'}`);
-    if(meta.topic_id&&(!/^wiki-[A-Za-z0-9_-]+$/.test(meta.topic_id)||!topicPaths(meta.topic_id).includes(path)||meta.level!=='topic'||meta.source_id||meta.page_role!==(meta.id===meta.topic_id?'topic-synthesis':'topic-page')))fail('INVALID_TOPIC_METADATA',422,'主题身份、页面角色或路径不一致');
+    if(meta.topic_id&&(!/^(?:topic|wiki)-[\p{L}\p{N}_-]+$/u.test(meta.topic_id)||!topicPaths(meta.topic_id).includes(path)||meta.level!=='topic'||meta.source_id||meta.page_role!==(meta.id===meta.topic_id?'topic-synthesis':'topic-page')))fail('INVALID_TOPIC_METADATA',422,'主题身份、页面角色或路径不一致');
     if(meta.source_id&&this.store.getSource(meta.source_id)?.project_id!==project)fail('SOURCE_NOT_FOUND',404);
     if(/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(path)&&(meta.page_role!=='evidence'||!(/^(?:[a-f0-9]{64}|unknown)$/.test(meta.pdf_hash??''))))fail('EVIDENCE_METADATA_REQUIRED',422,'独立依据要求 page_role: evidence 和 pdf_hash: 64位SHA256或unknown');
     if(meta.scope_ref&&!/^ev-[a-z0-9][a-z0-9_-]*$/.test(meta.scope_ref))fail('EVIDENCE_SCOPE_INVALID',422);
