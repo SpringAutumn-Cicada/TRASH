@@ -29,7 +29,7 @@ export class ResearchExploration {
   const byId=new Map(tasks.map(task=>[task.task_id,task]));
   const latest=this.store.db.prepare('SELECT at FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1');
   return this.list(project).map(run=>{
-   const details=run.tasks.map((id,index)=>{const task=byId.get(id);return {id,title:run.topics?.find(topic=>topic.task_id===id)?.title??(task?.mode==='summary'?`第 ${index+1} 组材料`:task?.mode==='topic-discovery'?'发现主题':task?.title??'任务记录缺失'),status:task?.status??'missing',last_activity_at:(latest.get(id) as {at:string}|undefined)?.at??task?.created_at};});
+   const details=run.tasks.map((id,index)=>{const task=byId.get(id);return {id,title:run.topics?.find(topic=>topic.task_id===id)?.title??(task?.mode==='summary'?`第 ${index+1} 组材料`:task?.mode==='topic-discovery'?'发现主题':task?.title??'任务记录缺失'),status:task?.status??'missing',last_activity_at:(task?.status==='running'?(latest.get(id) as {at:string}|undefined)?.at:undefined)??task?.created_at};});
    const phase=run.stage==='summarizing'?'materials':run.stage==='discovering'?'discovery':run.stage==='completed'?'done':run.stage==='topics'||run.topics?'synthesis':details.some(task=>byId.get(task.id)?.mode==='summary')?'materials':run.mode==='topics'?'discovery':'synthesis';
    const countingTopics=['synthesis','done'].includes(phase)&&Boolean(run.topics);
    const states=countingTopics?run.topics!.filter(topic=>topic.status!=='candidate').map(topic=>topic.status):details.map(task=>task.status);
