@@ -14,7 +14,7 @@ const modeSkill=(mode:ResearchMode)=>mode==='research-map'?'map' as const:mode==
 const modeTitles:Record<ResearchMode,string>={directions:'研究方向探索：候选问题','research-map':'研究地图',comparison:'指定主题综合',background:'研究大背景',topics:'多主题综合'};
 type Topic={id:string;title:string;body:string;source_ids:string[];material_ids:string[];existing_id?:string;status:'candidate'|'pending'|'generating'|'completed'|'failed';task_id?:string;output_id?:string;error?:string};
 type WorkingSummary={origin_id:string;task_id?:string;output_id?:string};
-type Run={working_summaries?:WorkingSummary[];summary_work_ids?:string[];retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
+type Run={summary_source_ids?:string[];working_summaries?:WorkingSummary[];summary_work_ids?:string[];retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
 const active=(run:Run)=>['summarizing','generating','discovering','topics'].includes(run.stage);
 export class ResearchExploration {
  constructor(private store:TrashStore,private knowledge:KnowledgeStore,private agent:KnowledgeAgent){
@@ -63,14 +63,27 @@ export class ResearchExploration {
  }
  private scheduleWorkingSummaries(run:Run,docs:ReturnType<MarkdownKnowledge['read']>[]){
   if(++run.round>6)throw new Error('材料工作版未能在预算内收敛，请缩小论文范围');
-  run.history_tasks.push(...run.tasks);run.tasks=[];run.summary_work_ids=undefined;run.working_summaries=[];
+  run.summary_source_ids=docs.map(doc=>doc.id);run.summary_work_ids=undefined;
+  run.working_summaries=docs.map(doc=>({origin_id:doc.id,...(doc.level==='summary'&&doc.text.length>RESEARCH_SUMMARY_HARD_MAX_CHARACTERS?{}:{output_id:doc.id})}));
+  run.history_tasks.push(...run.tasks);run.tasks=[];this.save(run);
   for(const doc of docs){
    if(doc.level==='summary'&&doc.text.length>RESEARCH_SUMMARY_HARD_MAX_CHARACTERS){
-    const task=this.enqueue(run,[doc.id],'summary-working');run.tasks.push(task.task_id);run.working_summaries.push({origin_id:doc.id,task_id:task.task_id});
-   }else run.working_summaries.push({origin_id:doc.id,output_id:doc.id});
+    const task=this.enqueue(run,[doc.id],'summary-working'),item=run.working_summaries.find(entry=>entry.origin_id===doc.id);if(!item)throw new Error('材料工作版来源记录缺失');item.task_id=task.task_id;run.tasks.push(task.task_id);
+   }
    this.save(run);
   }
   run.stage='summarizing';this.save(run);
+ }
+ private latestHistoryTaskIds(run:Run,all:KnowledgeTask[]){
+  const byId=new Map(all.map(task=>[task.task_id,task]));let start=run.history_tasks.length-1;
+  while(start>=0&&!byId.get(run.history_tasks[start]))start--;
+  if(start<0)return [];
+  const mode=byId.get(run.history_tasks[start])?.input.research_exploration;if(!mode)return [];
+  const ids:string[]=[];
+  for(let index=start;index>=0;index--){
+   const task=byId.get(run.history_tasks[index]);if(task?.input.research_exploration!==mode)break;ids.unshift(task.task_id);
+  }
+  return ids;
  }
  private schedule(run:Run,ids:string[]){
   const md=new MarkdownKnowledge(this.store),docs=ids.map(id=>md.read(run.project_id,id)).sort((a,b)=>(a.source_id??a.id).localeCompare(b.source_id??b.id)||a.path.localeCompare(b.path)),groups:string[][]=[];let group:string[]=[],size=0;
@@ -201,14 +214,17 @@ export class ResearchExploration {
     const byTask=new Map(done.map(task=>[task.task_id,task]));
     const ids=run.working_summaries.map(item=>item.output_id??(item.task_id?byTask.get(item.task_id)?.output_id:undefined));
     if(ids.some(id=>!id))throw new Error('材料工作版缺少输出，请继续探索以恢复');
-    run.summary_work_ids=ids as string[];run.working_summaries=[];this.save(run);this.schedule(run,run.summary_work_ids);return;
+    run.summary_work_ids=ids as string[];run.summary_source_ids=undefined;run.working_summaries=[];this.save(run);this.schedule(run,run.summary_work_ids);return;
    }
    this.schedule(run,done.map(t=>t.output_id!));
   }catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'归纳失败';this.save(run);}
  }
  resume(project:string,id:string,topicId?:string){const run=this.detail(project,id);if(active(run)||run.stage==='completed')return run;
   if(topicId&&!run.topics?.some(t=>t.id===topicId&&['pending','failed'].includes(t.status)))throw Object.assign(new Error('TOPIC_NOT_RESUMABLE'),{statusCode:409});
-  if(run.mode==='topics'&&run.topics){try{this.scheduleTopics(run,topicId);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题恢复失败';this.save(run);}return run;}const all=this.knowledge.tasks(project);const tasks=run.tasks.map(id=>all.find(t=>t.task_id===id));if(!tasks.length){run.stage='failed';run.error='没有可恢复的任务，请重新选择论文开始探索。';this.save(run);return run;}
+  if(run.mode==='topics'&&run.topics){try{this.scheduleTopics(run,topicId);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题恢复失败';this.save(run);}return run;}const all=this.knowledge.tasks(project);
+  if(!run.tasks.length&&run.summary_source_ids?.length){const md=new MarkdownKnowledge(this.store),docs=run.summary_source_ids.map(id=>md.read(project,id));run.error=undefined;this.scheduleWorkingSummaries(run,docs);return run;}
+  if(!run.tasks.length){const recovered=this.latestHistoryTaskIds(run,all);if(recovered.length){const restored=new Set(recovered);run.tasks=recovered;run.history_tasks=run.history_tasks.filter(id=>!restored.has(id));}}
+  const tasks=run.tasks.map(id=>all.find(t=>t.task_id===id));if(!tasks.length){run.stage='failed';run.error='没有可恢复的任务，请重新选择论文开始探索。';this.save(run);return run;}
   run.stage=['summary','summary-working'].includes(tasks[0]?.input.research_exploration??'')?'summarizing':tasks[0]?.input.research_exploration==='topic-discovery'?'discovering':'generating';run.error=undefined;
   run.tasks=tasks.map(task=>{if(!task)throw new Error('TASK_NOT_FOUND');return task.status==='completed'?task.task_id:this.agent.enqueue(project,{...task.input,regenerate:true},task.task_id)[0].task_id;});this.save(run);this.advance(run);return run;
  }
