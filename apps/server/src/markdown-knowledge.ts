@@ -14,7 +14,7 @@ import type { TrashStore } from '@trash/storage';
 
 export type MarkdownDocument={group_status?:GroupStatus;id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
-function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
+function fail(code:string,statusCode=409,detail?:string):never{throw Object.assign(new Error(code),{statusCode,detail});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
 export type KnowledgeSkill='trash-literature-wiki'|'trash-literature-synthesis'|'trash-research-exploration'|'trash-research-map'|'trash-research-background';
@@ -58,20 +58,21 @@ export class MarkdownKnowledge {
   }
   private internal(project:string,path:string){const root=this.root(project);let current=root;for(const part of path.split('/')){current=join(current,part);rejectSymlink(current);}return current;}
   parse(project:string,path:string,text:string):MarkdownDocument{
-    if(Buffer.byteLength(text)>1024*1024||text.includes('\0'))fail('KNOWLEDGE_FILE_INVALID',422);
+    if(Buffer.byteLength(text)>1024*1024||text.includes('\0'))fail('KNOWLEDGE_FILE_INVALID',422,'文件超过1MB或包含空字符');
     const references=markdownReferences(text);if(references.unresolved.length)fail('KNOWLEDGE_REFERENCE_UNDEFINED',422);
-    const match=text.replace(/\r\n/g,'\n').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);if(!match)fail('KNOWLEDGE_FILE_INVALID',422);
-    const meta:Record<string,string>={};for(const line of match[1].split('\n')){const m=line.match(/^([a-z_]+):\s*([A-Za-z0-9_-]+)\s*$/);if(m){if(meta[m[1]])fail('KNOWLEDGE_FILE_INVALID',422);meta[m[1]]=m[2];}}
+    const match=text.replace(/\r\n/g,'\n').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);if(!match)fail('KNOWLEDGE_FILE_INVALID',422,'元数据必须从文件首行 --- 开始，并以独立的 --- 行结束');
+    const meta:Record<string,string>={};for(const line of match[1].split('\n')){const m=line.match(/^([a-z_]+):\s*([A-Za-z0-9_-]+)\s*$/);if(m){if(meta[m[1]])fail('KNOWLEDGE_FILE_INVALID',422,'元数据字段重复：'+m[1]);meta[m[1]]=m[2];}}
     const kind=meta.kind==='wiki-page'?'wiki-page':'literature-card';
-    if(kind==='literature-card'||(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1]?.split('/').slice(1).join('/')??'')))fail('LEGACY_CARD_REMOVED',410);
-    if(meta.kind!==kind||!meta.id||meta.id.length>180||knowledgeDocumentId(path)!==meta.id)fail('KNOWLEDGE_FILE_INVALID',422);
+    if(kind==='literature-card'||(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1]?.split('/').slice(1).join('/')??'')))fail('LEGACY_CARD_REMOVED',410,'仅接受新版 wiki-page 元数据及允许的知识页路径');
+    if(meta.kind!==kind)fail('KNOWLEDGE_FILE_INVALID',422,'kind 必须为 wiki-page');
+    if(!meta.id||meta.id.length>180||knowledgeDocumentId(path)!==meta.id)fail('KNOWLEDGE_FILE_INVALID',422,`id 与路径不匹配：实际 ${meta.id??'缺失'}，期望 ${knowledgeDocumentId(path)}`);
     if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
-    if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422);
+    if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422,`论文元数据要求 level: single、source_id 与路径一致；实际 level=${meta.level??'缺失'}、source_id=${meta.source_id??'缺失'}`);
     if(meta.source_id&&this.store.getSource(meta.source_id)?.project_id!==project)fail('SOURCE_NOT_FOUND',404);
-    if(/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(path)&&(meta.page_role!=='evidence'||!(/^(?:[a-f0-9]{64}|unknown)$/.test(meta.pdf_hash??''))))fail('EVIDENCE_METADATA_REQUIRED',422);
+    if(/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(path)&&(meta.page_role!=='evidence'||!(/^(?:[a-f0-9]{64}|unknown)$/.test(meta.pdf_hash??''))))fail('EVIDENCE_METADATA_REQUIRED',422,'独立依据要求 page_role: evidence 和 pdf_hash: 64位SHA256或unknown');
     if(meta.scope_ref&&!/^ev-[a-z0-9][a-z0-9_-]*$/.test(meta.scope_ref))fail('EVIDENCE_SCOPE_INVALID',422);
     if(meta.verification&&!['unknown','not-reverified','verified'].includes(meta.verification))fail('EVIDENCE_VERIFICATION_INVALID',422);
-    const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
+    const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422,'正文缺少一级标题：需要独立一行 # 标题（总览使用 # 论文全名）');
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
     const section=(heading:string)=>match[2].split(/^##\s+/m).slice(1).find(part=>part.split('\n')[0].trim()===heading)?.split('\n').slice(1).join('\n').trim();

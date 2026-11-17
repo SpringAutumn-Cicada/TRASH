@@ -2,9 +2,9 @@ import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {researchExplorationIssues} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
 import {readPaperChapters,hasReadingCheckpoint} from './chapter-reader.js';
-import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSelfCheck,type PaperWikiIssue} from './paper-wiki.js';
+import {paperWikiPaths,paperWikiOutputPaths,paperWikiPrompt,paperWikiIssues,paperCompatibility,paperWikiSelfCheck,paperWikiWorkFile,type PaperWikiIssue} from './paper-wiki.js';
 import {knowledgePath,knowledgeDocumentId} from '@trash/protocol';
-import {migrationManifest,migrationPreview,migrateKnowledgeBase} from './knowledge-base-migration.js';
+import {knowledgeFiles,migrationManifest,migrationPreview,migrateKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractSkill,abstractText,publishAbstract,publishAbstractWiki} from './abstract-library.js';
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
@@ -233,7 +233,7 @@ export class KnowledgeAgent implements TaskRunner {
           }
           if((task.input.kind==='literature-card'||task.input.include_source_wiki||task.input.wiki_level==='single')&&doc.source_id!==task.input.source_ids[0])throw new Error('来源与指定论文不一致');
           if(!/^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??''))throw new Error('缺少 knowledge_version: 2');
-        }catch(error){issues.push({path,reason:`格式或必要字段不合格：${error instanceof Error?error.message:'未知格式错误'}`,unsafe:false});continue;}
+        }catch(error){issues.push({path,reason:`格式或必要字段不合格：${error instanceof Error?((error as Error & {detail?:string}).detail??error.message):'未知格式错误'}`,unsafe:false});continue;}
         valid.push({path,text,hash:createHash('sha256').update(text).digest('hex')});
       }catch{issues.push({path,reason:'无法读取输出文件',unsafe:true});}
     }
@@ -314,8 +314,11 @@ export class KnowledgeAgent implements TaskRunner {
       if(fulltextGeneration)this.knowledge.event(task.task_id,task.attempt_of?'文档生成：继续本次失败链，仅恢复版本与规则匹配的合格草稿':'文档生成：重新分析从空输出开始，历史Wiki不作为输入；PDF笔记独立核验复用');
       if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
       let repairIssues:PaperWikiIssue[]=[];
+      const ignoredWorkFiles=new Set<string>();
+      const workFiles=()=>paperBundle?knowledgeFiles(output,`knowledge_base/papers/${source}`).filter(paperWikiWorkFile):[];
       const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
-        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:1,valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues,repair_issues:repairIssues},null,2),{mode:0o600});
+        for(const path of workFiles())if(!ignoredWorkFiles.has(path)){ignoredWorkFiles.add(path);this.knowledge.event(task.task_id,`发布收集：忽略工作文件 ${path}，文件保留、不发布`);}
+        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:2,ignored:workFiles().map(path=>({path,reason:'任务规划文件，保留在工作副本，不参与发布'})),navigation_deferred:paperBundle&&result.issues.some(issue=>issue.path===`knowledge_base/papers/${source}/whoami.md`),valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues,repair_issues:repairIssues},null,2),{mode:0o600});
       };
       const runGeneration=async (instructions:string, protectedFiles:{path:string;text:string}[])=>{
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
