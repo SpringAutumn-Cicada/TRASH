@@ -32,8 +32,8 @@
 [data-wiki-anchor]{scroll-margin-top:18px}
 
 /* Topic groups share the Wiki reader and active theme tokens. */
-.topic-wiki-navigation{display:flex;flex-wrap:wrap;gap:6px;padding:12px 24px;border-bottom:1px solid var(--border-color,#ded9e7)}
-.topic-wiki-navigation button{padding:7px 12px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text-secondary,#716a80);cursor:pointer}
-.topic-wiki-navigation button:hover,.topic-wiki-navigation button.selected{background:var(--primary-light,#f0ebf8);color:var(--primary-color,#7552b8);border-color:var(--border-color,#ded9e7)}
+.topic-wiki-navigation{display:flex;flex-wrap:wrap;gap:6px;padding:12px 24px;border-bottom:1px solid var(--line)}
+.topic-wiki-navigation button{padding:7px 12px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer}
+.topic-wiki-navigation button:hover,.topic-wiki-navigation button.selected{background:color-mix(in srgb,var(--accent-bright) 10%,var(--surface));color:var(--accent);border-color:var(--line)}
 .topic-wiki-navigation button:disabled{opacity:.5;cursor:default}
-.topic-wiki-versions{max-height:180px;overflow:auto;padding:8px 24px;font-size:13px;border-bottom:1px solid var(--border-color,#ded9e7)}
+.topic-wiki-versions{max-height:180px;overflow:auto;padding:8px 24px;font-size:13px;border-bottom:1px solid var(--line)}

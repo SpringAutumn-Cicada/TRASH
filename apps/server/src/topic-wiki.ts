@@ -11,7 +11,7 @@ export const topicPaths=(id:string)=>[`knowledge_base/topics/${id}.md`,...topicR
 export function topicOutputPaths(output:string,id:string,required:string[]){
  const allowed=topicPaths(id),prefix=`knowledge_base/topics/${id}--`;
  const found=knowledgeFiles(output,'knowledge_base/topics').filter(path=>path===allowed[0]||path.startsWith(prefix));
- return [...new Set([allowed[0],...required,...found])];
+ return [...new Set([allowed[0],...required.filter(path=>allowed.includes(path)),...found])];
 }
 export function topicGroupIssues(id:string,files:{path:string;text:string}[],sources:string[],available:string[],invalid:string[]=[]):PaperWikiIssue[]{
  const allowed=topicPaths(id),root=allowed[0],issues:PaperWikiIssue[]=[];
