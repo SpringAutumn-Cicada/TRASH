@@ -418,6 +418,7 @@ export class MarkdownKnowledge {
     return staged.map(f=>f.doc);
   }
   history(project:string,id:string){if(!/^[A-Za-z0-9_-]+$/.test(id))fail('INVALID_REQUEST',400);const dir=this.internal(project,`.trash/markdown-history/${id}`);return existsSync(dir)?readdirSync(dir).filter(n=>/^[a-f0-9]{64}\.md$/.test(n)).map(n=>({hash:n.slice(0,-3),text:readFileSync(join(dir,n),'utf8')})):[];}
+  recycleDocument(project:string,id:string,expected:string){const doc=this.read(project,id);if(doc.hash!==expected)fail('VERSION_CONFLICT');if(doc.level==='overview'||doc.source_id||doc.path.endsWith('/index.md'))fail('KNOWLEDGE_DOCUMENT_DELETE_BLOCKED',409);const target=this.locate(project,doc.path);rejectSymlink(target);const backup=this.internal(project,`.trash/knowledge-recycle/${id}/${doc.hash}.md`);mkdirSync(dirname(backup),{recursive:true});renameSync(target,backup);for(const file of [this.internal(project,`.trash/markdown-dependencies/${id}.json`),this.internal(project,`.trash/knowledge-sources/${id}.json`)])if(existsSync(file))unlinkSync(file);this.invalidate(project);this.recordOperation(project,'回收知识条目',[{id,path:doc.path,hash:doc.hash}],'条目从知识库目录移入回收站，可通过维护记录追溯。');return {deleted:true,id,path:doc.path};}
 }
 
 /** Adapter for workflow counters and dependency selection; Markdown remains the source. */

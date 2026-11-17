@@ -36,6 +36,7 @@
 .library-document-backdrop{padding:28px;z-index:150}
 .library-document-dialog{width:min(960px,100%);max-height:calc(100dvh - 56px);display:flex;flex-direction:column;background:var(--surface,#fff);border:1px solid var(--border,#dce5ef);border-radius:14px;box-shadow:0 24px 80px #10233c26;overflow:hidden}
 .library-document-dialog>header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:22px 26px 16px}
+.library-document-header-actions{display:flex;align-items:center;gap:5px}.library-document-delete{color:#a43d49}.library-document-delete:hover:not(:disabled){background:#fff4f5;color:#a43d49}
 .library-document-dialog>header small{color:#64748b;font-size:11px}
 .library-document-dialog h3{margin:6px 0 0;font-size:17px;line-height:1.5}
 .library-document-tabs{display:flex;gap:6px;padding:0 26px 14px;border-bottom:1px solid var(--border,#dce5ef)}
