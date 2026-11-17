@@ -318,7 +318,7 @@ export class KnowledgeAgent implements TaskRunner {
       const workFiles=()=>paperBundle?knowledgeFiles(output,`knowledge_base/papers/${source}`).filter(paperWikiWorkFile):[];
       const saveCheck=(result:ReturnType<KnowledgeAgent['inspectOutputs']>)=>{
         for(const path of workFiles())if(!ignoredWorkFiles.has(path)){ignoredWorkFiles.add(path);this.knowledge.event(task.task_id,`发布收集：忽略工作文件 ${path}，文件保留、不发布`);}
-        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:2,ignored:workFiles().map(path=>({path,reason:'任务规划文件，保留在工作副本，不参与发布'})),navigation_deferred:paperBundle&&result.issues.some(issue=>issue.path===`knowledge_base/papers/${source}/whoami.md`),valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues,repair_issues:repairIssues},null,2),{mode:0o600});
+        writeFileSync(join(directory,'output-check.json'),JSON.stringify({version:2,ignored:workFiles().map(path=>({path,reason:'任务规划文件，保留在工作副本，不参与发布'})),navigation_deferred:paperBundle&&result.issues.some(issue=>issue.path===`knowledge_base/papers/${source}/whoami.md`),valid:result.valid.map(({path,hash})=>({path,hash})),issues:result.issues,repair_issues:repairIssues,resolved_issues:repairIssues.filter(issue=>!result.issues.some(current=>current.path===issue.path&&current.reason===issue.reason))},null,2),{mode:0o600});
       };
       const runGeneration=async (instructions:string, protectedFiles:{path:string;text:string}[])=>{
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
@@ -370,14 +370,17 @@ export class KnowledgeAgent implements TaskRunner {
         const grouped=new Map<string,Set<string>>();
         for(const issue of issues){const files=grouped.get(issue.reason)??new Set<string>();files.add(issue.path);grouped.set(issue.reason,files);}
         const summary=[...grouped].map(([reason,files])=>`${reason}（${[...files].join('、')}）`).join('；');
-        this.knowledge.event(task.task_id,`自动补救（1/1）：${summary}。详细位置见 output-check.json`);
+        this.knowledge.event(task.task_id,`自动补救（1/1）：${summary}。仅定向修复 ${repairPaths.size} 个文件，保留有效正文；详细位置见 output-check.json`);
         const repairScope=paperBundle?`本轮补救范围优先于初次生成要求：只修改或补写以下 output/ 相对路径：${[...repairPaths].join('、')}。允许创建清单中被引用但缺失的本篇依据或子页；其必要的本篇引用目标也可补齐，遵守原有路径和数量限制。除已列出的依据目录外，其余合格文件禁止修改；仅为必要引用同步目录，不整组重写。`:`只修复以下文件：${JSON.stringify(issues)}。已有合格文件禁止修改。`;
-        await runGeneration(prompt+'\n这是唯一一次输出补救。'+repairScope+`具体问题：${JSON.stringify(issues)}。缺失的补写，字段错误的修正，超限的压缩冗余并保留关键证据，不截断正文，不嵌入base64。不重新阅读PDF，使用已有材料或 readings/ 笔记。只核对修复内容与必要关联，不回读全部目标、来源或已保护草稿。`,good);
+        const repairContext=paperBundle?`读取 literature-skill/SKILL.md、literature-skill/references/paper-wiki.md 和 input.json 中的路径、元数据要求。仅修复 source_id=${source} 的现有工作副本，当前是修复模式，不执行初次生成流程，不创建规划文件或其他任务。` : prompt;
+        writeFileSync(join(directory,'repair-prompt.txt'),repairContext+'\n'+repairScope+'\n'+JSON.stringify(issues),{mode:0o600});
+        await runGeneration(repairContext+'\n这是唯一一次输出补救。'+repairScope+`具体问题：${JSON.stringify(issues)}。优先修复明确根因：格式错误仅调整元数据、标题或链接，保留有效正文，不重新分析全文；不得删除有效页面、必要引用或关键论断来绕过校验。依据缺失只使用已读材料补齐，不编造数字、出处或核验状态；材料不足时如实记录缺口。缺失的补写，字段错误的修正，超限的压缩冗余并保留关键证据，不截断正文，不嵌入base64。不重新阅读PDF，使用已有材料或 readings/ 笔记。只核对修复内容与必要关联，不回读全部目标、来源或已保护草稿。`,good);
         if(paperBundle)paths.splice(0,paths.length,...paperWikiOutputPaths(output,source,paths));
         checked=this.inspectOutputs(task,output,paths);if(paperBundle)checked.issues.push(...paperWikiIssues(source,checked.valid,checked.issues.map(item=>item.path)));saveCheck(checked);
       this.knowledge.event(task.task_id,`文档生成：已就绪 ${checked.valid.filter(file=>!checked.issues.some(issue=>issue.path===file.path)).length}/${paths.length} 份（校验合格，尚未发布）`);
       }
-      if(checked.issues.length)throw new Error('Markdown 输出校验失败；已保留工作副本：'+checked.issues.map(item=>`${item.path}：${item.reason}`).join('；'));
+      if(repairIssues.length)this.knowledge.event(task.task_id,`补救结果：初次 ${repairIssues.length} 项，当前剩余 ${checked.issues.length} 项；修改范围及已解决项见 output-check.json，工作副本 ${directory}；尚未发布`);
+      if(checked.issues.length)throw new Error('Markdown 输出校验失败；剩余根因及工作副本见 '+join(directory,'output-check.json')+'：'+checked.issues.map(item=>`${item.path}：${item.reason}`).join('；'));
       const commits=checked.valid.map(({path,text})=>{
         const before=snapshot.documents?.find(doc=>doc.path===path);
         return {path,text,expected:snapshot.expectedTargets?.[path]??before?.hash??null};
