@@ -35,6 +35,7 @@ export function topicGroupIssues(id:string,files:{path:string;text:string}[],sou
    if(source&&!sources.includes(source))issue(file.path,'引用论文不属于本次主题范围：'+source);
   }
   if(!links.some(l=>l.evidence&&sources.some(source=>l.path.startsWith(`knowledge_base/papers/${source}/`))))issue(file.path,'引用依据需链接实际使用的原始论文 Wiki 或独立依据，不能只有分组总结');
+  if(file.path===root&&!links.some(l=>l.path.match(/^knowledge_base\/papers\/(source_[^/]+)\/whoami\.md$/)))issue(file.path,'主题入口必须包含“关联论文”，并链接至少一篇论文 whoami.md');
  }
  if(files.some(f=>f.path===root)&&!invalid.includes(root)){
   const reached=new Set([root]);let changed=true;while(changed){changed=false;for(const path of [...reached])for(const target of graph.get(path)??[])if(paths.has(target)&&!reached.has(target)){reached.add(target);changed=true;}}
@@ -43,7 +44,7 @@ export function topicGroupIssues(id:string,files:{path:string;text:string}[],sou
  return issues;
 }
 export function topicPrompt(id:string,title:string){
- return `本次生成一个主题 Wiki 组“${title}”。此组协议优先于单文件路径提示。入口 ${topicPaths(id)[0]} 为必需，按独立价值可增加 ${topicPaths(id).slice(1).join('、')}，不得生成其他路径。各页 id=文件名去.md，topic_id: ${id}，level: topic，kind: wiki-page，knowledge_version: 2；入口 page_role: topic-synthesis，子页 page_role: topic-page，不写 source_id。严格使用 literature-skill/references/synthesis.md 的主题组栏目。入口链接全部子页，子页链接入口；已有子页、人工内容和未覆盖认识必须保留，不删除有效内容规避检查。背景、可复用认识分点；判断机制补读方法、效果补读结果、争议及精确数字补读独立依据。引用依据必须链接实际原始论文，索引不算已读。只生成本主题，不触发地图、背景或方向任务。不读 PDF 或自动联网。`;
+ return `本次生成一个主题 Wiki 组“${title}”。此组协议优先于单文件路径提示。入口 ${topicPaths(id)[0]} 为必需，按独立价值可增加 ${topicPaths(id).slice(1).join('、')}，不得生成其他路径。各页 id=文件名去.md，topic_id: ${id}，level: topic，kind: wiki-page，knowledge_version: 2；入口 page_role: topic-synthesis，子页 page_role: topic-page，不写 source_id。严格使用 literature-skill/references/synthesis.md 的主题组栏目。入口链接全部子页，子页链接入口；已有子页、人工内容和未覆盖认识必须保留，不删除有效内容规避检查。入口必须包含“## 关联论文”，把实际参与本主题的论文逐项链接到 knowledge_base/papers/<source_id>/whoami.md，并说明各论文贡献；不得只写 source_id、论文标题或分组总结。必要时增加“## 关联主题”，只链接真实存在的其他主题 Wiki。背景、可复用认识分点；判断机制补读方法、效果补读结果、争议及精确数字补读独立依据。引用依据必须链接实际原始论文，索引不算已读。只生成本主题，不触发地图、背景或方向任务。不读 PDF 或自动联网。`;
 }
 export function topicManifest(root:string,id:string){
  const file=join(root,'.trash/topic-groups',id+'.json');
