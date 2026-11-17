@@ -67,21 +67,19 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const completedAnalysis=useRef('');
   useEffect(()=>{
     let active=true,loadingStatus=false;
-    type KnowledgeSummary={source_id?:string;kind:string;card_type?:string;stale?:boolean};
+    const controller=new AbortController();
     const load=async()=>{
-      if(loadingStatus)return;loadingStatus=true;
+      if(!active||loadingStatus||document.hidden)return;loadingStatus=true;
       try{
         const base=`/projects/${encodeURIComponent(projectId)}`;
-        const [result,first]=await Promise.all([api<SourceAnalysisState[]>(`${base}/source-analyses`),api<{documents:KnowledgeSummary[];total:number}>(`${base}/markdown-knowledge?limit=100&page=1`)]);
-        const documents=[...first.documents];
-        for(let page=2;documents.length<first.total;page++){const next=await api<{documents:KnowledgeSummary[]}>(`${base}/markdown-knowledge?limit=100&page=${page}`);if(!next.documents.length)break;documents.push(...next.documents);}
+        const result=await api<SourceAnalysisState[]>(`${base}/source-analyses`,{signal:controller.signal});
         const completion=result.filter(item=>item.status==='completed').map(item=>item.task_id).sort().join(',');
-        if(active&&completion!==completedAnalysis.current){completedAnalysis.current=completion;const updated=await api<ProjectDetail>(`${base}`);if(active)setDetail(updated);}
-        if(active)setAnalyses(result.map(item=>{const docs=documents.filter(d=>d.source_id===item.source_id);return {...item,hasKey:docs.some(d=>d.card_type==='key'),hasDetail:docs.some(d=>d.card_type==='detail'),hasCards:['detail','key'].every(type=>docs.some(d=>d.card_type===type)),hasWiki:item.hasWiki??docs.some(d=>d.kind==='wiki-page'),stale:item.stale??docs.some(d=>d.stale)};}));
+        if(active&&completion!==completedAnalysis.current){completedAnalysis.current=completion;const updated=await api<ProjectDetail>(`${base}`,{signal:controller.signal});if(active)setDetail(updated);}
+        if(active)setAnalyses(result);
       }catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}
       finally{loadingStatus=false;}
     };
-    void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer);};
+    void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;controller.abort();clearInterval(timer);};
   },[projectId]);
   const analyzeSource=async(source:Source,confirmed=false)=>{
     if(submissionLock.current.has(source.source_id))return;

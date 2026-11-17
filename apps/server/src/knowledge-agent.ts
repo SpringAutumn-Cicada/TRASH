@@ -130,6 +130,17 @@ export class KnowledgeAgent implements TaskRunner {
     }
     return includeHistoricalReadings?result.sort((a,b)=>b.created_at.localeCompare(a.created_at)):result;
   }
+  private resumeHints=new Map<string,{until:number;status:string;value:boolean}>();
+  /** UI availability hint only; actual resume validates provenance and hashes before reuse. */
+  resumeHint(task:KnowledgeTask):boolean {
+    if(!['failed','interrupted','cancelled'].includes(task.status))return false;
+    const cached=this.resumeHints.get(task.task_id);if(cached&&cached.status===task.status&&cached.until>Date.now())return cached.value;
+    const base=projectRuntime(this.store.root,task.project_id,'tasks',task.task_id);
+    let value=false;
+    try{const check=JSON.parse(readFileSync(join(base,'output-check.json'),'utf8')) as {valid?:{path:string;hash:string}[]};const docs=(task.snapshot as {documents?:{path:string;hash:string}[]}).documents??[];value=Boolean(check.valid?.some(file=>!docs.some(doc=>doc.path===file.path&&doc.hash===file.hash)));}catch{/* No saved valid draft. */}
+    if(!value&&/^source_[A-Za-z0-9_-]+$/.test(task.input.source_ids[0]??''))try{const state=JSON.parse(readFileSync(join(base,'readings',task.input.source_ids[0],'state.json'),'utf8')) as {version?:number;batches?:unknown[]};value=state.version===1&&Boolean(state.batches?.length);}catch{/* No saved reading checkpoint. */}
+    if(this.resumeHints.size>1000)this.resumeHints.clear();this.resumeHints.set(task.task_id,{until:Date.now()+10000,status:task.status,value});return value;
+  }
   resumable(task:KnowledgeTask):boolean {
     if(!['failed','interrupted','cancelled'].includes(task.status))return false;
     const candidate={...task,attempt_of:task.task_id,snapshot:{...(task.snapshot as Record<string,unknown>),skill_hash:createHash('sha256').update(skillText(taskSkill(task.input))).digest('hex')}};
