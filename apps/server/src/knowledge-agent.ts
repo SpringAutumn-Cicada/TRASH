@@ -270,6 +270,7 @@ export class KnowledgeAgent implements TaskRunner {
         reading_rule_version:(task.snapshot as {reading_rule_version?:number}).reading_rule_version,
         input_version:2
       }:snapshot.reference_documents?.length?{...(task.snapshot as object),reference_documents:undefined,material_index:(snapshot.reference_documents??[]).map(({id,path,title,source_id,stale})=>({id,path,title,source_id,stale}))}:task.snapshot;
+      if(taskSkill(task.input)==='trash-literature-synthesis')Object.assign(modelInput,{source_scope:task.input.source_ids,material_versions:(snapshot.dependencies??[]).map(({path,hash})=>({path,hash})),coverage_note:'source_scope 是本次选择范围，索引不代表已读；summary 保留逐篇差异和原始引用'});
       if(topicEntry)Object.assign(modelInput,{topic_group:{entry_id:topicEntry,allowed:topicPaths(topicEntry),required:paths},outputs:paths.map(path=>({path,id:knowledgeDocumentId(path)}))});
       writeFileSync(join(directory,'input.json'),JSON.stringify(modelInput,null,2),{mode:0o600});
       const output=join(directory,'output');mkdirSync(output,{recursive:true});
@@ -283,6 +284,8 @@ export class KnowledgeAgent implements TaskRunner {
       if(task.input.research_exploration)prompt=researchPrompt(task.input,paths[0]);
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
       if(topicEntry)prompt+='\n'+topicPrompt(topicEntry,task.input.title);
+      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='summary')prompt+='\n按逐篇记录保留 source_id、页ID/路径、问题、机制、监督/评价条件、差异、未知与原始引用；再归纳共识，不只保留分组共同点。混合材料不得假称统一主题。后续轮次保留原始记录与出处，不让下层总结成为唯一证据。';
+      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='topic-discovery')prompt+='\n依据 references/synthesis.md 发现主题。必须有来源覆盖，逐篇记录主题归属或暂未纳入原因。正式新主题至少两篇实质相关来源；不充分者留候选。核对已有主题问题边界，不能只看名称。判机制补读方法，判效果补读结果，相关材料可从来源副本按需读。';
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
       writeFileSync(join(directory,'prompt.txt'),prompt);
       const cliVersion = await new Promise<string>((resolve,reject)=>execFile(this.cli.command,[...this.cli.prefix,"--version"],{timeout:10000,maxBuffer:65536},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
@@ -305,6 +308,8 @@ export class KnowledgeAgent implements TaskRunner {
       if(task.input.research_exploration)prompt=researchPrompt(task.input,paths[0]);
       if(paperBundle)prompt=paperWikiPrompt(source,!task.input.include_source_wiki)+task.input.instructions;
       if(topicEntry)prompt+='\n'+topicPrompt(topicEntry,task.input.title);
+      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='summary')prompt+='\n按逐篇记录保留 source_id、页ID/路径、问题、机制、监督/评价条件、差异、未知与原始引用；再归纳共识，不只保留分组共同点。混合材料不得假称统一主题。后续轮次保留原始记录与出处，不让下层总结成为唯一证据。';
+      if(taskSkill(task.input)==='trash-literature-synthesis'&&task.input.research_exploration==='topic-discovery')prompt+='\n依据 references/synthesis.md 发现主题。必须有来源覆盖，逐篇记录主题归属或暂未纳入原因。正式新主题至少两篇实质相关来源；不充分者留候选。核对已有主题问题边界，不能只看名称。判机制补读方法，判效果补读结果，相关材料可从来源副本按需读。';
       if(fulltextGeneration)prompt+='\n本次从论文原始材料与批次笔记重新生成，不读取或沿用历史Wiki。已有版本由后台保留，当前任务期间的版本冲突由发布校验处理。';
       if(fulltextGeneration)writeFileSync(join(directory,'input.json'),JSON.stringify({...(modelInput as Record<string,unknown>),readings:readingResults},null,2),{mode:0o600});
       if(readingResults.length)prompt+='\n先完整读取本次全部固定四页批次笔记：'+JSON.stringify(readingResults)+'。在本次生成中综合全文，统一术语、实验条件和跨批次依据，再直接生成Wiki组；不单独生成paper-understanding.md，不额外调用整篇汇总。不要只读压缩摘要丢掉机制、数字或条件。依据页使用这些真实原文定位。已生成笔记不代表全部图表已核验。';

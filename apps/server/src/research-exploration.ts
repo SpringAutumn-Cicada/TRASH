@@ -38,10 +38,10 @@ export class ResearchExploration {
  private enqueue(run:Run,ids:string[],mode:'summary'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic'){
   const docs=new MarkdownKnowledge(this.store).index(run.project_id).documents;
   const groupSources=mode==='summary'?[...new Set(docs.filter(d=>ids.includes(d.id)).flatMap(d=>[...(d.source_id?[d.source_id]:[]),...(d.dependencies??[]).flatMap(ref=>ref.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[])]))].filter(id=>run.source_ids.includes(id)):run.source_ids;
-  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>mode==='summary'||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'?modeTitles[run.mode??'directions']+'：材料分组':mode==='evidence-plan'?'研究问题：补证据计划':mode==='topic-discovery'?'文献主题发现清单':mode==='topic'?'主题综合':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:''),wiki_level:mode==='summary'?'summary':['directions','evidence-plan','topic-discovery'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,...(!['summary','topic-discovery'].includes(mode)&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
+  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>mode==='summary'||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'?modeTitles[run.mode??'directions']+'：材料分组':mode==='evidence-plan'?'研究问题：补证据计划':mode==='topic-discovery'?'文献主题发现清单':mode==='topic'?'主题Wiki组':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:''),wiki_level:mode==='summary'?'summary':['directions','evidence-plan','topic-discovery'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,...(!['summary','topic-discovery'].includes(mode)&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
  }
  private schedule(run:Run,ids:string[]){
-  const md=new MarkdownKnowledge(this.store),docs=ids.map(id=>md.read(run.project_id,id)),groups:string[][]=[];let group:string[]=[],size=0;
+  const md=new MarkdownKnowledge(this.store),docs=ids.map(id=>md.read(run.project_id,id)).sort((a,b)=>(a.source_id??a.id).localeCompare(b.source_id??b.id)||a.path.localeCompare(b.path)),groups:string[][]=[];let group:string[]=[],size=0;
   for(const doc of docs){if(doc.text.length>40000)throw new Error('单页材料超过探索预算，请先将知识页合理拆分，不截断正文');if((size+doc.text.length>40000||group.length>=80)&&group.length){groups.push(group);group=[];size=0;}group.push(doc.id);size+=doc.text.length;}if(group.length)groups.push(group);
   run.history_tasks.push(...run.tasks);run.tasks=[];
   if(!groups.length)throw new Error('没有可用的综合材料');
@@ -55,14 +55,15 @@ export class ResearchExploration {
   const md=new MarkdownKnowledge(this.store),all=md.index(project).documents,selected=[...new Set(sourceIds)];
   if(!selected.length)throw Object.assign(new Error('SOURCES_REQUIRED'),{statusCode:422});
   for(const id of selected)if(this.store.getSource(id)?.project_id!==project||!all.some(d=>d.source_id===id&&d.path.endsWith('/whoami.md')))throw Object.assign(new Error('SOURCE_WIKI_REQUIRED'),{statusCode:422});
+  if(['topics','comparison'].includes(mode)&&selected.some(id=>all.some(d=>d.source_id===id&&d.path.endsWith('/whoami.md')&&d.stale)))throw Object.assign(new Error('SOURCE_WIKI_STALE'),{statusCode:422});
   if(mode==='comparison'&&!instructions.trim())throw Object.assign(new Error('TOPIC_QUESTION_REQUIRED'),{statusCode:422});
   if(question&&mode!=='directions')throw Object.assign(new Error('INVALID_REQUEST'),{statusCode:400});
-  const topics=all.filter(d=>topicIds.includes(d.id)&&d.kind==='wiki-page'&&['topic','hypothesis','overview','discovery'].includes(d.level??''));
+  const topics=all.filter(d=>(!d.topic_id||d.topic_id===d.id)&&topicIds.includes(d.id)&&d.kind==='wiki-page'&&['topic','hypothesis','overview','discovery'].includes(d.level??''));
   if(new Set(topicIds).size!==topics.length)throw Object.assign(new Error('DEPENDENCY_NOT_FOUND'),{statusCode:404});
   const current=all.filter(d=>selected.includes(d.source_id??'')&&d.kind==='wiki-page'&&d.level==='single'&&d.path.startsWith('knowledge_base/papers/')&&(d.group_status===undefined||d.group_status==='current'));
-  const firstPages=mode==='background'?/\/(whoami|background)\.md$/:mode==='comparison'?/\/(research_problem|insights|method|results)\.md$/:['directions','topics'].includes(mode)?/\/(whoami|research_problem|contributions|insights)\.md$/:/\/(whoami|research_problem|contributions)\.md$/;
+  const firstPages=mode==='background'?/\/(whoami|background)\.md$/:mode==='comparison'?/\/(whoami|research_problem|insights|method|results)\.md$/:['directions','topics'].includes(mode)?/\/(whoami|research_problem|contributions|insights)\.md$/:/\/(whoami|research_problem|contributions)\.md$/;
   const docs=[...current.filter(d=>firstPages.test(d.path)),...topics];
-  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:15})).digest('hex');
+  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:16})).digest('hex');
   const reusable=this.list(project).find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
   if(reusable)return reusable;
   const previous=mode==='directions'?undefined:this.list(project).find(r=>r.stage==='completed'&&r.mode===mode&&r.instructions===instructions&&JSON.stringify([...r.source_ids].sort())===JSON.stringify([...selected].sort())&&r.result_id&&all.some(d=>d.id===r.result_id));
@@ -76,7 +77,7 @@ export class ResearchExploration {
   if(!sections.length&&!doc.text.includes('未发现可整理主题'))throw new Error('主题发现清单缺少主题条目；保留结果供查看');
   const sourcePages=all.filter(d=>run.source_ids.includes(d.source_id??'')&&d.level==='single'&&(d.group_status===undefined||d.group_status==='current'));
   const otherOutputs=new Set(this.list(run.project_id).filter(r=>['research-map','background'].includes(r.mode??'')).map(r=>r.result_id));
-  const existing=all.filter(d=>!otherOutputs.has(d.id)&&d.level==='topic'&&!['research-map','research-background','topic-index'].includes(d.page_role??''));
+  const existing=all.filter(d=>(!d.topic_id||d.topic_id===d.id)&&!otherOutputs.has(d.id)&&d.level==='topic'&&!['research-map','research-background','topic-index'].includes(d.page_role??''));
   const normalize=(s:string)=>s.toLocaleLowerCase().replace(/[\s\p{P}]/gu,'');
   const result:Topic[]=[],seen=new Map<string,Topic>();
   for(let i=0;i<sections.length;i++){
@@ -88,7 +89,7 @@ export class ResearchExploration {
    const named=body.match(/已有主题ID[：:]\s*(wiki-[A-Za-z0-9_-]+)/)?.[1];
    const prior=named?existing.find(d=>d.id===named):undefined;
    const homonym=!prior&&existing.some(d=>normalize(d.title)===normalize(title)||d.aliases?.some(alias=>normalize(alias)===normalize(title)));
-   const eligible=match[1]==='知识主题'&&sources.length>0&&(sources.length>1||Boolean(prior)||/单篇价值[：:]\s*\S/.test(body))&&!homonym&&(!named||Boolean(prior));
+   const eligible=match[1]==='知识主题'&&sources.length>=2&&!homonym&&(!named||Boolean(prior));
    const key=prior?.id??normalize(title),duplicate=seen.get(key);
    if(duplicate){duplicate.material_ids=[...new Set([...duplicate.material_ids,...material.map(d=>d.id)])];duplicate.source_ids=[...new Set([...duplicate.source_ids,...sources])];duplicate.body+='\n\n'+body;if(eligible)duplicate.status='pending';continue;}
    const topic:Topic={id:createHash('sha256').update(run.id+key).digest('hex').slice(0,20),title:prior?.title??title,body,source_ids:sources,material_ids:material.map(d=>d.id),existing_id:prior?.id,status:eligible?'pending':'candidate',error:homonym?'已有同名主题，需确认问题边界':named&&!prior?'已有主题ID无效，待确认':undefined};
@@ -117,7 +118,7 @@ export class ResearchExploration {
     const ids:string[]=[];let size=0;
     for(const d of all.filter(d=>topic.material_ids.includes(d.id))){const count=d.characters??md.read(run.project_id,d.id).text.length;if(size+count>30000||ids.length>=70)continue;ids.push(d.id);size+=count;}
     if(!ids.length){const first=all.find(d=>topic.source_ids.includes(d.source_id??'')&&d.path.endsWith('/whoami.md'));if(!first)throw new Error('主题缺少可用来源');ids.push(first.id);}
-    const input=knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:topic.source_ids,dependencies:ids.filter(id=>id!==topic.existing_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:topic.title,instructions:run.instructions+'\n本次仅综合主题“'+topic.title+'”。发现阶段的问题边界与来源如下：\n'+topic.body+'\n先提供预算内来源页，其余相关正文和依据在material_index及工作副本中按需读；不得宣称全部已读。保留既有页人工内容及本轮未覆盖认识；不额外发现新主题。',wiki_level:'topic',research_skill:'synthesis',research_exploration:'topic',...(topic.existing_id?{target_id:topic.existing_id}:{}),regenerate:true});
+    const input=knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:topic.source_ids,dependencies:ids.filter(id=>id!==topic.existing_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:topic.title,instructions:run.instructions+'\n本次仅生成主题 Wiki 组“'+topic.title+'”。发现阶段的问题边界与来源如下：\n'+topic.body+'\n先提供预算内来源页，其余相关正文和依据在material_index及工作副本中按需读；不得宣称全部已读。保留既有页人工内容及本轮未覆盖认识；不额外发现新主题。',wiki_level:'topic',research_skill:'synthesis',research_exploration:'topic',...(topic.existing_id?{target_id:topic.existing_id}:{}),regenerate:true});
     const old=topic.task_id,task=this.agent.enqueue(run.project_id,input,old)[0];topic.task_id=task.task_id;topic.status='generating';topic.error=undefined;run.tasks.push(task.task_id);
    }catch(error){topic.status='failed';topic.error=error instanceof Error?error.message:'无法创建主题任务';}
    this.save(run);
