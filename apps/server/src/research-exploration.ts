@@ -23,6 +23,24 @@ export class ResearchExploration {
  private root(project:string){return projectRuntime(this.store.root,project,'research-exploration');}
  private save(run:Run){run.updated_at=new Date().toISOString();const root=this.root(run.project_id);mkdirSync(root,{recursive:true});const file=join(root,run.id+'.json');writeFileSync(file+'.tmp',JSON.stringify(run),{mode:0o600});renameSync(file+'.tmp',file);}
  list(project:string):Run[]{const root=this.root(project);if(!existsSync(root))return [];return readdirSync(root).filter(name=>/^exploration_[a-f0-9-]+\.json$/.test(name)).flatMap(name=>{try{return [JSON.parse(readFileSync(join(root,name),'utf8')) as Run];}catch{return [];}}).sort((a,b)=>b.created_at.localeCompare(a.created_at));}
+ summaries(project:string){
+  // Project-scoped task metadata and activity timestamps only; never load model logs or snapshots.
+  const tasks=this.store.db.prepare("SELECT task_id,status,json_extract(data,'$.input.title') AS title,json_extract(data,'$.input.research_exploration') AS mode,json_extract(data,'$.created_at') AS created_at FROM knowledge_tasks WHERE project_id=?").all(project) as {task_id:string;status:string;title:string;mode?:string;created_at:string}[];
+  const byId=new Map(tasks.map(task=>[task.task_id,task]));
+  const latest=this.store.db.prepare('SELECT at FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1');
+  return this.list(project).map(run=>{
+   const details=run.tasks.map((id,index)=>{const task=byId.get(id);return {id,title:run.topics?.find(topic=>topic.task_id===id)?.title??(task?.mode==='summary'?`第 ${index+1} 组材料`:task?.mode==='topic-discovery'?'发现主题':task?.title??'任务记录缺失'),status:task?.status??'missing',last_activity_at:(latest.get(id) as {at:string}|undefined)?.at??task?.created_at};});
+   const phase=run.stage==='summarizing'?'materials':run.stage==='discovering'?'discovery':run.stage==='completed'?'done':run.stage==='topics'||run.topics?'synthesis':details.some(task=>byId.get(task.id)?.mode==='summary')?'materials':run.mode==='topics'?'discovery':'synthesis';
+   const countingTopics=['synthesis','done'].includes(phase)&&Boolean(run.topics);
+   const states=countingTopics?run.topics!.filter(topic=>topic.status!=='candidate').map(topic=>topic.status):details.map(task=>task.status);
+   const count=(names:string[])=>states.filter(state=>names.includes(state)).length;
+   const current=details.find(task=>task.status==='running');
+   const last=[run.updated_at,...details.flatMap(task=>task.last_activity_at?[task.last_activity_at]:[])].sort().at(-1);
+   return {id:run.id,mode:run.mode,question_id:run.question_id,stage:run.stage,source_ids:run.source_ids,created_at:run.created_at,updated_at:run.updated_at,instructions:run.instructions,error:run.error,result_id:run.result_id,discovery_id:run.discovery_id,tasks:run.tasks,
+    topics:run.topics?.map(({id,title,status,task_id,output_id,error})=>({id,title,status,task_id,output_id,error})),
+    progress:{phase,round:run.round,total:states.length,completed:count(['completed']),running:count(['running','generating']),queued:count(['queued','pending']),failed:count(['failed','interrupted','cancelled','missing']),candidates:run.topics?.filter(topic=>topic.status==='candidate').length??0,current_title:current?.title,last_activity_at:last,details}};
+  });
+ }
  detail(project:string,id:string){const run=this.list(project).find(run=>run.id===id);if(!run)throw Object.assign(new Error('NOT_FOUND'),{statusCode:404});return run;}
  candidates(project:string,id:string){
   const run=this.detail(project,id);if(run.stage!=='completed'||!run.result_id||run.question_id||run.mode&&run.mode!=='directions')return [];
