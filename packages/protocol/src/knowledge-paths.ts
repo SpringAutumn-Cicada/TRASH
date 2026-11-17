@@ -1,6 +1,6 @@
 /** Stable IDs stay independent of the readable knowledge_base directory layout. */
 export const legacyKnowledgePath=/^(?:literature\/cards|wiki)\/[A-Za-z0-9_-]+\.md$/;
-export const knowledgeBasePath=/^knowledge_base\/(?:papers\/source_[A-Za-z0-9_-]+\/(?!.*--)(?:[a-z][a-z0-9_-]*\/){0,3}[a-z][a-z0-9_-]*|abstracts\/source_[A-Za-z0-9_-]+\/(?:interpretation|memory)|(?:topics|hypotheses|discoveries|summaries)\/(?:topic|wiki)-[\p{L}\p{N}_-]+|overview)\.md$/u;
+export const knowledgeBasePath=/^knowledge_base\/(?:(?:papers\/source_[A-Za-z0-9_-]+\/(?!.*--)(?:[a-z][a-z0-9_-]*\/){0,3}[a-z][a-z0-9_-]*|abstracts\/source_[A-Za-z0-9_-]+\/(?:interpretation|memory)|(?:topics|hypotheses|discoveries|summaries)\/wiki-[A-Za-z0-9_-]+|overview)\.md)$/;
 export function knowledgeDocumentId(path:string):string|undefined{
  if(legacyKnowledgePath.test(path))return path.split('/').at(-1)!.slice(0,-3);
  const paper=path.match(/^knowledge_base\/papers\/(source_[A-Za-z0-9_-]+)\/(basic|key|detail|memory)\.md$/);

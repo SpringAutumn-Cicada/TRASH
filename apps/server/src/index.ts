@@ -319,7 +319,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){sendJson(response,409,{error:'项目有活动任务，完成后可操作'});return;}
         sendJson(response,200,manager.act({...input,expected:input.expected}));return;
       }
-      if(subpath==='markdown-knowledge/topic-versions'&&method==='GET'){const id=z.string().regex(/^(?:topic|wiki)-[\p{L}\p{N}_-]+$/u).parse(url.searchParams.get('id'));sendJson(response,200,{versions:topicVersions(markdown.root(projectId),id)});return;}
+      if(subpath==='markdown-knowledge/topic-versions'&&method==='GET'){const id=z.string().regex(/^wiki-[A-Za-z0-9_-]+$/).parse(url.searchParams.get('id'));sendJson(response,200,{versions:topicVersions(markdown.root(projectId),id)});return;}
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){
         // Local saves/reviews use the document hash, not the project-wide Agent lock.

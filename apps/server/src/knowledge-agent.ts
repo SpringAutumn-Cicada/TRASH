@@ -83,10 +83,10 @@ export class KnowledgeAgent implements TaskRunner {
       const selectedIds=new Set(selected.map(d=>d.id));
       if(part.dependencies.some(d=>!selectedIds.has(d.object_id)))requestError('DEPENDENCY_NOT_FOUND',404);
       let previous=part.target_id?index.find(doc=>doc.id===part.target_id):part.kind==='literature-card'?index.find(doc=>doc.source_id===part.source_ids[0]&&doc.card_type==='detail'):undefined;
-      if(part.target_id&&!previous&&!/^topic-[\p{L}\p{N}_-]+$/u.test(part.target_id))requestError('NOT_FOUND',404);
+      if(part.target_id&&!previous)requestError('NOT_FOUND',404);
       if(isTopicBundle(part)&&previous?.topic_id&&previous.id!==previous.topic_id)previous=index.find(doc=>doc.id===previous!.topic_id);
       const retrySnapshot=retryOf?this.knowledge.tasks(projectId).find(t=>t.task_id===retryOf)?.snapshot as {topic_entry?:string}|undefined:undefined;
-      const topicEntry=isTopicBundle(part)?previous?.id??retrySnapshot?.topic_entry??(part.target_id&&/^topic-[\p{L}\p{N}_-]+$/u.test(part.target_id)?part.target_id:'topic-'+randomUUID()):undefined;
+      const topicEntry=isTopicBundle(part)?previous?.id??retrySnapshot?.topic_entry??'wiki-'+randomUUID():undefined;
       const topicMembers=topicEntry?index.filter(doc=>doc.topic_id===topicEntry):[];
       if(topicEntry&&previous&&(previous.level!=='topic'||['topic-index','research-map','research-background'].includes(previous.page_role??'')))requestError('INVALID_TOPIC_TARGET',422);
       const preservedSources=[...topicMembers,...(previous?[previous]:[])].flatMap(doc=>(doc.links??[]).flatMap(link=>link.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[]));
