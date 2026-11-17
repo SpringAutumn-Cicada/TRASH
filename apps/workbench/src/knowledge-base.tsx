@@ -13,7 +13,7 @@ import {KnowledgeHealth} from './knowledge-relations.js';
 import {SummaryNamePreview} from './summary-name-preview.js';
 import {MarkdownKnowledgePanel} from './markdown-knowledge.js';
 import './knowledge-base.css';
-type Doc={id:string;title:string;path:string;kind:string;card_type?:string;level?:string;source_id?:string;material_scope?:string;summary?:string;hash:string;text?:string;stale?:boolean};
+type Doc={topic_id?:string;id:string;title:string;path:string;kind:string;card_type?:string;level?:string;source_id?:string;material_scope?:string;summary?:string;hash:string;text?:string;stale?:boolean};
 type Migration={migrated:boolean;items:{from:string;to:string;active:boolean}[];conflicts:string[];fingerprint:string;backup?:string};
 const groups=[['papers','论文 Wiki'],['abstracts','摘要 Wiki'],['topic','知识主题'],['hypothesis','研究假设'],['discovery','发现清单'],['summary','分批总结']] as const;
 const label=(doc:Doc)=>doc.id.includes('--')?(doc.path===`knowledge_base/papers/${doc.source_id}/whoami.md`?'论文身份':doc.path===`knowledge_base/papers/${doc.source_id}/index.md`?'旧论文索引':doc.title):doc.material_scope==='abstract'?(doc.kind==='wiki-page'?'研究记忆 · 摘要级':'摘要解读'):doc.card_type?({basic:'基本信息',key:'关键卡片',detail:'详细卡片'}[doc.card_type]??doc.card_type):doc.level==='single'?'研究记忆':doc.level==='summary'?'分批总结':doc.level==='overview'?'项目总览':doc.title;
@@ -74,7 +74,7 @@ export function KnowledgeBaseWorkspace({projectId,sources,focusId,onNavigate}:{p
   const entries=key==='papers'?paperGroups.map(paper=>({id:paper.entry.id,title:paper.title,metadata:paper.metadata,stale:paper.entry.stale,active:paperSource===paper.sourceId})):key==='abstracts'?[...new Set(items.map(item=>item.source_id))].map(sourceId=>{
    const group=items.filter(item=>item.source_id===sourceId),entry=group.find(item=>item.kind==='wiki-page')??group[0],source=sources.find(item=>item.source_id===sourceId);
    return {id:entry.id,title:source?.title??entry.title,metadata:source?.authors.join(', ')??'',stale:entry.stale,active:group.some(item=>item.id===selected)};
-  }):items.map(item=>({id:item.id,title:item.title,metadata:item.summary??'',stale:item.stale,active:item.id===selected}));
+  }):items.filter(item=>!item.topic_id||item.id===item.topic_id||Boolean(query)).map(item=>{const members=items.filter(page=>page.topic_id===item.id);return {id:item.id,title:item.title,metadata:members.length?`主题 Wiki 组 · ${members.length} 页`:(item.summary??''),stale:item.stale||members.some(page=>page.stale),active:item.id===selected||members.some(page=>page.id===selected)};});
   return <details key={key} className="kb-directory-group" open={key==='papers'||Boolean(query)||entries.some(item=>item.active)}><summary><FolderOpen size={15}/><strong>{name}</strong><span>{entries.length}</span></summary><div className="kb-directory-items">{entries.map(item=><WikiDirectoryCard key={item.id} item={item} disabled={readingLocked} onSelect={choose}/>)}{!entries.length&&<small>{query?'没有匹配内容':'暂无内容'}</small>}</div></details>;
  })}
 

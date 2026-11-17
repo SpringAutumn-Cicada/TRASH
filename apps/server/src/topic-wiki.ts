@@ -1,4 +1,4 @@
-import {existsSync,readFileSync} from 'node:fs';
+import {existsSync,readFileSync,readdirSync} from 'node:fs';
 import {join,posix} from 'node:path';
 import {type KnowledgeTaskInput} from '@trash/protocol';
 import {knowledgeFiles} from './knowledge-base-migration.js';
@@ -48,4 +48,11 @@ export function topicPrompt(id:string,title:string){
 export function topicManifest(root:string,id:string){
  const file=join(root,'.trash/topic-groups',id+'.json');
  return existsSync(file)?JSON.parse(readFileSync(file,'utf8')) as {version:1;topic_id:string;revision:number;current:{path:string;hash:string}[]}:undefined;
+}
+
+export function topicVersions(root:string,id:string){
+ if(!/^wiki-[A-Za-z0-9_-]+$/.test(id))throw new Error('INVALID_TOPIC_ID');
+ const directory=join(root,'.trash/topic-group-history',id);
+ if(!existsSync(directory))return [];
+ return readdirSync(directory).filter(name=>/^\d+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(join(directory,name),'utf8')) as {revision:number;at:string;current:{path:string;hash:string}[]}).sort((a,b)=>b.revision-a.revision);
 }

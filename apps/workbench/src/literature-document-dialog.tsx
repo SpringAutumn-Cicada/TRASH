@@ -13,12 +13,13 @@ import {useUnsavedChanges} from './navigation.js';
 import './markdown-knowledge.css';
 import './wiki-reading.css';
 
-type Document={material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
+type Document={topic_id?:string;page_role?:string;material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved,embedded=false,onReadingLock}:{onReadingLock?:(locked:boolean)=>void;embedded?:boolean;projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
   const [type]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
   const [loading,setLoading]=useState(true),[directoryLoaded,setDirectoryLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[editing,setEditing]=useState(false),[draft,setDraft]=useState('');
   const [versionSource,setVersionSource]=useState('');
+  const [topicVersions,setTopicVersions]=useState<{revision:number;at:string;current:{path:string;hash:string}[]}[]>();
   const [history,setHistory]=useState<{hash:string;text:string}[]>(),[reload,setReload]=useState(0);
   const root=useRef<HTMLDivElement>(null),scroll=useRef<HTMLDivElement>(null),acting=useRef(false);
   const dirty=editing&&draft!==doc?.text;useUnsavedChanges(dirty);
@@ -41,7 +42,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
   },[base,reload]);
   const selected=linked||(type==='wiki'&&source?(documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/whoami.md`)??documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/index.md`))?.id:undefined)||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
   useEffect(()=>{
-    let active=true;setDoc(undefined);setEditing(false);setHistory(undefined);setError('');setLoading(Boolean(selected));
+    let active=true;setDoc(undefined);setEditing(false);setHistory(undefined);setTopicVersions(undefined);setError('');setLoading(Boolean(selected));
     if(selected)void api<{document:Document}>(base+'/document?id='+encodeURIComponent(selected)).then(data=>{if(active){setDoc(data.document);setDraft(data.document.text);}}).catch(e=>{if(active)setError(uiError(e,'无法读取文档。'));}).finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
   },[base,selected,reload]);
@@ -52,8 +53,10 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       if(!embedded&&event.key==='Escape'){event.stopPropagation();close();}
       if(!embedded&&event.key==='Tab'){const nodes=Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')??[]).filter(node=>node.getClientRects().length);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
     }}>
-      <header><div><small>论文内容</small><h3 id="literature-document-title">{doc?.id.includes('--')?doc.title:source?.title??doc?.title??'关联知识'}</h3></div>{!embedded&&<button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button>}</header>
+      <header><div><small>{doc?.topic_id?'主题 Wiki 组':doc?.level==='single'?'论文内容':'研究知识'}</small><h3 id="literature-document-title">{doc?.id.includes('--')?doc.title:source?.title??doc?.title??'关联知识'}</h3></div>{!embedded&&<button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button>}</header>
       {error&&<ErrorNotice>{error}</ErrorNotice>}
+      {doc?.topic_id&&<nav className="topic-wiki-navigation" aria-label="主题组页面">{documents.filter(page=>page.topic_id===doc.topic_id).sort((a,b)=>Number(b.id===doc.topic_id)-Number(a.id===doc.topic_id)||a.path.localeCompare(b.path)).map(page=><button type="button" key={page.id} className={page.id===doc.id?'selected':''} aria-current={page.id===doc.id?'page':undefined} disabled={busy||loading} onClick={()=>{if(dirty&&!window.confirm('放弃未保存的修改？'))return;reading.go(page.id);}}>{page.id===doc.topic_id?'主题总览':page.id.endsWith('--methods')?'方法与条件':page.id.endsWith('--results')?'结果与分歧':'可复用认识'}</button>)}<button type="button" disabled={busy} onClick={()=>void run(async()=>{if(topicVersions){setTopicVersions(undefined);return;}setTopicVersions((await api<{versions:NonNullable<typeof topicVersions>}>(base+'/topic-versions?id='+encodeURIComponent(doc.topic_id!))).versions);})}>整组版本</button></nav>}
+      {doc?.topic_id&&topicVersions&&<div className="topic-wiki-versions">{topicVersions.map(version=><details key={version.revision}><summary>版本 {version.revision} · {new Date(version.at).toLocaleString()} · {version.current.length} 页</summary>{version.current.map(file=><p key={file.path}><code>{file.path.split('/').at(-1)} · {file.hash.slice(0,12)}</code></p>)}</details>)}{!topicVersions.length&&<p>暂无整组发布快照。</p>}</div>}
       <div ref={scroll} className="library-document-scroll">
         {(loading||!directoryLoaded)?<p role="status"><LoaderCircle className="spin" size={16}/> 正在读取内容…</p>:doc?<>
           {linked&&<p>关联文档：{doc.title}</p>}{doc.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}
