@@ -12,7 +12,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {bibliography?:{title?:string;authors?:string[];publication_date?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
+interface SourceAnalysisState {metadata?:{title:string;authors:string[]|null;year:number|null;publication_date:string|null};bibliography?:{title?:string;authors?:string[];publication_date?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -62,30 +62,41 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
   const submissionLock=useRef(new Set<string>());
-  const completedAnalysis=useRef('');
   useEffect(()=>{
-    let active=true,loadingStatus=false;
-    const controller=new AbortController();
-    const load=async()=>{
-      if(!active||loadingStatus||document.hidden)return;loadingStatus=true;
-      try{
-        const base=`/projects/${encodeURIComponent(projectId)}`;
-        const result=await api<SourceAnalysisState[]>(`${base}/source-analyses`,{signal:controller.signal});
-        const completion=result.filter(item=>item.status==='completed').map(item=>item.task_id).sort().join(',');
-        if(active&&completion!==completedAnalysis.current){completedAnalysis.current=completion;const updated=await api<ProjectDetail>(`${base}`,{signal:controller.signal});if(active)setDetail(updated);}
-        if(active)setAnalyses(result);
-      }catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}
-      finally{loadingStatus=false;}
+    if(searchOnly)return;
+    const base=`/projects/${encodeURIComponent(projectId)}/source-analyses`;
+    const abort=new AbortController();
+    const stream=new EventSource(`/api/v1${base}/stream`);
+    let fallback:AbortController|undefined;
+    stream.addEventListener('snapshot',event=>{
+      fallback?.abort();
+      fallback=undefined;
+      const {analyses}=JSON.parse((event as MessageEvent).data) as {analyses:SourceAnalysisState[]};
+      if(!abort.signal.aborted)setAnalyses(analyses);
+    });
+    stream.addEventListener('change',event=>{
+      const {analyses,removed}=JSON.parse((event as MessageEvent).data) as {analyses:SourceAnalysisState[];removed:string[]};
+      if(abort.signal.aborted)return;
+      const changed=new Set([...removed,...analyses.map(item=>item.source_id)]);
+      setAnalyses(previous=>[...previous.filter(item=>!changed.has(item.source_id)),...analyses]);
+    });
+    stream.onerror=()=>{
+      if(abort.signal.aborted||fallback)return;
+      const pending=new AbortController();
+      fallback=pending;
+      void api<SourceAnalysisState[]>(base,{signal:pending.signal}).then(result=>{
+        if(!pending.signal.aborted)setAnalyses(result);
+      }).catch(cause=>{if(!pending.signal.aborted)setError(uiError(cause,'无法读取单篇分析状态。'));});
     };
-    void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;controller.abort();clearInterval(timer);};
-  },[projectId]);
+    return()=>{abort.abort();fallback?.abort();stream.close();};
+  },[projectId,searchOnly]);
   const analyzeSource=async(source:Source,confirmed=false)=>{
     if(submissionLock.current.has(source.source_id))return;
     const previous=analyses.find(item=>item.source_id===source.source_id);
     const resume=!confirmed&&['failed','interrupted','cancelled'].includes(previous?.status??'');
     if(!confirmed&&!resume&&previous?.hasOutputs){setRegenerateError('');setRegenerateTarget(source);return false;}
     submissionLock.current.add(source.source_id);setSubmitting([...submissionLock.current]);setError('');setRegenerateError('');
-    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs),resume})});if(alive.current)setAnalyses(items=>[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);return true;}
+    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs),resume})});if(alive.current)setAnalyses(items=>items.some(item=>item.source_id===source.source_id&&item.task_id===task.task_id)?items:[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);return true;}
     catch(cause){if(alive.current){const message=uiError(cause,'无法启动这篇论文的分析，请稍后重试。');if(confirmed)setRegenerateError(message);else setError(message);}return false;}
     finally{submissionLock.current.delete(source.source_id);if(alive.current)setSubmitting([...submissionLock.current]);}
   };
@@ -187,12 +198,19 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     return next;
   });
 
-  const librarySources=(detail?.sources??[]).map(source=>{const bibliography=analyses.find(item=>item.source_id===source.source_id)?.bibliography;return {...source,...(bibliography?.title?{title:bibliography.title}:{}),...(bibliography?.authors?{authors:bibliography.authors}:{}),...(bibliography?.publication_date?{publication_date:bibliography.publication_date,year:Number(bibliography.publication_date.slice(0,4))}:{})};});
+  const analysisBySource=new Map(analyses.map(item=>[item.source_id,item]));
+  const librarySources=(detail?.sources??[]).map(source=>{
+    const state=analysisBySource.get(source.source_id),metadata=state?.metadata,bibliography=state?.bibliography;
+    return {...source,title:bibliography?.title??metadata?.title??source.title,
+      authors:bibliography?.authors??(metadata?metadata.authors??[]:source.authors),
+      publication_date:bibliography?.publication_date??(metadata?metadata.publication_date??undefined:source.publication_date),
+      year:bibliography?.publication_date?Number(bibliography.publication_date.slice(0,4)):metadata?metadata.year??undefined:source.year};
+  });
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   const keepOriginal=async(source:Source,item:SourceAnalysisState)=>{
     if(!item.task_id||submissionLock.current.has(source.source_id))return;
     submissionLock.current.add(source.source_id);setSubmitting(previous=>[...previous,source.source_id]);
-    try{await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/keep-original`,{method:'POST',body:JSON.stringify({confirm:true,task_id:item.task_id})});setAnalyses(previous=>previous.map(entry=>entry.source_id===source.source_id?{...entry,status:'completed',error:undefined,task_id:undefined,can_resume:false}:entry));}
+    try{await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/keep-original`,{method:'POST',body:JSON.stringify({confirm:true,task_id:item.task_id})});}
     catch(cause){setError(uiError(cause,'无法退出重新分析，请刷新任务状态。'));}
     finally{submissionLock.current.delete(source.source_id);setSubmitting(previous=>previous.filter(id=>id!==source.source_id));}
   };
@@ -219,7 +237,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
             {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
               <div className="library-table-heading"><span>标题 / 作者</span><span>内容</span><span>状态 / 操作</span></div>
               {librarySources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
-                const item=analyses.find(entry=>entry.source_id===source.source_id);
+                const item=analysisBySource.get(source.source_id);
                 const activeTaskId=item?.task_id;
                 const fullPending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
                 const pending=fullPending;

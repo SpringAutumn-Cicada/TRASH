@@ -1,3 +1,4 @@
+import {publishProjectChange} from './project-updates.js';
 import {createHash} from 'node:crypto';
 import type {Source} from '@trash/protocol';
 import type {TrashStore} from '@trash/storage';
@@ -16,7 +17,10 @@ export function bibliographyState(store:TrashStore,id:string):BibliographyState{
   const row=store.db.prepare('SELECT data FROM source_bibliography WHERE source_id=?').get(id) as {data:string}|undefined;
   return row?JSON.parse(row.data):{};
 }
-export function saveBibliographyState(store:TrashStore,id:string,state:BibliographyState){store.db.prepare('INSERT OR REPLACE INTO source_bibliography(source_id,data) VALUES(?,?)').run(id,JSON.stringify(state));}
+export function saveBibliographyState(store:TrashStore,id:string,state:BibliographyState){store.db.prepare('INSERT OR REPLACE INTO source_bibliography(source_id,data) VALUES(?,?)').run(id,JSON.stringify(state));
+  const row=store.db.prepare('SELECT project_id FROM sources WHERE source_id=?').get(id) as {project_id:string}|undefined;
+  if(row)publishProjectChange(store,row.project_id,{tasks:true,sources:[id]});
+}
 export function parseBasicCard(text:string){
   const fields:Record<string,string>={};
   for(const line of text.replace(/\r\n/g,'\n').split('\n')){const match=line.match(/^- ([^：:]+)[：:]\s*(.*)$/);if(match){if(fields[match[1]]!==undefined)throw Object.assign(new Error('BASIC_CARD_INVALID'),{statusCode:422});fields[match[1]]=match[2].trim();}}

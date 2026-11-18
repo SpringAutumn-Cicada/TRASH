@@ -1,3 +1,4 @@
+import {publishProjectChange} from './project-updates.js';
 import type {TrashStore} from '@trash/storage';
 
 const ready=new WeakMap<TrashStore,Set<string>>();
@@ -10,5 +11,9 @@ export function cacheSourceAnalysis(store:TrashStore,project:string){
  ready.set(store,projects);
 }
 export function invalidateSourceAnalysis(store:TrashStore,project:string){
+ ready.get(store)?.delete(project);
+ publishProjectChange(store,project,{wiki:true});
+}
+export function resetSourceAnalysis(store:TrashStore,project:string){
  ready.get(store)?.delete(project);
 }

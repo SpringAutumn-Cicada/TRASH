@@ -7,7 +7,8 @@ import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
-import {sourceAnalyses} from './source-analyses.js';
+import {sourceAnalyses,streamSourceAnalyses} from './source-analyses.js';
+import {closeProjectStreams,projectStream,publishProjectChange} from './project-updates.js';
 import { PdfReading } from "./pdf-reading.js";
 import { createResearchFolder } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
@@ -265,7 +266,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         const action=subpath.slice('files/'.length);
         if(method==="POST"&&Object.hasOwn(actions,action)){
           const body=await readJson(request,action==="save"?12*1024*1024+8192:MAX_JSON_BYTES);if(workspaces.busy(projectId))throw Object.assign(new Error("WORKSPACE_MIGRATING"),{statusCode:409});
-          sendJson(response,200,actions[action as keyof typeof actions](projectId,body));return;
+          const result=actions[action as keyof typeof actions](projectId,body);
+          new MarkdownKnowledge(store).invalidate(projectId);
+          sendJson(response,200,result);return;
         }
       }catch(error){
         if((error as NodeJS.ErrnoException).code==='EEXIST')throw Object.assign(new Error('FILES_EXISTS'),{statusCode:409});
@@ -298,7 +301,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const sourceId=decodeURIComponent(deleteSourceRoute[1]);
       const referenced=new MarkdownKnowledge(store).index(projectId).documents.some(doc=>doc.source_id===sourceId||(doc.links??[]).some(link=>link.path.includes(sourceId)));
       if(referenced){sendJson(response,409,{error:'SOURCE_IN_USE'});return;}
-      sendJson(response, 200, store.deleteSource(projectId, sourceId)); return;
+      const result=store.deleteSource(projectId,sourceId);
+      publishProjectChange(store,projectId,{tasks:true,sources:[sourceId]});
+      sendJson(response,200,result); return;
     }
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
@@ -370,7 +375,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         if(subpath.endsWith('/preview')){sendJson(response,200,manager.preview(input.action,input.id,input.paths));return;}
         if(!input.confirm||!input.expected){sendJson(response,400,{error:'请先预览并确认操作'});return;}
         if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){sendJson(response,409,{error:'项目有活动任务，完成后可操作'});return;}
-        sendJson(response,200,manager.act({...input,expected:input.expected}));return;
+        const result=manager.act({...input,expected:input.expected});
+        if(input.action!=='note')markdown.invalidate(projectId);
+        sendJson(response,200,result);return;
       }
       if(subpath==='markdown-knowledge/topic-versions'&&method==='GET'){const id=z.string().regex(/^wiki-[A-Za-z0-9_-]+$/).parse(url.searchParams.get('id'));sendJson(response,200,{versions:topicVersions(markdown.root(projectId),id)});return;}
       if(subpath==='markdown-knowledge/topic-directory-versions'&&method==='GET'){sendJson(response,200,exploration.directoryVersions(projectId,url.searchParams.get('id')??''));return;}
@@ -419,6 +426,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response, 200, deleted);
       return;
     }
+    if(subpath==='source-analyses/stream'&&method==='GET'){
+      streamSourceAnalyses(store,agent,projectId,response);
+      return;
+    }
+    if(subpath==='knowledge-tasks/changes'&&method==='GET'){
+      const stream=projectStream(store,projectId,response);
+      stream.onUpdate(update=>{if(update.tasks)stream.send('change',{});});
+      stream.send('ready',{});
+      return;
+    }
     if(subpath==='source-analyses' && method==='GET'){
       const sourceId=url.searchParams.get('source_id')??undefined;
       sendJson(response,200,sourceAnalyses(store,agent,projectId,sourceId));
@@ -431,14 +448,18 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===sourceId);
       if(!docs.some(doc=>doc.kind==='wiki-page')){sendJson(response,409,{error:'ORIGINAL_ANALYSIS_REQUIRED'});return;}
-      const tasks=knowledge.tasks(projectId).filter(task=>task.input.include_source_wiki&&task.input.source_ids[0]===sourceId);
-      const latest=tasks.sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
+      const tasks=store.db.prepare(`SELECT task_id,status,created_at FROM knowledge_task_summaries
+        WHERE project_id=? AND include_source_wiki=1 AND json_extract(source_ids,'$[0]')=?
+        ORDER BY created_at DESC,task_id DESC`).all(projectId,sourceId) as {task_id:string;status:string;created_at:string}[];
+      const latest=tasks[0];
       if(!latest||latest.task_id!==input.task_id||latest.status==='completed'){sendJson(response,409,{error:'TASK_FINISHED'});return;}
       if(['queued','running'].includes(latest.status))agent.cancel(projectId,latest.task_id);
-      for(const task of tasks.filter(task=>task.created_at<=latest.created_at&&['failed','interrupted','cancelled'].includes(task.status))){
-        store.db.prepare("UPDATE knowledge_tasks SET data=json_set(data,'$.dismissed_reanalysis',json('true')) WHERE task_id=?").run(task.task_id);
-      }
+      store.db.prepare(`UPDATE knowledge_tasks SET data=json_set(data,'$.dismissed_reanalysis',json('true'))
+        WHERE task_id IN (SELECT task_id FROM knowledge_task_summaries WHERE project_id=? AND include_source_wiki=1
+        AND json_extract(source_ids,'$[0]')=? AND status IN ('failed','interrupted','cancelled')
+        AND dismissed_reanalysis=0)`).run(projectId,sourceId);
       knowledge.event(latest.task_id,'用户退出重新分析，保留当前已整理版本；日志与草稿保留');
+      publishProjectChange(store,projectId,{sources:[sourceId]});
       sendJson(response,200,{preserved:true});return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
@@ -447,10 +468,15 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const sourceId=decodeURIComponent(sourceAnalysis[1]),source=store.getSource(sourceId);
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const active=knowledge.tasks(projectId).find(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['queued','running'].includes(t.status));
-      if(active){sendJson(response,200,{task_id:active.task_id,status:active.status});return;}
+      const latestTask=(statuses:string[])=>store.db.prepare(`SELECT task_id,status FROM knowledge_task_summaries
+        WHERE project_id=? AND include_source_wiki=1 AND json_extract(source_ids,'$[0]')=?
+        AND status IN (${statuses.map(()=>'?').join(',')}) ORDER BY created_at DESC,task_id DESC LIMIT 1`)
+        .get(projectId,sourceId,...statuses) as {task_id:string;status:string}|undefined;
+      const active=latestTask(['queued','running']);
+      if(active){sendJson(response,200,active);return;}
       if(input.resume){
-        const previous=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['failed','interrupted','cancelled'].includes(t.status)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
+        const attempt=latestTask(['failed','interrupted','cancelled']);
+        const previous=attempt&&knowledge.task(projectId,attempt.task_id);
         if(!previous){sendJson(response,409,{error:'SOURCE_RESUME_UNAVAILABLE'});return;}
         const [task]=agent.enqueue(projectId,{...previous.input,timeout_seconds:[900,1800].includes(previous.input.timeout_seconds)?3600:previous.input.timeout_seconds,regenerate:true},previous.task_id);
         sendJson(response,202,{task_id:task.task_id,status:task.status});return;
@@ -618,7 +644,17 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const store = options.store ?? new TrashStore();
   const provider = options.provider ?? new OpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY });
   const staticRoot = options.staticRoot ?? resolve(fileURLToPath(new URL("../../workbench/dist/", import.meta.url)));
-  const knowledge = new KnowledgeStore(store.db);
+  const knowledge = new KnowledgeStore(store.db,{
+    task(task){
+      const sources=task.input.include_source_wiki&&!task.input.abstract_mode?task.input.source_ids.slice(0,1):[];
+      publishProjectChange(store,task.project_id,{tasks:true,sources});
+    },
+    event(id,message){
+      if(!/^(Agent 版本：|PDF |复用已完成批次 |启动本机 |Markdown 已发布：)/.test(message))return;
+      const row=store.db.prepare('SELECT project_id FROM knowledge_task_summaries WHERE task_id=?').get(id) as {project_id:string}|undefined;
+      if(row)publishProjectChange(store,row.project_id,{tasks:true});
+    }
+  });
   const workspaces = new ProjectWorkspaces(store, knowledge);
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
@@ -658,7 +694,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   });
   // Streaming datasets can reach 5 GiB; retain a bounded receive deadline for slow uploads.
   server.requestTimeout = 2 * 60 * 60 * 1000;
-  server.on("close", () => { closeTaskStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
-  return { server, store, closeConnections: () => {closeTaskStreams(store);workspaces.close();experiments.terminals.close();} };
+  server.on("close", () => { closeTaskStreams(store);closeProjectStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
+  return { server, store, closeConnections: () => {closeTaskStreams(store);closeProjectStreams(store);workspaces.close();experiments.terminals.close();} };
 }
 

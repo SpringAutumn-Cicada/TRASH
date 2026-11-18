@@ -31,7 +31,7 @@ type TaskListItem=TaskItem & {historical:boolean;successor_id?:string};
 type TaskList={tasks:TaskListItem[];counts:Record<string,number>;total:number;page:number;pages:number;focused?:TaskListItem};
 export function TaskWorkspace({projectId,focusId}:{projectId:string;focusId?:string}){
  const base=`/projects/${encodeURIComponent(projectId)}/knowledge-tasks`;
- const [list,setList]=useState<TaskList>(),[page,setPage]=useState(1),[detail,setDetail]=useState<TaskItem>(),[selected,setSelected]=useState<string|undefined>(focusId),[filter,setFilter]=useState('all'),[query,setQuery]=useState(''),[error,setError]=useState(''),[listError,setListError]=useState(''),[loading,setLoading]=useState(true),[listConnected,setListConnected]=useState(true);
+ const [list,setList]=useState<TaskList & {filter:string}>(),[page,setPage]=useState(1),[detail,setDetail]=useState<TaskItem>(),[selected,setSelected]=useState<string|undefined>(focusId),[filter,setFilter]=useState('all'),[query,setQuery]=useState(''),[error,setError]=useState(''),[listError,setListError]=useState(''),[loading,setLoading]=useState(true),[listConnected,setListConnected]=useState(true);
  const [tab,setTab]=useState('logs'),[raw,setRaw]=useState(false),[following,setFollowing]=useState(true),[newLogs,setNewLogs]=useState(0),[expanded,setExpanded]=useState(false),[mobileDetail,setMobileDetail]=useState(Boolean(focusId));
  const [confirm,setConfirm]=useState<'stop'|'regenerate'|'delete'>(),[busy,setBusy]=useState(false),[preview,setPreview]=useState<string>(),[copied,setCopied]=useState(false),[now,setNow]=useState(Date.now()),[documents,setDocuments]=useState<{id:string;title:string;kind:string;source_id?:string;card_type?:string}[]>([]),[resultError,setResultError]=useState('');
  const alive=useRef(true),listRequest=useRef<AbortController|undefined>(undefined),actionLock=useRef(false),scroll=useRef<HTMLDivElement>(null),lastSeq=useRef(0),copyTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
@@ -48,7 +48,7 @@ export function TaskWorkspace({projectId,focusId}:{projectId:string;focusId?:str
   if(selected)params.set('focus',selected);
   try{
    const result=await api<TaskList>(`${base}?${params}`,{signal:request.signal});
-   if(!request.signal.aborted){setList(result);setListConnected(true);setListError('');}
+   if(!request.signal.aborted){setList({...result,filter});setListConnected(true);setListError('');}
   }catch(e){if(!request.signal.aborted){setListConnected(false);setListError(uiError(e,'无法刷新任务列表，已保留当前内容。'));}}
   finally{if(!request.signal.aborted)setLoading(false);}
  };
@@ -57,13 +57,22 @@ export function TaskWorkspace({projectId,focusId}:{projectId:string;focusId?:str
   const clock=setInterval(()=>setNow(Date.now()),1000);
   return()=>{alive.current=false;clearInterval(clock);clearTimeout(copyTimer.current);};
  },[]);
+ const refreshCurrent=useRef(refresh);
+ refreshCurrent.current=refresh;
  useEffect(()=>{
   void refresh();
-  const timer=setInterval(()=>{if(!document.hidden)void refresh();},4000);
-  return()=>{listRequest.current?.abort();clearInterval(timer);};
+  return()=>listRequest.current?.abort();
  },[base,filter,query,page,selected]);
+ useEffect(()=>{
+  const stream=new EventSource(`/api/v1${base}/changes`);
+  const refreshList=()=>void refreshCurrent.current();
+  stream.addEventListener('ready',refreshList);
+  stream.addEventListener('change',refreshList);
+  stream.onerror=()=>setListConnected(false);
+  return()=>stream.close();
+ },[base]);
  useEffect(()=>{if(focusId){setSelected(focusId);setMobileDetail(true);}},[focusId]);
- useEffect(()=>{if(!selected&&list?.tasks.length)setSelected(list.tasks[0].task_id);},[selected,list]);
+ useEffect(()=>{if(!selected&&list?.filter===filter&&list.tasks.length)setSelected(list.tasks[0].task_id);},[selected,list,filter]);
  useEffect(()=>{setTab('logs');setFollowing(true);setNewLogs(0);setCopied(false);setRaw(false);lastSeq.current=0;setDocuments([]);setResultError('');},[selected]);
  useEffect(()=>{const seq=feed.events.at(-1)?.seq??0;if(seq>lastSeq.current){if(!following&&lastSeq.current){const count=feed.events.filter(e=>e.seq>lastSeq.current).length;setNewLogs(n=>n+count);}lastSeq.current=seq;}if(following&&tab==='logs')requestAnimationFrame(()=>{if(scroll.current)scroll.current.scrollTop=scroll.current.scrollHeight;});},[feed.events,following,raw,tab,expanded]);
  useEffect(()=>{if(tab!=='results'||!task)return;let current=true;setResultError('');void (async()=>{try{const first=await api<{documents:typeof documents;total:number}>(`/projects/${encodeURIComponent(projectId)}/markdown-knowledge?include_evidence=true&limit=100&page=1`);const docs=[...first.documents];for(let page=2;docs.length<first.total;page++){const next=await api<{documents:typeof documents}>(`/projects/${encodeURIComponent(projectId)}/markdown-knowledge?include_evidence=true&limit=100&page=${page}`);if(!next.documents.length)break;docs.push(...next.documents);}if(current)setDocuments(docs);}catch(e){if(current)setResultError(uiError(e,'无法读取生成结果。'));}})();return()=>{current=false;};},[projectId,task?.task_id,task?.status,tab]);

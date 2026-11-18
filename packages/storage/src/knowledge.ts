@@ -9,7 +9,10 @@ const fail = (code: string, statusCode: number): never => { throw Object.assign(
 export interface KnowledgeTask { task_id: string; project_id: string; input: KnowledgeTaskInput; snapshot: unknown; fingerprint: string; status: string; created_at: string; output_id?: string; output_version?: number; error?: string; attempt_of?: string; topic_draft?:{files:{path:string;hash:string}[]} }
 export class KnowledgeStore {
   private syncing = false;
-  constructor(readonly db: Database.Database) {}
+  constructor(readonly db: Database.Database, private changes?: {
+    task:(task:KnowledgeTask)=>void;
+    event:(taskId:string,message:string)=>void;
+  }) {}
   private workspace(projectId:string):string|undefined {
     const file=(this.db.pragma('database_list') as {name:string;file:string}[]).find(row=>row.name==='main')?.file;
     if(!file)return;
@@ -182,8 +185,10 @@ export class KnowledgeStore {
   }
   saveTask(task: KnowledgeTask): void {
     this.db.prepare("INSERT INTO knowledge_tasks VALUES (?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET data=excluded.data,status=excluded.status").run(task.task_id, task.project_id, task.status, task.created_at, JSON.stringify(task));
+    this.changes?.task(task);
   }
   event(taskId: string, message: string): void {
     this.db.prepare("INSERT INTO knowledge_task_events(task_id,at,message) VALUES (?,?,?)").run(taskId, new Date().toISOString(), message.slice(0, 10000));
+    this.changes?.event(taskId,message);
   }
 }

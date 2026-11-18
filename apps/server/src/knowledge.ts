@@ -1,3 +1,4 @@
+import {publishProjectChange} from './project-updates.js';
 import {taskEventPage,eventOptions,streamTaskEvents} from './task-events.js';
 import {listTasks} from './task-list.js';
 import {bibliographyState,saveBibliographyState} from './source-bibliography.js';
@@ -164,6 +165,7 @@ export async function knowledgeRoute(
       // Logical deletion preserves retry ancestry, workflow references and recovery files.
       const result=store.db.prepare("UPDATE knowledge_tasks SET data=json_set(data,'$.deleted_at',?) WHERE task_id=? AND project_id=? AND status='failed'").run(new Date().toISOString(),task.task_id,projectId);
       if(!result.changes)requestError('TASK_DELETE_FAILED_ONLY',409);
+      publishProjectChange(store,projectId,{tasks:true});
       send(response,200,{deleted:true,files_preserved:true});return true;
     }
     if(parts[2]==='events'&&method==='GET'){send(response,200,taskEventPage(store,task,eventOptions(url),runner.resumable?.bind(runner)));return true;}

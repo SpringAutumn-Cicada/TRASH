@@ -1,8 +1,12 @@
+import {lstatSync,watch,type FSWatcher} from 'node:fs';
+import {join} from 'node:path';
+import type {ServerResponse} from 'node:http';
+import {projectStream} from './project-updates.js';
 import type {TrashStore} from '@trash/storage';
 import type {KnowledgeAgent} from './knowledge-agent.js';
 import {currentPaperWiki,MarkdownKnowledge} from './markdown-knowledge.js';
 import {parseIdcard} from './source-bibliography.js';
-import {cacheSourceAnalysis,sourceAnalysisReady} from './source-analysis-cache.js';
+import {cacheSourceAnalysis,sourceAnalysisReady,resetSourceAnalysis} from './source-analysis-cache.js';
 
 const emptyDisplay={hasWiki:false,stale:false,currentWikiFiles:0,oldWikiFiles:0,hasOutputs:false,hasBasic:false,hasKey:false,hasDetail:false,hasCards:false};
 type Display=typeof emptyDisplay & {bibliography?:ReturnType<typeof parseIdcard>};
@@ -48,6 +52,8 @@ export function refreshSourceAnalysisDisplay(store:TrashStore,project:string){
 export function sourceAnalyses(store:TrashStore,agent:KnowledgeAgent,project:string,sourceId?:string){
  refreshSourceAnalysisDisplay(store,project);
  const rows=store.db.prepare(`SELECT s.source_id,d.data AS display,
+  json_object('title',json_extract(s.data,'$.title'),'authors',json_extract(s.data,'$.authors'),
+   'year',json_extract(s.data,'$.year'),'publication_date',json_extract(s.data,'$.publication_date')) AS metadata,
   json_extract(b.data,'$.manual') AS manual,json_type(b.data,'$.suggestion') AS suggestion,
   t.task_id,t.status,t.error
   FROM sources s LEFT JOIN source_analysis_display d ON d.source_id=s.source_id
@@ -60,7 +66,7 @@ export function sourceAnalyses(store:TrashStore,agent:KnowledgeAgent,project:str
   )
   WHERE s.project_id=? AND coalesce(json_extract(s.data,'$.material_scope'),'fulltext')<>'abstract'
   ${sourceId?'AND s.source_id=?':''} ORDER BY s.imported_at DESC`).all(...(sourceId?[project,sourceId]:[project])) as {
-   source_id:string;display:string|null;manual:string|null;suggestion:string|null;
+   source_id:string;display:string|null;metadata:string;manual:string|null;suggestion:string|null;
    task_id:string|null;status:string|null;error:string|null;
   }[];
  return rows.map(row=>{
@@ -69,8 +75,65 @@ export function sourceAnalyses(store:TrashStore,agent:KnowledgeAgent,project:str
    const manual: string[]=JSON.parse(row.manual);
    for(const field of ['title','authors','publication_date'] as const)if(manual.includes(field))delete display.bibliography[field];
   }
-  return {...display,source_id:row.source_id,status:row.status??undefined,error:row.error??undefined,
+  return {...display,metadata:JSON.parse(row.metadata) as {title:string;authors:string[]|null;year:number|null;publication_date:string|null},source_id:row.source_id,status:row.status??undefined,error:row.error??undefined,
    task_id:row.task_id??undefined,metadataPending:Boolean(row.suggestion&&row.suggestion!=='null'),
    can_resume:row.task_id&&row.status?agent.resumeHintFor(project,row.task_id,row.status):false};
  });
+}
+
+type WatchGroup={watchers:FSWatcher[];count:number};
+const watches=new WeakMap<TrashStore,Map<string,WatchGroup>>();
+function watchKnowledge(store:TrashStore,project:string,response:ServerResponse){
+ const projects=watches.get(store)??new Map<string,WatchGroup>();
+ watches.set(store,projects);
+ let group=projects.get(project);
+ if(!group){
+  const markdown=new MarkdownKnowledge(store),root=markdown.root(project);
+  const watchers:FSWatcher[]=[];
+  for(const part of ['knowledge_base','wiki','literature/cards']){
+   try{
+    const path=join(root,part);
+    if(!lstatSync(path).isDirectory())continue;
+    const watcher=watch(path,{recursive:true,persistent:false},(_event,filename)=>{
+     if(!filename||filename.endsWith('.md')||!filename.includes('.'))markdown.invalidate(project);
+    });
+    watcher.on('error',()=>watcher.close());
+    watchers.push(watcher);
+   }catch{/* Legacy projects might not have all knowledge directories. */}
+  }
+  group={watchers,count:0};
+  projects.set(project,group);
+  resetSourceAnalysis(store,project);
+ }
+ const subscription=group;
+ subscription.count++;
+ response.once('close',()=>{
+  if(--subscription.count)return;
+  for(const watcher of subscription.watchers)watcher.close();
+  projects.delete(project);
+ });
+}
+
+export function streamSourceAnalyses(store:TrashStore,agent:KnowledgeAgent,project:string,response:ServerResponse){
+ watchKnowledge(store,project,response);
+ const initial=sourceAnalyses(store,agent,project);
+ const stream=projectStream(store,project,response);
+ const previous=new Map(initial.map(row=>[row.source_id,JSON.stringify(row)]));
+ stream.onUpdate(update=>{
+  if(!update.wiki&&!update.sources.size)return;
+  const rows=update.wiki?sourceAnalyses(store,agent,project):
+   [...update.sources].flatMap(id=>sourceAnalyses(store,agent,project,id));
+  const present=new Set(rows.map(row=>row.source_id));
+  const removed=[...(update.wiki?previous.keys():update.sources)].filter(id=>!present.has(id)&&previous.delete(id));
+  const changed=rows.filter(row=>{
+   const data=JSON.stringify(row);
+   if(previous.get(row.source_id)===data)return false;
+   previous.set(row.source_id,data);
+   return true;
+  });
+  if(changed.length||removed.length)stream.send('change',{analyses:changed,removed});
+ });
+ // The snapshot and subscription are established in the same server turn.
+ // Every connection starts with fresh state, including after a reconnect.
+ stream.send('snapshot',{analyses:initial});
 }
