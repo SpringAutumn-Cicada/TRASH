@@ -41,14 +41,13 @@
  border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-soft)
 }
 .library-table-heading,.library-row{
- display:grid;grid-template-columns:minmax(0,1fr) 80px 238px;align-items:center;gap:16px;padding-inline:16px
+ display:grid;grid-template-columns:minmax(0,1fr) 58px 238px;align-items:center;column-gap:8px;padding-inline:16px
 }
 .library-table-heading{
  min-height:38px;border-radius:11px 11px 0 0;border-bottom:1px solid var(--line);
  background:var(--surface-soft);color:var(--ink);font-size:12px;font-weight:650
 }
-.library-table-heading>span:nth-child(2),.library-document-modules{justify-self:center}
-.library-table-heading>span:last-child{text-align:right}
+.library-table-heading>span,.library-document-modules{justify-self:start;text-align:left}
 .library-row{
  position:relative;padding-block:14px;border-bottom:1px solid var(--line);
  transition:background .16s,box-shadow .16s
@@ -59,22 +58,21 @@
 .library-document-modules .wiki-entry-button{min-width:58px}
 .library-content-empty{color:var(--muted);font-size:12px}
 .library-row-controls,.library-row-controls .library-row-actions{
- display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;min-width:0
+ display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:6px;min-width:0
 }
 .library-row-controls .library-state{flex:none}
 .library-paper{align-items:center;max-width:100%}
 .literature-workspace .library-paper strong{color:var(--ink);font-weight:600}
 .literature-workspace .library-paper:hover strong{color:var(--accent)}
 @container library-list (max-width: 660px){
- .library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 56px 84px;gap:8px;padding-inline:10px}
+ .library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 44px 84px;padding-inline:10px}
  .library-row{padding-block:12px}
- .library-row-controls{flex-direction:column;align-items:flex-end}
+ .library-row-controls{flex-direction:column;align-items:flex-start}
  .library-document-modules .wiki-entry-button{min-width:44px}
  .library-paper>.file-type{width:28px;height:34px}
  .library-paper{gap:8px}
 }
 @container library-list (max-width: 390px){
- .library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 44px 84px}
  .library-paper{align-items:flex-start;flex-direction:column;gap:4px}
  .library-paper>.file-type{height:20px}
  .library-paper strong{-webkit-line-clamp:3}
