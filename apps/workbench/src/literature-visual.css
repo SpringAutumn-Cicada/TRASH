@@ -48,6 +48,7 @@
  background:var(--surface-soft);color:var(--ink);font-size:12px;font-weight:650
 }
 .library-table-heading>span,.library-document-modules{justify-self:start;text-align:left}
+.library-table-heading>span:last-child{justify-self:end;text-align:right}
 .library-row{
  position:relative;padding-block:14px;border-bottom:1px solid var(--line);
  transition:background .16s,box-shadow .16s
@@ -58,7 +59,7 @@
 .library-document-modules .wiki-entry-button{min-width:58px}
 .library-content-empty{color:var(--muted);font-size:12px}
 .library-row-controls,.library-row-controls .library-row-actions{
- display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:6px;min-width:0
+ display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;min-width:0
 }
 .library-row-controls .library-state{flex:none}
 .library-paper{align-items:center;max-width:100%}
@@ -67,7 +68,7 @@
 @container library-list (max-width: 660px){
  .library-table-heading,.library-row{grid-template-columns:minmax(0,1fr) 44px 84px;padding-inline:10px}
  .library-row{padding-block:12px}
- .library-row-controls{flex-direction:column;align-items:flex-start}
+ .library-row-controls{flex-direction:column;align-items:flex-end}
  .library-document-modules .wiki-entry-button{min-width:44px}
  .library-paper>.file-type{width:28px;height:34px}
  .library-paper{gap:8px}
