@@ -6,6 +6,7 @@ import {knowledgeDocumentId} from '@trash/protocol/browser';
 import {api,uiError} from './api.js';
 import {ModalLayer} from './modal-layer.js';
 import {ChatMarkdown} from './chat-markdown.js';
+import {orderTopicOverview} from './topic-overview-order.js';
 import {ErrorNotice} from './error-notice.js';
 import {projectPath} from './navigation.js';
 import './research-exploration.css';
@@ -136,10 +137,12 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
   setFocusedId(preview.run.id);setPreview(undefined);
  });
  const setRunStop=(r:Run,stop_after:TopicStopAfter)=>void run(()=>api(base+'/research-exploration/'+r.id+'/stop-after',{method:'POST',body:JSON.stringify({stop_after})}));
+ const previewFile=preview?.draft.files[previewPage];
+ const previewText=previewFile?.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')??'';
  const previewPanel=preview&&(<section className="research-create-form" aria-label="单主题试稿">
      <header><h3 ref={focusPreview} tabIndex={-1}>{preview.draft.title} · 试稿</h3><button type="button" className="text-button" disabled={busy} onClick={()=>setPreview(undefined)}>关闭试稿</button></header>
      <div className="research-analysis-modes" role="group" aria-label="试稿页面">{preview.draft.files.map((file,index)=><button key={file.path} type="button" className={index===previewPage?'primary-button':'secondary-button'} aria-pressed={index===previewPage} onClick={()=>setPreviewPage(index)}>{file.path.endsWith('--methods.md')?'方法与条件':file.path.endsWith('--results.md')?'结果与分歧':file.path.endsWith('--insights.md')?'可复用认识':'主题总览'}</button>)}</div>
-     <article className="research-result"><ChatMarkdown text={preview.draft.files[previewPage].text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')}/></article>
+     <article className="research-result"><ChatMarkdown text={previewFile&&!/--(?:methods|results|insights)\.md$/.test(previewFile.path)?orderTopicOverview(previewText):previewText}/></article>
      {!preview.draft.published&&<div className="research-create-footer">
       <button type="button" className="primary-button" disabled={busy||hasActive||runs.some(item=>item.id===preview.run.id&&item.superseded)} onClick={publishPreview}>确认发布主题</button>
      </div>}
