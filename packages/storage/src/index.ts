@@ -46,8 +46,8 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 5) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 5) return;
+    if (version > 6) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 6) return;
     if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
@@ -149,16 +149,10 @@ export class TrashStore {
       CREATE INDEX task_summaries_project ON knowledge_task_summaries(project_id,created_at,task_id);
       CREATE INDEX task_events_task_seq ON knowledge_task_events(task_id,seq);
       INSERT INTO knowledge_task_summaries ${selectTaskSummary};
-      CREATE TRIGGER task_summary_insert AFTER INSERT ON knowledge_tasks BEGIN
-        INSERT OR REPLACE INTO knowledge_task_summaries ${selectTaskSummary} WHERE task_id=NEW.task_id;
-      END;
-      CREATE TRIGGER task_summary_update AFTER UPDATE ON knowledge_tasks BEGIN
-        INSERT OR REPLACE INTO knowledge_task_summaries ${selectTaskSummary} WHERE task_id=NEW.task_id;
-      END;
       PRAGMA user_version = 4;
       COMMIT;
     `);
-    this.db.exec(`
+    if (version < 5) this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE source_analysis_display (
         source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
@@ -172,8 +166,29 @@ export class TrashStore {
       PRAGMA user_version = 5;
       COMMIT;
     `);
-
-
+    const summaryFields = [
+      "project_id", "status", "created_at", "title", "kind", "source_ids", "abstract_mode",
+      "include_source_wiki", "wiki_level", "attempt_of", "output_id", "error", "prompt_version",
+      "archived_duplicate", "deleted_at", "dismissed_reanalysis",
+    ];
+    // An outer UPSERT can override a trigger's OR REPLACE conflict policy.
+    const upsertTaskSummary = `
+      INSERT INTO knowledge_task_summaries(task_id,${summaryFields.join(",")})
+      ${selectTaskSummary} WHERE task_id=NEW.task_id
+      ON CONFLICT(task_id) DO UPDATE SET ${summaryFields.map(field => `${field}=excluded.${field}`).join(", ")};`;
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      DROP TRIGGER IF EXISTS task_summary_insert;
+      DROP TRIGGER IF EXISTS task_summary_update;
+      CREATE TRIGGER task_summary_insert AFTER INSERT ON knowledge_tasks BEGIN
+        ${upsertTaskSummary}
+      END;
+      CREATE TRIGGER task_summary_update AFTER UPDATE ON knowledge_tasks BEGIN
+        ${upsertTaskSummary}
+      END;
+      PRAGMA user_version = 6;
+      COMMIT;
+    `);
   }
 
   createProject(input: Omit<ResearchProject, "protocol_version" | "project_id" | "status" | "created_at" | "updated_at">): ResearchProject {
