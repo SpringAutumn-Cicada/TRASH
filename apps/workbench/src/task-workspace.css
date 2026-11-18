@@ -94,3 +94,11 @@ html:has(.task-workspace)::-webkit-scrollbar-button{display:none;width:0;height:
 @media(max-width:700px){.task-workspace{padding:7px}.task-page-heading{padding:12px 12px 6px}.task-page-heading p{display:none}.task-toolbar{padding:8px 10px;gap:8px}.task-filters{flex-wrap:wrap}.task-search{max-width:none;width:auto}.task-layout{display:block;height:calc(100dvh - 230px);min-height:480px}.task-list{box-sizing:border-box}.task-detail-heading{padding:12px 15px;flex-wrap:wrap}.task-detail-heading h3{font-size:14px}.task-reading-panel{margin:0 15px 4px}.task-reading-meter{gap:10px}.task-reading-number{min-width:42px}.task-reading-number>strong{font-size:25px}.task-reading-caption strong{font-size:10px}.task-batch-labels{font-size:8px}.task-detail-tabs{padding:0 15px;gap:13px}.task-log-scroll{padding:3px 14px 10px}.task-log-line{grid-template-columns:52px minmax(0,1fr);gap:8px}.task-log-line pre{font-size:10px}}
 #modal-root .task-modal{--task-soft:var(--accent-soft)}
 @media(prefers-reduced-motion:no-preference){.task-batch.working i{animation:task-batch-breathe 2s ease-in-out infinite}@keyframes task-batch-breathe{50%{opacity:.45}}}
+
+.task-pages {
+  align-items: center;
+  display: flex;
+  gap: .5rem;
+  justify-content: space-between;
+  padding: .5rem .75rem;
+}

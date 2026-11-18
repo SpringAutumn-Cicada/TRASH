@@ -46,8 +46,8 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 3) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 3) return;
+    if (version > 4) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 4) return;
     if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
@@ -113,7 +113,7 @@ export class TrashStore {
       PRAGMA user_version = 2;
       COMMIT;
     `);
-    this.db.exec(`
+    if (version < 3) this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE experiment_repositories(project_id TEXT PRIMARY KEY REFERENCES projects(project_id),data TEXT NOT NULL);
       CREATE TABLE experiment_profiles(profile_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(project_id),data TEXT NOT NULL);
@@ -126,6 +126,39 @@ export class TrashStore {
       PRAGMA user_version = 3;
       COMMIT;
     `);
+    const selectTaskSummary = `
+      SELECT task_id, project_id, status, created_at,
+        json_extract(data,'$.input.title'), json_extract(data,'$.input.kind'),
+        json_extract(data,'$.input.source_ids'), json_extract(data,'$.input.abstract_mode'),
+        json_extract(data,'$.input.include_source_wiki'), json_extract(data,'$.input.wiki_level'),
+        json_extract(data,'$.attempt_of'), json_extract(data,'$.output_id'),
+        substr(json_extract(data,'$.error'),1,500),
+        json_extract(data,'$.snapshot.prompt_version'),
+        coalesce(json_extract(data,'$.archived_duplicate'),0),
+        json_extract(data,'$.deleted_at'), coalesce(json_extract(data,'$.dismissed_reanalysis'),0)
+      FROM knowledge_tasks`;
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE knowledge_task_summaries (
+        task_id TEXT PRIMARY KEY REFERENCES knowledge_tasks(task_id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+        title TEXT, kind TEXT, source_ids TEXT, abstract_mode INTEGER, include_source_wiki INTEGER,
+        wiki_level TEXT, attempt_of TEXT, output_id TEXT, error TEXT, prompt_version INTEGER,
+        archived_duplicate INTEGER NOT NULL, deleted_at TEXT, dismissed_reanalysis INTEGER NOT NULL
+      );
+      CREATE INDEX task_summaries_project ON knowledge_task_summaries(project_id,created_at,task_id);
+      CREATE INDEX task_events_task_seq ON knowledge_task_events(task_id,seq);
+      INSERT INTO knowledge_task_summaries ${selectTaskSummary};
+      CREATE TRIGGER task_summary_insert AFTER INSERT ON knowledge_tasks BEGIN
+        INSERT OR REPLACE INTO knowledge_task_summaries ${selectTaskSummary} WHERE task_id=NEW.task_id;
+      END;
+      CREATE TRIGGER task_summary_update AFTER UPDATE ON knowledge_tasks BEGIN
+        INSERT OR REPLACE INTO knowledge_task_summaries ${selectTaskSummary} WHERE task_id=NEW.task_id;
+      END;
+      PRAGMA user_version = 4;
+      COMMIT;
+    `);
+
   }
 
   createProject(input: Omit<ResearchProject, "protocol_version" | "project_id" | "status" | "created_at" | "updated_at">): ResearchProject {

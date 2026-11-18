@@ -176,9 +176,12 @@ export class KnowledgeStore {
   tasks(projectId: string): KnowledgeTask[] {
     return (this.db.prepare("SELECT data FROM knowledge_tasks WHERE project_id=? ORDER BY created_at DESC").all(projectId) as { data: string }[]).map(r => JSON.parse(r.data) as KnowledgeTask);
   }
+  task(projectId: string, taskId: string): KnowledgeTask | undefined {
+    const row = this.db.prepare("SELECT data FROM knowledge_tasks WHERE task_id=? AND project_id=?").get(taskId,projectId) as {data:string}|undefined;
+    return row && JSON.parse(row.data) as KnowledgeTask;
+  }
   saveTask(task: KnowledgeTask): void {
-    this.db.prepare("INSERT INTO knowledge_tasks VALUES (?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET data=excluded.data").run(task.task_id, task.project_id, task.status, task.created_at, JSON.stringify(task));
-    this.db.prepare("UPDATE knowledge_tasks SET status=? WHERE task_id=?").run(task.status, task.task_id);
+    this.db.prepare("INSERT INTO knowledge_tasks VALUES (?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET data=excluded.data,status=excluded.status").run(task.task_id, task.project_id, task.status, task.created_at, JSON.stringify(task));
   }
   event(taskId: string, message: string): void {
     this.db.prepare("INSERT INTO knowledge_task_events(task_id,at,message) VALUES (?,?,?)").run(taskId, new Date().toISOString(), message.slice(0, 10000));
