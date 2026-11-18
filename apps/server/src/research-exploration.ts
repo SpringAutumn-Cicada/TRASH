@@ -94,6 +94,18 @@ export class ResearchExploration {
     titles.set(task.output_id,materialGroupTitle(run.created_at,category,appendGroup?Number(appendGroup):ordinal));
    }
   }
+  const legacyGroups=new Map<string,number>();
+  const summaries=new MarkdownKnowledge(this.store).index(project).documents.filter(doc=>doc.level==='summary'&&!titles.has(doc.id))
+   .sort((a,b)=>a.modified.localeCompare(b.modified)||a.id.localeCompare(b.id));
+  for(const doc of summaries){
+   const match=doc.title.match(/^(.+)：材料(分组|工作版)$/);
+   if(!match)continue;
+   const category=match[1]+'历史材料'+match[2];
+   const key=materialGroupTitle(doc.modified,category,1);
+   const group=(legacyGroups.get(key)??0)+1;
+   legacyGroups.set(key,group);
+   titles.set(doc.id,materialGroupTitle(doc.modified,category,group));
+  }
   return titles;
  }
  summaries(project:string){
