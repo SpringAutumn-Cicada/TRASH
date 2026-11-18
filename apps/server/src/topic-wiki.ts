@@ -48,7 +48,7 @@ export function topicPrompt(id:string,title:string){
 }
 export function topicManifest(root:string,id:string){
  const file=join(root,'.trash/topic-groups',id+'.json');
- return existsSync(file)?JSON.parse(readFileSync(file,'utf8')) as {version:1;topic_id:string;revision:number;current:{path:string;hash:string}[]}:undefined;
+ return existsSync(file)?JSON.parse(readFileSync(file,'utf8')) as {version:1;topic_id:string;revision:number;task_id?:string;current:{path:string;hash:string}[]}:undefined;
 }
 
 export function topicVersions(root:string,id:string){

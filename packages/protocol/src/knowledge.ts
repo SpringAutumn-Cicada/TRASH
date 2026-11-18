@@ -63,6 +63,7 @@ export function parseKnowledge(kind: KnowledgeKind, value: unknown): KnowledgeCo
 export const knowledgeTaskInputSchema = z.object({
   research_skill:z.enum(["map","background","synthesis","exploration"]).optional(),
   research_exploration:z.enum(["summary","summary-working","directions","evidence-plan","research-map","comparison","background","topic-discovery","topic"]).optional(),
+  topic_preview:z.literal(true).optional(),
   topic_discovery_append:z.object({
     source_ids:z.array(z.string()).min(1).max(100),
     new_summary_ids:z.array(z.string()).min(1).max(800),

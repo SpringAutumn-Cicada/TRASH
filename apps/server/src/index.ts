@@ -202,6 +202,26 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
       sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids,input.stop_after)});return;
     }
+    const topicPreviewRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/topics\/([a-f0-9]{20})\/(preview|publish)$/);
+    if(topicPreviewRoute){
+      const [,runId,topicId,action]=topicPreviewRoute;
+      if(action==='preview'&&method==='GET'){sendJson(response,200,{draft:exploration.readPreview(projectId,runId,topicId)});return;}
+      if(method==='POST'){
+        if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
+        const body=await readJson(request);
+        if(action==='preview'){
+          z.object({}).strict().parse(body);
+          sendJson(response,202,{run:exploration.generatePreview(projectId,runId,topicId)});return;
+        }
+        const input=z.object({task_id:z.string().regex(/^task_[a-f0-9-]+$/),confirm:z.literal(true)}).strict().parse(body);
+        sendJson(response,200,{run:exploration.publishPreview(projectId,runId,topicId,input.task_id)});return;
+      }
+    }
+    const stageRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/stop-after$/);
+    if(stageRoute&&method==='POST'){
+      const input=z.object({stop_after:z.enum(['materials','discovery','synthesis'])}).strict().parse(await readJson(request));
+      sendJson(response,200,{run:exploration.setStopAfter(projectId,stageRoute[1],input.stop_after)});return;
+    }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
     if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional(),stop_after:topicStopAfter}).strict().parse(await readJson(request));if((input.topic_id||input.stop_after)&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id,input.stop_after):exploration.cancel(projectId,explorationAction[1])});return;}
     const rediscoverRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/rediscover$/);

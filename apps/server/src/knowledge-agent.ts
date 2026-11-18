@@ -1,4 +1,4 @@
-import {isTopicBundle,topicPaths,topicOutputPaths,topicGroupIssues,topicPrompt} from './topic-wiki.js';
+import {isTopicBundle,topicPaths,topicOutputPaths,topicGroupIssues,topicPrompt,topicManifest} from './topic-wiki.js';
 import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {researchExplorationIssues,RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS,RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS,RESEARCH_SUMMARY_HARD_MAX_CHARACTERS} from './research-exploration-format.js';
 import {CliTurnResult} from './cli-turn-result.js';
@@ -41,6 +41,7 @@ export class KnowledgeAgent implements TaskRunner {
   }
   enqueue(projectId: string, input: KnowledgeTaskInput, retryOf?: string): KnowledgeTask[] {
     if (this.closed) requestError("SERVER_STOPPING",409);
+    if(input.topic_preview&&(!isTopicBundle(input)||input.research_exploration!=='topic'))requestError('INVALID_REQUEST',400);
     const kbRoot=new MarkdownKnowledge(this.store).root(projectId);
     if(!migrationManifest(kbRoot)){
       if(this.knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))requestError('PROJECT_HAS_ACTIVE_TASKS',409);
@@ -58,7 +59,7 @@ export class KnowledgeAgent implements TaskRunner {
       }
     }
     if(input.kind==='wiki-page'){
-      const current=this.knowledge.tasks(projectId).find(task=>['queued','running'].includes(task.status)&&task.input.kind==='wiki-page'&&task.input.target_id===input.target_id&&task.input.title===input.title&&task.input.wiki_level===input.wiki_level&&task.input.instructions===input.instructions&&JSON.stringify(task.input.dependencies)===JSON.stringify(input.dependencies)&&JSON.stringify(task.input.source_ids)===JSON.stringify(input.source_ids));
+      const current=this.knowledge.tasks(projectId).find(task=>['queued','running'].includes(task.status)&&task.input.kind==='wiki-page'&&task.input.topic_preview===input.topic_preview&&task.input.target_id===input.target_id&&task.input.title===input.title&&task.input.wiki_level===input.wiki_level&&task.input.instructions===input.instructions&&JSON.stringify(task.input.dependencies)===JSON.stringify(input.dependencies)&&JSON.stringify(task.input.source_ids)===JSON.stringify(input.source_ids));
       if(current){if(retryOf)this.onTaskRetried?.(projectId,retryOf,current);return [current];}
     }
     if(input.abstract_wiki_only&&!input.abstract_mode)requestError('INVALID_REQUEST');
@@ -257,6 +258,40 @@ export class KnowledgeAgent implements TaskRunner {
     }
     return {valid,issues};
   }
+  topicPreview(projectId:string,taskId:string){
+    const task=this.knowledge.tasks(projectId).find(item=>item.task_id===taskId);
+    if(!task?.input.topic_preview||task.status!=='completed'||!task.topic_draft)requestError('TOPIC_PREVIEW_NOT_READY',409);
+    const snapshot=task.snapshot as {topic_entry?:string;topic_sources?:string[];dependencies?:{id:string;path:string;hash:string}[];expectedTargets?:Record<string,string|null>};
+    const entry=snapshot.topic_entry;
+    if(!entry||!/^wiki-[A-Za-z0-9_-]+$/.test(entry))requestError('TOPIC_PREVIEW_NOT_READY',409);
+    const allowed=topicPaths(entry),paths=task.topic_draft.files.map(file=>file.path);
+    if(!paths.includes(allowed[0])||paths.some(path=>!allowed.includes(path)))requestError('TOPIC_PREVIEW_CHANGED',409);
+    const output=join(projectRuntime(this.store.root,projectId,'tasks',taskId),'output');
+    if(!existsSync(output)||lstatSync(output).isSymbolicLink())requestError('TOPIC_PREVIEW_CHANGED',409);
+    const {valid,issues}=this.inspectOutputs(task,output,paths);
+    if(issues.length||valid.some(file=>!task.topic_draft!.files.some(ref=>ref.path===file.path&&ref.hash===file.hash)))requestError('TOPIC_PREVIEW_CHANGED',409);
+    return {task,snapshot,entry,files:valid};
+  }
+  publishTopicPreview(projectId:string,taskId:string){
+    const {task,snapshot,entry,files}=this.topicPreview(projectId,taskId);
+    const markdown=new MarkdownKnowledge(this.store);
+    const manifest=topicManifest(markdown.root(projectId),entry);
+    // Recover if the wiki transaction committed before the task and run records were saved.
+    if(manifest?.task_id!==taskId){
+      if(task.output_id)requestError('TOPIC_PREVIEW_CHANGED',409);
+      const available=markdown.index(projectId).documents;
+      if(snapshot.dependencies?.some(ref=>!available.some(doc=>doc.id===ref.id&&doc.path===ref.path&&doc.hash===ref.hash)))requestError('TOPIC_PREVIEW_CHANGED',409);
+      const issues=topicGroupIssues(entry,files,snapshot.topic_sources??task.input.source_ids,available.map(doc=>doc.path));
+      if(issues.length)requestError('TOPIC_PREVIEW_CHANGED',409);
+      const writes=files.map(({path,text})=>({path,text,expected:snapshot.expectedTargets?.[path]??null}));
+      markdown.commit(projectId,writes,{}, {taskId,fullTopicId:entry});
+    }
+    if(!task.output_id){
+      task.output_id=entry;task.output_version=1;this.knowledge.saveTask(task);
+      this.knowledge.event(taskId,'用户确认发布单主题试稿：'+entry);
+    }
+    return entry;
+  }
   private async pump(projectId: string): Promise<void> {
     if(this.closed || this.running.has(projectId) || this.reserved.has(projectId))return;
     const task=this.knowledge.tasks(projectId).filter(t=>t.status==="queued").sort((a,b)=>a.created_at.localeCompare(b.created_at))[0];
@@ -439,6 +474,13 @@ export class KnowledgeAgent implements TaskRunner {
       for(const ref of snapshot.dependencies??[]){const current=markdown.index(projectId).documents.find(d=>d.id===ref.id);if(!current||current.hash!==ref.hash)throw new Error('来源内容已变化，保留工作副本，请重新综合');}
       for(const result of readingResults)if(new PdfReading(this.store).original(projectId,source).hash!==result.hash)throw new Error('论文PDF已变化，保留工作副本，请重新分析');
       for(const [id,baseline] of Object.entries(snapshot.bibliography_baselines??{}))if(sourceContentHash(this.store.getSource(id))!==baseline.content_hash)throw new Error('论文原始内容已变化，保留工作副本，请重新分析');
+      if(topicEntry&&task.input.topic_preview){
+        task.topic_draft={files:checked.valid.map(({path,hash})=>({path,hash}))};
+        phase('completed','单主题试稿已校验，等待确认发布');
+        task.status='completed';this.knowledge.saveTask(task);
+        this.knowledge.event(task.task_id,'试稿已通过主题 Wiki 组校验，尚未发布');
+        return;
+      }
       phase('publishing','核对版本并整组发布');
       this.knowledge.event(task.task_id,'发布阶段：全部输出校验合格，核对版本后整组发布');
       if(task.input.abstract_mode){
