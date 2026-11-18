@@ -96,7 +96,10 @@ export class KnowledgeAgent implements TaskRunner {
       if(paperBundle&&inputChars>400000)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
       if(part.research_exploration&&inputChars>(part.research_exploration==='summary-working'?120000:50000))requestError("RESEARCH_INPUT_TOO_LARGE",422);
       if(inputChars>60000&&!paperBundle)requestError('KNOWLEDGE_INPUT_TOO_LARGE',422);
-      const referenceDocuments=!paperBundle&&part.kind==='wiki-page'&&part.source_ids.length&&part.research_exploration!=='summary-working'?index.filter(d=>(topicEntry?topicSources:part.source_ids).includes(d.source_id??'')&&d.kind==='wiki-page'&&(d.group_status===undefined||d.group_status==='current')).map(d=>markdown.read(projectId,d.id)):[];
+      const appendReferences=part.research_exploration==='topic-discovery'?part.topic_discovery_append?.reference_ids:undefined;
+      if(appendReferences?.some(id=>!index.some(doc=>doc.id===id&&doc.kind==='wiki-page')))requestError('DEPENDENCY_NOT_FOUND',404);
+      const referenceDocuments=!paperBundle&&part.kind==='wiki-page'&&part.source_ids.length&&part.research_exploration!=='summary-working'
+        ?index.filter(d=>(!appendReferences||!selectedIds.has(d.id))&&(appendReferences?.includes(d.id)||((topicEntry?topicSources:part.source_ids).includes(d.source_id??'')&&d.kind==='wiki-page'&&(d.group_status===undefined||d.group_status==='current')))).map(d=>markdown.read(projectId,d.id)):[];
       const dependencies=[...new Map([...selected,...referenceDocuments,...topicMembers].map(d=>[d.path,{id:d.id,path:d.path,hash:d.hash}])).values()];
       if(part.kind==='literature-card'&&sources[0])part={...part,title:sources[0].source.title};
       const targetPaths=part.kind==='literature-card'?[`literature/cards/idcard-${part.source_ids[0]}.md`,...(part.include_source_wiki?[`wiki/wiki-${part.source_ids[0]}.md`]:[])]:previous?[previous.path]:[];
@@ -232,7 +235,7 @@ export class KnowledgeAgent implements TaskRunner {
         if(size>1024*1024){issues.push({path,reason:`文件超限：${size} 字节，上限 1048576 字节`,unsafe:false});continue;}
         const text=readFileSync(file,'utf8');
         if(!text.trim()){issues.push({path,reason:'文件为空',unsafe:false});continue;}
-        if(task.input.research_exploration){const errors=researchExplorationIssues(path,text,task.input.research_exploration,task.input.source_ids,taskSkill(task.input)==='trash-literature-synthesis');if(errors.length){issues.push({path,reason:errors.join('；'),unsafe:false});continue;}}
+        if(task.input.research_exploration){const errors=researchExplorationIssues(path,text,task.input.research_exploration,task.input.source_ids,taskSkill(task.input)==='trash-literature-synthesis',task.input.topic_discovery_append?.source_ids);if(errors.length){issues.push({path,reason:errors.join('；'),unsafe:false});continue;}}
         if(task.input.abstract_mode){
           if(!/^#\s+.+/m.test(text)||!text.includes('材料范围：仅摘要')||!text.includes(task.input.source_ids[0])){issues.push({path,reason:'摘要结果缺少标题、材料范围或来源标识',unsafe:false});continue;}
           const headings=(path.startsWith('abstract-library/wiki/')||path.endsWith('/memory.md'))?['何时读取','摘要事实','研究线索','可能关联','证据边界','原始摘要入口']:['研究问题','方法概览','作者声称的贡献','摘要中的结果','研究线索','分析边界'];
@@ -288,6 +291,7 @@ export class KnowledgeAgent implements TaskRunner {
         input_version:2
       }:snapshot.reference_documents?.length?{...(task.snapshot as object),reference_documents:undefined,material_index:(snapshot.reference_documents??[]).map(({id,path,title,source_id,stale})=>({id,path,title,source_id,stale}))}: {...(task.snapshot as Record<string,unknown>)};
       if(taskSkill(task.input)==='trash-literature-synthesis')Object.assign(modelInput,{source_scope:task.input.source_ids,material_versions:(snapshot.dependencies??[]).map(({path,hash})=>({path,hash})),coverage_note:'source_scope 是本次选择范围，索引不代表已读；summary 仅沉淀逐篇差异和短引用，完整来源身份由后台索引维护'});
+      if(task.input.topic_discovery_append)modelInput.topic_discovery_append=task.input.topic_discovery_append;
       if(topicEntry)Object.assign(modelInput,{topic_group:{entry_id:topicEntry,allowed:topicPaths(topicEntry),required:paths},outputs:paths.map(path=>({path,id:knowledgeDocumentId(path)}))});
       writeFileSync(join(directory,'input.json'),JSON.stringify(modelInput,null,2),{mode:0o600});
       const output=join(directory,'output');mkdirSync(output,{recursive:true});

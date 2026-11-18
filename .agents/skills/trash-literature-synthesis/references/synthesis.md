@@ -16,6 +16,8 @@
 
 先核对 topic_index；命中同一问题时写“已有主题ID：真实ID”，保留已有名称与人工内容。同名不同义不强合并，同义不同名不重复创建；索引不足时声明未核对范围。发现只写清单，后台展开预算不限制候选总数，不自行启动其他任务。
 
+如果 input.json 含 `topic_discovery_append`，这是追加文献的一轮。先读完 `new_summary_ids` 指定的本轮分组，再按新增问题查阅相关旧材料、上一轮发现清单和已有主题。来源覆盖只逐项说明本轮 `source_ids` 的归属或未覆盖原因。正式主题链接至少两篇实际论文 Wiki，其中至少一篇来自本轮整理范围；正文说明新证据带来的新问题、支持、反例或条件。沿用已发布主题时写“已有主题ID：真实ID”。接续尚未发布的同一问题时写“既有待处理主题ID：真实ID”，该 ID 从 `unresolved_topics` 获得。仅输出受本轮材料影响的条目，其他主题由平台保留。没有新增条目时，在材料范围说明理由并写“未发现可整理主题”。
+
 ## 主题 Wiki 组 topic / comparison
 
 任务提供主题入口路径及组清单。入口保持原稳定 ID；同目录可选文件为 `<入口ID>--methods.md`、`<入口ID>--results.md`、`<入口ID>--insights.md`。不创建其他主题或复制论文依据。每页从首行 frontmatter 开始：knowledge_version: 2、kind: wiki-page、level: topic、id: 文件名去.md、topic_id: 入口ID。入口 page_role: topic-synthesis；子页 page_role: topic-page。不写 source_id（本组来自多篇）。

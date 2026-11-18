@@ -1,30 +1,40 @@
 import {knowledgeLinks} from './knowledge-links.js';
+import {markdownReferences} from '@trash/protocol';
 
 export const RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS=6000;
 export const RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS=8000;
 export const RESEARCH_SUMMARY_HARD_MAX_CHARACTERS=10000;
 
-export function researchExplorationIssues(path:string,text:string,mode:'summary'|'summary-working'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic',sources:string[]=[],synthesis=false):string[]{
+export function topicDiscoveryEntries(text:string){
+ return markdownReferences(text).text.split(/^##[ \t]+/m).slice(1).flatMap(section=>{
+  const [heading,...lines]=section.split(/\r?\n/);
+  const match=heading.match(/^(知识主题|候选线索|研究假设)[：:][ \t]*(.+)$/);
+  return match?[{kind:match[1],title:match[2].trim(),body:lines.join('\n').trim()}]:[];
+ });
+}
+
+export function researchExplorationIssues(path:string,text:string,mode:'summary'|'summary-working'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic',sources:string[]=[],synthesis=false,changedSources?:string[]):string[]{
  const issues:string[]=[];
  const hasSection=(name:string)=>Boolean(text.split(new RegExp('^## '+name+'\\s*$','m'))[1]?.split(/^## /m)[0]?.trim());
  const summaryMode=mode==='summary'||mode==='summary-working';
  if(synthesis&&(summaryMode||mode==='topic-discovery')){
   for(const name of summaryMode?['何时读取','覆盖方向','材料范围','批次标识']:['何时读取','材料范围'])if(!hasSection(name))issues.push('缺少有内容的栏目：'+name);
   const links=knowledgeLinks(path,text),linkedSources=new Set(links.flatMap(link=>link.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[]));
-  const missing=sources.filter(source=>!linkedSources.has(source)&&!text.includes(source));
+  const missing=(changedSources??sources).filter(source=>!linkedSources.has(source)&&!text.includes(source));
   if(missing.length)issues.push('缺少所选来源的短引用定义或未覆盖说明：'+missing.join('、'));
   for(const link of links){const source=link.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.[1];if(source&&!sources.includes(source))issues.push('来源不在所选范围：'+source);}
   if(summaryMode&&text.length>RESEARCH_SUMMARY_HARD_MAX_CHARACTERS)issues.push(`中间总结超出硬上限：${text.length} 字符，上限 ${RESEARCH_SUMMARY_HARD_MAX_CHARACTERS}；目标 ${RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS}–${RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS} 字符，请压缩重复引用定义、完整目录和重复解释，保留问题、机制、差异、条件、分歧与未知，不得截断正文`);
  }
  if(mode==='topic-discovery'){
   if(!/^## 材料范围\s*$/m.test(text))issues.push('主题发现缺少材料范围');
-  const entries=[...text.matchAll(/^## (知识主题|候选线索|研究假设)[：:]\s*(.+)$/gm)];
+  const entries=topicDiscoveryEntries(text);
   if(!entries.length&&!text.includes('未发现可整理主题'))issues.push('主题发现需有效主题、候选线索或明确未发现可整理主题');
-  for(let i=0;i<entries.length;i++){
-   const body=text.slice(entries[i].index!+entries[i][0].length,entries[i+1]?.index??text.length).trim();
-   if(body.length<80)issues.push(`主题发现条目“${entries[i][2]}”内容过少，不能只记录来源覆盖`);
-   if(entries[i][1]==='知识主题'&&!knowledgeLinks(path,body).some(link=>link.path.startsWith('knowledge_base/papers/')))
-    issues.push(`正式主题“${entries[i][2]}”缺少论文 Wiki 链接，不能拆分为独立主题 Wiki`);
+  for(const {kind,title,body} of entries){
+   if(body.length<80)issues.push(`主题发现条目“${title}”内容过少，不能只记录来源覆盖`);
+   if(kind!=='知识主题')continue;
+   const linked=new Set(knowledgeLinks(path,body).flatMap(link=>link.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[]));
+   if(!linked.size)issues.push(`正式主题“${title}”缺少论文 Wiki 链接，不能拆分为独立主题 Wiki`);
+   if(changedSources&&(linked.size<2||!changedSources.some(source=>linked.has(source))))issues.push(`正式主题“${title}”须链接至少两篇不同论文，其中至少一篇来自本轮新材料`);
   }
   return issues;
  }
