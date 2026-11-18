@@ -242,27 +242,42 @@ export class ResearchExploration {
   if(active(previous))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   if(this.list(project).some(run=>active(run)))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   if(this.superseded(previous,this.list(project)))throw Object.assign(new Error('RESEARCH_APPEND_OUTDATED'),{statusCode:409});
-  const tasks=this.knowledge.tasks(project);
-  const discovery=previous.discovery_id?tasks.find(task=>task.output_id===previous.discovery_id&&task.status==='completed'&&task.input.research_exploration==='topic-discovery'):undefined;
-  if(stopAfter&&!discovery)throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
-  const summaryIds=unique(previous.history_tasks.map(taskId=>tasks.find(task=>task.task_id===taskId)).filter(task=>task?.status==='completed'&&task.output_id&&['summary','summary-working'].includes(task.input.research_exploration??'')).map(task=>task!.output_id!));
-  const previousMaterials=previous.discovery_material_ids??previous.append?.batches.flatMap(batch=>batch.output?[batch.output.id]:[]);
-  const outputs=previousMaterials?.length?previousMaterials:stopAfter&&discovery?discovery.input.dependencies.map(ref=>ref.object_id):summaryIds;
-  if(!outputs.length)throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
-  const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:[...previous.source_ids],created_at:at,updated_at:at,stage:'discovering',tasks:[],history_tasks:[],round:0,instructions:previous.instructions,mode:'topics',material_ids:outputs,summary_work_ids:outputs,signature:createHash('sha256').update(JSON.stringify({mode:'topics',source_ids:previous.source_ids,materials:outputs,at})).digest('hex')};
-  const directory=this.topicDirectories(project).current;
-  run.target_id=directory?.id;run.directory_expected=directory?.hash;
-  run.retained_topics=[...(previous.retained_topics??[]),...(previous.topics??[]).filter(topic=>topic.status==='completed')];
-  run.discovery_material_ids=outputs;
-  run.stop_after=stopAfter;
-  if(stopAfter&&discovery){
-   // Reuse the discovery scope, including incremental references, without depending on its old output.
-   run.append=previous.append;
-   run.source_hashes=previous.source_hashes;
-   const task=this.agent.enqueue(project,{...discovery.input,regenerate:true})[0];
-   run.tasks=[task.task_id];this.save(run);this.advance(run);return run;
+  const md=new MarkdownKnowledge(this.store),all=md.index(project).documents;
+  const selected=new Set(previous.source_ids);
+  const papers=all.filter(doc=>doc.source_id&&selected.has(doc.source_id)&&doc.level==='single'&&paperSource(doc.path)===doc.source_id&&(doc.group_status===undefined||doc.group_status==='current'));
+  if(previous.source_ids.some(source=>!papers.some(doc=>doc.source_id===source&&doc.path.endsWith('/whoami.md')&&!doc.stale)))
+   throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
+
+  const byId=new Map(all.map(doc=>[doc.id,doc]));
+  const producers=new Map(this.knowledge.tasks(project).filter(task=>task.status==='completed'&&task.output_id).map(task=>[task.output_id!,task]));
+  const discovery=previous.discovery_id?producers.get(previous.discovery_id):undefined;
+  const retained=previous.append?[...previous.append.reused,...previous.append.batches.flatMap(batch=>batch.output?[batch.output]:[])]:snapshotDocs(discovery);
+  const coveredBy=(ref:SnapshotRef,visited=new Set<string>()):string[]=>{
+   const source=paperSource(ref.path);if(source)return [source];
+   if(ref.level!=='summary'||visited.has(ref.id))return [];
+   visited.add(ref.id);
+   return snapshotDocs(producers.get(ref.id)).flatMap(input=>coveredBy(input,visited));
+  };
+  const covered=new Set<string>(),materials:string[]=[];
+  for(const ref of retained){
+   const doc=byId.get(ref.id);if(!doc||doc.stale||doc.hash!==ref.hash||doc.path!==ref.path||doc.level!=='summary')continue;
+   const sources='source_ids' in ref?ref.source_ids:coveredBy(doc);
+   if(!sources.length||sources.some(source=>!selected.has(source)))continue;
+   materials.push(doc.id);for(const source of sources)covered.add(source);
   }
-  this.save(run);try{run.tasks=[this.enqueue(run,outputs,'topic-discovery').task_id];this.save(run);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'重新发现主题失败';this.save(run);}return run;
+  const outputs=unique([...materials,...papers.filter(doc=>!covered.has(doc.source_id!)&&/\/(whoami|research_problem|contributions|insights)\.md$/.test(doc.path)).map(doc=>doc.id),
+   ...(previous.topic_ids??[]).filter(id=>byId.has(id))]);
+  const at=new Date().toISOString(),directory=this.topicDirectories(project).current;
+  const run:Run={
+   id:'exploration_'+randomUUID(),project_id:project,source_ids:[...selected],created_at:at,updated_at:at,
+   stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions:previous.instructions,mode:'topics',
+   material_ids:outputs,stop_after:stopAfter,topic_ids:previous.topic_ids,source_hashes:papers.map(({path,hash})=>({path,hash})),
+   target_id:directory?.id,directory_expected:directory?.hash,
+   retained_topics:[...(previous.retained_topics??[]),...(previous.topics??[]).filter(topic=>topic.status==='completed')],
+  };
+  this.save(run);
+  try{this.schedule(run,outputs);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'重新发现主题失败';this.save(run);}
+  return run;
  }
  candidates(project:string,id:string){
   const run=this.detail(project,id);if(run.stage!=='completed'||!run.result_id||run.question_id||run.mode&&run.mode!=='directions')return [];

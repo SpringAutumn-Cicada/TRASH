@@ -10,7 +10,7 @@ export const researchActive=(stage:string)=>['summarizing','generating','discove
 const stages:Record<string,string>={summarizing:'整理材料','materials-ready':'材料已就绪','discovery-ready':'主题已发现',generating:'组织研究内容',discovering:'发现主题',previewing:'生成单主题试稿',topics:'综合主题',partial:'本轮已结束',completed:'已完成',failed:'处理失败',interrupted:'已中断',cancelled:'已停止'};
 const statuses:Record<string,string>={running:'处理中',generating:'处理中',completed:'已完成',queued:'排队中',pending:'待展开',failed:'失败',interrupted:'已中断',cancelled:'已停止',missing:'记录缺失',candidate:'候选线索'};
 const duration=(seconds:number)=>seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分${seconds%60?` ${seconds%60} 秒`:''}`;
-export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onRediscover,onAppend,onStop,onGeneratePreview,onPreview,onSetStop,sourceTitles,view,onView,preview}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic,stopAfter?:TopicStopAfter)=>void;onRediscover:(run:ResearchRun,stopAfter?:'discovery')=>void;onAppend:(run:ResearchRun)=>void;onStop:(run:ResearchRun)=>void;onGeneratePreview:(run:ResearchRun,topic:ResearchTopic)=>void;onPreview:(run:ResearchRun,topic:ResearchTopic)=>void;onSetStop:(run:ResearchRun,stage:TopicStopAfter)=>void;sourceTitles:string[];view?:ResearchStageView;onView:(view:ResearchStageView)=>void;preview?:React.ReactNode}){
+export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onRediscover,onAppend,onStop,onGeneratePreview,onPreview,onSetStop,sourceTitles,view,onView,preview}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic,stopAfter?:TopicStopAfter)=>void;onRediscover:(run:ResearchRun)=>void;onAppend:(run:ResearchRun)=>void;onStop:(run:ResearchRun)=>void;onGeneratePreview:(run:ResearchRun,topic:ResearchTopic)=>void;onPreview:(run:ResearchRun,topic:ResearchTopic)=>void;onSetStop:(run:ResearchRun,stage:TopicStopAfter)=>void;sourceTitles:string[];view?:ResearchStageView;onView:(view:ResearchStageView)=>void;preview?:React.ReactNode}){
  const panelId=useId();
  const formalTopicsId=useId();
  const [showFormalTopics,setShowFormalTopics]=useState(true);
@@ -59,7 +59,7 @@ export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,
      </button>
      {r.discovery_id&&<div className="research-discovery-actions">
       <button type="button" className="text-button" disabled={busy} onClick={()=>onResult(r,r.discovery_id!)}>查看发现清单</button>
-      {!r.superseded&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'当前任务结束后可重新生成':undefined} onClick={()=>onRediscover(r,'discovery')}>重新生成主题发现清单</button>}
+      {!r.superseded&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'当前任务结束后可重新生成':undefined} onClick={()=>onRediscover(r)}>重新生成主题发现清单</button>}
      </div>}
     </div>
     <div id={formalTopicsId} hidden={!showFormalTopics}>
