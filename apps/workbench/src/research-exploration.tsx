@@ -86,13 +86,7 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const openFor=(value:ResearchMode)=>{directionSeed.current=undefined;setSeedTitle('');setMode(value);setCreating(false);setAppendId('');setFocusedId('');setDoc(undefined);setPreview(undefined);setCandidates([]);setError('');setOpen(true);};
  const start=()=>run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:chosen,instructions,question_id:questionId,mode:questionId?'directions':mode,topic_ids:topicIds,stop_after:mode==='topics'&&!questionId?stopAfter:undefined})});setFocusedId(data.run.id);setCreating(false);});
  const resume=(r:Run,topic?:Topic,nextStage?:TopicStopAfter)=>run(()=>api(base+'/research-exploration/'+r.id+'/resume',{method:'POST',body:JSON.stringify({confirm:true,topic_id:topic?.id,stop_after:nextStage})}));
- const rediscover=(r:Run,restart?:true)=>{
-  if(!restart&&!window.confirm(`基于已纳入的 ${r.source_ids.length} 篇论文重新生成主题发现清单，并继续综合主题？`))return;
-  void run(async()=>{
-   const {run:next}=await api<{run:Run}>(base+'/research-exploration/'+r.id+'/rediscover',{method:'POST',body:JSON.stringify({confirm:true,restart})});
-   setFocusedId(next.id);setCreating(false);
-  });
- };
+ const rediscover=(r:Run)=>{if(!window.confirm('复用已整理材料重新发现主题？不会重新分析论文或 PDF。'))return;void run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration/'+r.id+'/rediscover',{method:'POST',body:JSON.stringify({confirm:true})});setFocusedId(data.run.id);setCreating(false);});};
  const showResult=(r:Run,id:string,withCandidates=false)=>run(async()=>{if(['topics','comparison'].includes(r.mode??'')){setReadingId(id);return;}setDoc((await api<{document:Doc}>(base+'/markdown-knowledge/document?id='+encodeURIComponent(id))).document);setResultRun(r.id);setCandidates(withCandidates?(await api<{candidates:Candidate[]}>(base+'/research-exploration/'+r.id+'/candidates')).candidates:[]);});
  const title=questionId?'定向补证据':['topics','comparison'].includes(mode)?'主题综合':modes[mode];
  const available=sources.filter(s=>eligible.includes(s.source_id));

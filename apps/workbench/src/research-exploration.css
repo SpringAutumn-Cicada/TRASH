@@ -73,7 +73,6 @@
 .research-stage-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .research-stage-heading,.research-discovery-meta{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap}
 .research-stage-heading{margin-bottom:12px}
-.research-discovery-actions{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
 .research-stage-heading h4{margin:0;font-size:16px}
 .research-discovery-panel{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .research-discovery-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 2px;border:0;background:transparent;color:var(--text);font:inherit;font-weight:600;text-align:left;cursor:pointer}

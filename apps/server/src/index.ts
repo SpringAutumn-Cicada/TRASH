@@ -225,11 +225,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
     if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional(),stop_after:topicStopAfter}).strict().parse(await readJson(request));if((input.topic_id||input.stop_after)&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id,input.stop_after):exploration.cancel(projectId,explorationAction[1])});return;}
     const rediscoverRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/rediscover$/);
-    if(rediscoverRoute&&method==='POST'){
-      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({confirm:z.literal(true),stop_after:z.literal('discovery').optional(),restart:z.literal(true).optional()}).strict().parse(await readJson(request));
-      sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1],input.stop_after,input.restart)});return;
-    }
+    if(rediscoverRoute&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1])});return;}
     const appendRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(append-preview|append)$/);
     if(appendRoute&&method==='POST'){
       const sourceIds=z.array(z.string().min(1)).min(1).max(100);
