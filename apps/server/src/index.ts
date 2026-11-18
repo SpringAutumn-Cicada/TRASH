@@ -227,8 +227,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const rediscoverRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/rediscover$/);
     if(rediscoverRoute&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({confirm:z.literal(true),stop_after:z.literal('discovery').optional()}).strict().parse(await readJson(request));
-      sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1],input.stop_after)});return;
+      const input=z.object({confirm:z.literal(true),stop_after:z.literal('discovery').optional(),restart:z.literal(true).optional()}).strict().parse(await readJson(request));
+      sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1],input.stop_after,input.restart)});return;
     }
     const appendRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(append-preview|append)$/);
     if(appendRoute&&method==='POST'){
