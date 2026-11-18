@@ -44,12 +44,17 @@ export class ResearchExploration {
  private root(project:string){return projectRuntime(this.store.root,project,'research-exploration');}
  private save(run:Run){run.updated_at=new Date().toISOString();const root=this.root(run.project_id);mkdirSync(root,{recursive:true});const file=join(root,run.id+'.json');writeFileSync(file+'.tmp',JSON.stringify(run),{mode:0o600});renameSync(file+'.tmp',file);}
  list(project:string):Run[]{const root=this.root(project);if(!existsSync(root))return [];return readdirSync(root).filter(name=>/^exploration_[a-f0-9-]+\.json$/.test(name)).flatMap(name=>{try{return [JSON.parse(readFileSync(join(root,name),'utf8')) as Run];}catch{return [];}}).sort((a,b)=>b.created_at.localeCompare(a.created_at));}
+ private superseded(run:Run,runs:Run[]){
+  const directory=run.result_id??run.target_id;
+  return Boolean(directory&&runs.some(other=>other.id!==run.id&&other.append&&other.result_id===directory&&other.created_at>run.created_at));
+ }
  summaries(project:string){
   // Project-scoped task metadata and activity timestamps only; never load model logs or snapshots.
   const tasks=this.store.db.prepare("SELECT task_id,status,json_extract(data,'$.input.title') AS title,json_extract(data,'$.input.research_exploration') AS mode,json_extract(data,'$.created_at') AS created_at FROM knowledge_tasks WHERE project_id=?").all(project) as {task_id:string;status:string;title:string;mode?:string;created_at:string}[];
   const byId=new Map(tasks.map(task=>[task.task_id,task]));
   const latest=this.store.db.prepare('SELECT at FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1');
-  return this.list(project).map(run=>{
+  const runs=this.list(project);
+  return runs.map(run=>{
    const details=run.tasks.map((id,index)=>{const task=byId.get(id);return {id,title:run.topics?.find(topic=>topic.task_id===id)?.title??(task?.mode==='summary'?(run.append?task.title:`第 ${index+1} 组材料`):task?.mode==='summary-working'?`第 ${index+1} 组材料工作版`:task?.mode==='topic-discovery'?'发现主题':task?.title??'任务记录缺失'),status:task?.status??'missing',last_activity_at:(task?.status==='running'?(latest.get(id) as {at:string}|undefined)?.at:undefined)??task?.created_at};});
    const phase=run.stage==='summarizing'?'materials':run.stage==='discovering'?'discovery':run.stage==='completed'?'done':run.stage==='topics'||run.topics?'synthesis':details.some(task=>byId.get(task.id)?.mode==='summary')||run.append?.batches.some(batch=>!batch.output)?'materials':run.mode==='topics'?'discovery':'synthesis';
    const countingTopics=['synthesis','done'].includes(phase)&&Boolean(run.topics);
@@ -58,7 +63,8 @@ export class ResearchExploration {
    const current=details.find(task=>task.status==='running');
    const last=[run.updated_at,...details.flatMap(task=>task.last_activity_at?[task.last_activity_at]:[])].sort().at(-1);
    return {id:run.id,mode:run.mode,question_id:run.question_id,stage:run.stage,source_ids:run.source_ids,created_at:run.created_at,updated_at:run.updated_at,instructions:run.instructions,error:run.error,result_id:run.result_id,discovery_id:run.discovery_id,tasks:run.tasks,
-    can_append:run.mode==='topics'&&Boolean(run.result_id)&&['completed','partial'].includes(run.stage),
+    superseded:this.superseded(run,runs),
+    can_append:run.mode==='topics'&&Boolean(run.result_id)&&['completed','partial'].includes(run.stage)&&!this.superseded(run,runs),
     append:run.append?{parent_id:run.append.parent_id,added_ids:run.append.added_ids,rebuilt_ids:run.append.rebuilt_ids,batches:run.append.batches.map(batch=>({source_ids:batch.source_ids,task_id:batch.task_id,output_id:batch.output?.id}))}:undefined,
     topics:run.topics?.map(({id,title,status,task_id,output_id,error})=>({id,title,status,task_id,output_id,error})),
     progress:{phase,round:run.round,total:states.length,completed:count(['completed']),running:count(['running','generating']),queued:count(['queued','pending']),failed:count(['failed','interrupted','cancelled','missing']),candidates:run.topics?.filter(topic=>topic.status==='candidate').length??0,current_title:current?.title,last_activity_at:last,details}};
@@ -69,8 +75,9 @@ export class ResearchExploration {
   const parent=this.detail(project,id);
   if(parent.mode!=='topics'||!['completed','partial'].includes(parent.stage)||!parent.result_id)
    throw Object.assign(new Error('RESEARCH_APPEND_NOT_AVAILABLE'),{statusCode:409});
-  if(this.list(project).some(run=>active(run)))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
-  if(this.list(project).some(run=>run.id!==id&&run.append?.parent_id&&run.result_id===parent.result_id&&run.created_at>parent.created_at))
+  const runs=this.list(project);
+  if(runs.some(active))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
+  if(this.superseded(parent,runs))
    throw Object.assign(new Error('RESEARCH_APPEND_OUTDATED'),{statusCode:409});
   const added=unique(sourceIds).sort(),selected=unique([...parent.source_ids,...added]);
   if(!added.length||added.some(source=>parent.source_ids.includes(source))||selected.length>100)
@@ -183,7 +190,7 @@ export class ResearchExploration {
     // All new summaries are staged. Keep the inline input below the normal discovery budget.
     const inline=batchMaterials(newIds.map(id=>({id,characters:md.read(run.project_id,id).text.length})))[0];
     const inlineIds=inline.map(doc=>doc.id);
-    const references=unique([...newIds,...append.reused.map(ref=>ref.id),...(append.previous_discovery_id?[append.previous_discovery_id]:[])])
+    const references=unique([...newIds,...append.reused.map(ref=>ref.id),...(append.previous_discovery_id?[append.previous_discovery_id]:[]),...(run.retained_topics??[]).flatMap(topic=>topic.output_id?[topic.output_id]:[])])
      .filter(id=>byId.has(id)&&!inlineIds.includes(id));
     const input=knowledgeTaskInputSchema.parse({
      kind:'wiki-page',source_ids:run.source_ids,dependencies:inlineIds.map(object_id=>({kind:'wiki-page',object_id,version:1})),
@@ -402,7 +409,9 @@ export class ResearchExploration {
   }catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'归纳失败';this.save(run);}
  }
  resume(project:string,id:string,topicId?:string){const run=this.detail(project,id);if(active(run)||run.stage==='completed')return run;
-  if(this.list(project).some(other=>active(other)))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
+  const runs=this.list(project);
+  if(runs.some(active))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
+  if(this.superseded(run,runs))throw Object.assign(new Error('RESEARCH_APPEND_OUTDATED'),{statusCode:409});
   if(topicId&&!run.topics?.some(t=>t.id===topicId&&['pending','failed'].includes(t.status)))throw Object.assign(new Error('TOPIC_NOT_RESUMABLE'),{statusCode:409});
   if(run.mode==='topics'&&run.topics){try{this.scheduleTopics(run,topicId);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题恢复失败';this.save(run);}return run;}const all=this.knowledge.tasks(project);
   if(run.append&&!run.tasks.some(id=>all.some(task=>task.task_id===id&&task.input.research_exploration==='topic-discovery')))return this.continueAppend(run,true);
