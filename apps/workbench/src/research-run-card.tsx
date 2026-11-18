@@ -10,7 +10,7 @@ export const researchActive=(stage:string)=>['summarizing','generating','discove
 const stages:Record<string,string>={summarizing:'整理材料','materials-ready':'材料已就绪','discovery-ready':'主题已发现',generating:'组织研究内容',discovering:'发现主题',previewing:'生成单主题试稿',topics:'综合主题',partial:'本轮已结束',completed:'已完成',failed:'处理失败',interrupted:'已中断',cancelled:'已停止'};
 const statuses:Record<string,string>={running:'处理中',generating:'处理中',completed:'已完成',queued:'排队中',pending:'待展开',failed:'失败',interrupted:'已中断',cancelled:'已停止',missing:'记录缺失',candidate:'候选线索'};
 const duration=(seconds:number)=>seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分${seconds%60?` ${seconds%60} 秒`:''}`;
-export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onRediscover,onAppend,onStop,onGeneratePreview,onPreview,onSetStop,sourceTitles,view,onView,preview}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic,stopAfter?:TopicStopAfter)=>void;onRediscover:(run:ResearchRun)=>void;onAppend:(run:ResearchRun)=>void;onStop:(run:ResearchRun)=>void;onGeneratePreview:(run:ResearchRun,topic:ResearchTopic)=>void;onPreview:(run:ResearchRun,topic:ResearchTopic)=>void;onSetStop:(run:ResearchRun,stage:TopicStopAfter)=>void;sourceTitles:string[];view?:ResearchStageView;onView:(view:ResearchStageView)=>void;preview?:React.ReactNode}){
+export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onRediscover,onAppend,onStop,onGeneratePreview,onPreview,onSetStop,sourceTitles,view,onView,preview}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic,stopAfter?:TopicStopAfter)=>void;onRediscover:(run:ResearchRun,stopAfter?:'discovery')=>void;onAppend:(run:ResearchRun)=>void;onStop:(run:ResearchRun)=>void;onGeneratePreview:(run:ResearchRun,topic:ResearchTopic)=>void;onPreview:(run:ResearchRun,topic:ResearchTopic)=>void;onSetStop:(run:ResearchRun,stage:TopicStopAfter)=>void;sourceTitles:string[];view?:ResearchStageView;onView:(view:ResearchStageView)=>void;preview?:React.ReactNode}){
  const panelId=useId();
  const formalTopicsId=useId();
  const [showFormalTopics,setShowFormalTopics]=useState(true);
@@ -57,7 +57,10 @@ export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,
       {showFormalTopics?<ChevronDown size={16} aria-hidden="true"/>:<ChevronRight size={16} aria-hidden="true"/>}
       正式主题 · {formalTopics.length} 个
      </button>
-     {r.discovery_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>onResult(r,r.discovery_id!)}>查看发现清单</button>}
+     {r.discovery_id&&<div className="research-discovery-actions">
+      <button type="button" className="text-button" disabled={busy} onClick={()=>onResult(r,r.discovery_id!)}>查看发现清单</button>
+      {!r.superseded&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'当前任务结束后可重新生成':undefined} onClick={()=>onRediscover(r,'discovery')}>重新生成主题发现清单</button>}
+     </div>}
     </div>
     <div id={formalTopicsId} hidden={!showFormalTopics}>
      {!formalTopics.length&&<p className="research-run-notice">{r.stage==='discovering'?'正在发现主题。':r.discovery_id?'本轮没有可以单独生成的正式主题。':'主题发现结果尚未就绪。'}</p>}
@@ -96,7 +99,7 @@ export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,
   </label>}
   <div className="research-current-buttons">
    {r.result_id&&<button type="button" className="primary-button" disabled={busy} onClick={()=>onResult(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}
-   {r.mode==='topics'&&r.stage==='completed'&&!r.superseded&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可重新发现':undefined} onClick={()=>onRediscover(r)}>重新发现主题</button>}
+   {r.mode==='topics'&&r.stage==='completed'&&!r.superseded&&selected!=='discovery'&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可重新发现':undefined} onClick={()=>onRediscover(r)}>重新发现主题</button>}
    {canAdvanceMaterials&&<>
     <button type="button" className="primary-button" disabled={busy||blocked} onClick={()=>onResume(r,undefined,'discovery')}>开始发现主题</button>
     <button type="button" className="secondary-button" disabled={busy||blocked} onClick={()=>onResume(r,undefined,'synthesis')}>继续到完成综合</button>

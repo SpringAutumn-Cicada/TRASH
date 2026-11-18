@@ -236,18 +236,32 @@ export class ResearchExploration {
   this.save(run);
   return run;
  }
- rediscover(project:string,id:string){
+ rediscover(project:string,id:string,stopAfter?:'discovery'){
   const previous=this.detail(project,id);
   if(previous.mode!=='topics')throw Object.assign(new Error('TOPIC_REDISCOVERY_ONLY'),{statusCode:422});
   if(active(previous))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   if(this.list(project).some(run=>active(run)))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   if(this.superseded(previous,this.list(project)))throw Object.assign(new Error('RESEARCH_APPEND_OUTDATED'),{statusCode:409});
-  const tasks=this.knowledge.tasks(project),outputs=[...new Set(previous.history_tasks.map(taskId=>tasks.find(task=>task.task_id===taskId)).filter(task=>task?.status==='completed'&&task.output_id&&['summary','summary-working'].includes(task.input.research_exploration??'')).map(task=>task!.output_id!))];
+  const tasks=this.knowledge.tasks(project);
+  const discovery=previous.discovery_id?tasks.find(task=>task.output_id===previous.discovery_id&&task.status==='completed'&&task.input.research_exploration==='topic-discovery'):undefined;
+  if(stopAfter&&!discovery)throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
+  const summaryIds=unique(previous.history_tasks.map(taskId=>tasks.find(task=>task.task_id===taskId)).filter(task=>task?.status==='completed'&&task.output_id&&['summary','summary-working'].includes(task.input.research_exploration??'')).map(task=>task!.output_id!));
+  const previousMaterials=previous.discovery_material_ids??previous.append?.batches.flatMap(batch=>batch.output?[batch.output.id]:[]);
+  const outputs=previousMaterials?.length?previousMaterials:stopAfter&&discovery?discovery.input.dependencies.map(ref=>ref.object_id):summaryIds;
   if(!outputs.length)throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
   const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:[...previous.source_ids],created_at:at,updated_at:at,stage:'discovering',tasks:[],history_tasks:[],round:0,instructions:previous.instructions,mode:'topics',material_ids:outputs,summary_work_ids:outputs,signature:createHash('sha256').update(JSON.stringify({mode:'topics',source_ids:previous.source_ids,materials:outputs,at})).digest('hex')};
   const directory=this.topicDirectories(project).current;
   run.target_id=directory?.id;run.directory_expected=directory?.hash;
   run.retained_topics=[...(previous.retained_topics??[]),...(previous.topics??[]).filter(topic=>topic.status==='completed')];
+  run.discovery_material_ids=outputs;
+  run.stop_after=stopAfter;
+  if(stopAfter&&discovery){
+   // Reuse the discovery scope, including incremental references, without depending on its old output.
+   run.append=previous.append;
+   run.source_hashes=previous.source_hashes;
+   const task=this.agent.enqueue(project,{...discovery.input,regenerate:true})[0];
+   run.tasks=[task.task_id];this.save(run);this.advance(run);return run;
+  }
   this.save(run);try{run.tasks=[this.enqueue(run,outputs,'topic-discovery').task_id];this.save(run);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'重新发现主题失败';this.save(run);}return run;
  }
  candidates(project:string,id:string){
