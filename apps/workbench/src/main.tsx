@@ -1,5 +1,6 @@
 import {themes,savedTheme,applyTheme,resolveTheme} from './theme.js';
 import {KnowledgeBaseWorkspace} from './knowledge-base.js';
+import {AbstractLibrary} from './abstract-library.js';
 import { TaskWorkspace } from './task-workspace.js';
 import { PdfReader } from "./pdf-reader.js";
 import { MarkdownKnowledgePanel } from "./markdown-knowledge.js";
@@ -12,7 +13,7 @@ import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Database, Server, ArrowLeft, ChartColumn, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { KnowledgePanel, RestoreKnowledge } from "./knowledge.js";
@@ -50,17 +51,20 @@ function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projec
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
 }
 const literatureModules = [
-  { id: "literature", label: "文献", icon: BookOpen },
+  { id: "literature", label: "文献库", icon: BookOpen },
+  { id: "abstract", label: "摘要库", icon: FileText },
   { id: "search", label: "搜索文献", icon: Search },
   { id: "wiki", label: "知识库", icon: NotebookText }
 ] as const;
 function LiteratureModules({projectId,page,action,focusId,status,onNavigate,onChanged}:{projectId:string;page:"literature"|"cards"|"wiki";action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void;onChanged:()=>void}) {
   const id=useId();
-  const selected=page==="literature"?(action==="search"?"search":"literature"):"wiki";
-  const select=(module:typeof literatureModules[number]['id'])=>onNavigate(module==="search"?"literature":module,module==="search"?{action:"search"}:undefined);
+  const selected=page==="literature"?(action==="search"||action==="abstract"?action:"literature"):"wiki";
+  const select=(module:typeof literatureModules[number]['id'])=>
+    onNavigate(module==="wiki"?"wiki":"literature",module==="search"||module==="abstract"?{action:module}:undefined);
   return <section className="data-page literature-workspace">
-    <div className="data-heading"><span className="data-symbol"><BookOpen size={25}/></span><div><h2>文献</h2><p>管理原始文献，沉淀卡片、研究记忆与知识主题。</p></div></div>
-    <nav className="data-module-tabs" role="tablist" aria-label="文献子模块">{literatureModules.map((item,index)=><button key={item.id} type="button" role="tab" id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel`} aria-selected={selected===item.id} tabIndex={selected===item.id?0:-1} className={selected===item.id?'active':''} onClick={()=>select(item.id)} onKeyDown={event=>{
+    <header className="literature-section-header">
+    <div className="literature-section-title"><span><BookOpen size={22} aria-hidden="true"/></span><h2>文献</h2></div>
+    <nav className="literature-module-tabs" role="tablist" aria-label="文献子模块">{literatureModules.map((item,index)=><button key={item.id} type="button" role="tab" id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel`} aria-selected={selected===item.id} tabIndex={selected===item.id?0:-1} onClick={()=>select(item.id)} onKeyDown={event=>{
       let next:number;
       if(event.key==='ArrowRight')next=(index+1)%literatureModules.length;
       else if(event.key==='ArrowLeft')next=(index+literatureModules.length-1)%literatureModules.length;
@@ -69,9 +73,13 @@ function LiteratureModules({projectId,page,action,focusId,status,onNavigate,onCh
       else return;
       event.preventDefault();const target=literatureModules[next];select(target.id);
       document.getElementById(`${id}-tab-${target.id}`)?.focus();
-    }}><item.icon size={16}/>{item.label}</button>)}</nav>
+    }}><item.icon size={16} aria-hidden="true"/>{item.label}</button>)}</nav>
+    </header>
     <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${selected}`} tabIndex={0}>
-      {page==="literature"?<LiteraturePage projectId={projectId} action={action} focusId={focusId} onChanged={onChanged} searchOnly={selected==="search"} onOpenSource={source=>onNavigate("literature",{focus:source.source_id})}/>:<KnowledgePage projectId={projectId} page={page} action={action} focusId={focusId} status={status} onNavigate={onNavigate}/>}
+      {page==="literature" ? selected==="abstract"
+        ? <AbstractLibrary key={projectId} projectId={projectId}/>
+        : <LiteraturePage projectId={projectId} action={action} focusId={focusId} onChanged={onChanged} searchOnly={selected==="search"} onOpenSource={source=>onNavigate("literature",{focus:source.source_id})}/>
+        : <KnowledgePage projectId={projectId} page={page} action={action} focusId={focusId} status={status} onNavigate={onNavigate}/>}
     </div>
   </section>;
 }

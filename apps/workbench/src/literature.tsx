@@ -1,6 +1,5 @@
 import {ResearchExplorationButton} from './research-exploration.js';
 import {LibraryDeleteManager} from './library-delete-manager.js';
-import {AbstractLibrary} from './abstract-library.js';
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import "./literature-ui.css";
@@ -41,7 +40,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [projectSearched,setProjectSearched]=useState(false),[externalSearched,setExternalSearched]=useState(false);
   const [fileDragging,setFileDragging]=useState(false);
   const dragDepth=useRef(0),uploadLock=useRef(false);
-  const [libraryScope,setLibraryScope]=useState<'fulltext'|'abstract'>('fulltext');
   const [libraryQuery,setLibraryQuery]=useState("");
   const [importOpen,setImportOpen]=useState(false);
   const [regenerateTarget,setRegenerateTarget]=useState<Source>();
@@ -199,15 +197,13 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     finally{submissionLock.current.delete(source.source_id);setSubmitting(previous=>previous.filter(id=>id!==source.source_id));}
   };
   if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
-  return <section className={`literature-page ${fileDragging?'literature-file-dragging':''}`} onDragEnter={event=>{if(searchOnly||libraryScope==='abstract'||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current++;setFileDragging(true);}} onDragOver={event=>{if(searchOnly||libraryScope==='abstract'||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.dataTransfer.dropEffect=importing?'none':'copy';}} onDragLeave={event=>{if(searchOnly)return;event.preventDefault();dragDepth.current=Math.max(0,dragDepth.current-1);if(!dragDepth.current)setFileDragging(false);}} onDrop={event=>{if(searchOnly||libraryScope==='abstract'||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.stopPropagation();dragDepth.current=0;setFileDragging(false);if(importing||uploadLock.current)return;void uploadFiles(event.dataTransfer.files);}}>
+  return <section className={`literature-page ${fileDragging?'literature-file-dragging':''}`} onDragEnter={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current++;setFileDragging(true);}} onDragOver={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.dataTransfer.dropEffect=importing?'none':'copy';}} onDragLeave={event=>{if(searchOnly)return;event.preventDefault();dragDepth.current=Math.max(0,dragDepth.current-1);if(!dragDepth.current)setFileDragging(false);}} onDrop={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.stopPropagation();dragDepth.current=0;setFileDragging(false);if(importing||uploadLock.current)return;void uploadFiles(event.dataTransfer.files);}}>
     {fileDragging&&!searchOnly&&<div className="literature-drop-overlay" role="status"><FileUp size={30}/><strong>{importing?'正在导入，请稍候':'松开以导入文献'}</strong><span>PDF · BibTeX · RIS · Markdown · 支持多个文件</span></div>}
     {regenerateTarget&&<RegenerateSourceDialog source={regenerateTarget} busy={submitting.includes(regenerateTarget.source_id)} error={regenerateError} onClose={()=>{if(!submissionLock.current.has(regenerateTarget.source_id))setRegenerateTarget(undefined);}} onConfirm={()=>{void analyzeSource(regenerateTarget,true).then(ok=>{if(ok&&alive.current)setRegenerateTarget(undefined);});}}/>}
     {documentTarget&&<LiteratureDocumentDialog key={documentTarget.source.source_id} projectId={projectId} source={documentTarget.source} initialType={documentTarget.type} onClose={()=>setDocumentTarget(undefined)} onSaved={()=>{void refresh(true);onChanged();}}/>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
           <section className="literature-main" hidden={searchOnly}>
-            <div className="abstract-library-tabs" role="group" aria-label="文献材料范围"><button type="button" aria-pressed={libraryScope==='fulltext'} onClick={()=>setLibraryScope('fulltext')}>全文库</button><button type="button" aria-pressed={libraryScope==='abstract'} onClick={()=>setLibraryScope('abstract')}>摘要库</button></div>
-            {libraryScope==='abstract'?<AbstractLibrary projectId={projectId}/>:<>
             <header className="library-heading"><div><h2>文献库 <span>{detail.sources.length}</span></h2><p>阅读原文，整理每一篇论文的研究知识。</p></div></header>
             <div className="library-toolbar">
               <label className="library-filter"><Search size={16}/><input aria-label="筛选已导入文献" value={libraryQuery} onChange={event=>setLibraryQuery(event.target.value)} placeholder="搜索已导入的标题、作者…"/>{libraryQuery&&<button type="button" aria-label="清空文献筛选" onClick={()=>setLibraryQuery('')}><X size={14}/></button>}</label>
@@ -249,7 +245,6 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               {selectedSource.source.abstract && <p className="source-abstract">{selectedSource.source.abstract}</p>}
               {selectedSource.segments.length ? <details><summary>查看解析文字（搜索索引，非原文排版）</summary><div className="segment-list">{selectedSource.segments.map((segment, index) => <article key={`${segment.locator.kind}-${index}`}><span>{locatorLabel(segment.locator)}</span><p>{segment.text}</p></article>)}</div></details> : <div className="metadata-note">{selectedSource.source.parse_status === "no_text" ? "未能从该来源提取文本。" : "该记录仅包含元数据。"}</div>}
             </section>}
-            </>}
           </section>
           <aside className="literature-tools literature-discovery" hidden={!searchOnly}>
             <header className="library-heading"><h2>搜索文献</h2><p>查找项目资料，或发现新的研究来源。</p></header>
