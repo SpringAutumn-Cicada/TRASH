@@ -233,7 +233,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small className="library-bibliography" title={[date,source.authors.join(', ')].filter(Boolean).join(' · ')}>{date&&<><time>{date}</time><span aria-hidden="true">·</span></>}<span>{source.authors.join(', ')||'作者信息未提供'}</span></small></span>
                   </button>
                   <div className="library-document-modules" aria-label="论文内容">
-                    {item?.hasWiki&&<button type="button" className="wiki-entry-button" onClick={()=>setDocumentTarget({source,type:'wiki'})}>Wiki</button>}
+                    {item?.hasWiki?<button type="button" className="wiki-entry-button" onClick={()=>setDocumentTarget({source,type:'wiki'})}>Wiki</button>:<span className="library-content-empty"><span aria-hidden="true">—</span><span className="sr-only">暂无 Wiki</span></span>}
                   </div>
                   <div className="library-row-controls">
                     <div className="library-state"><span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
