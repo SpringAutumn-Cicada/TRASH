@@ -81,7 +81,11 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
             const anchor=(event.target as HTMLElement).closest('a');const href=anchor?.getAttribute('href');if(!href||/^https?:/i.test(href))return;
             event.preventDefault();const url=new URL(href,'https://knowledge.local/'+doc.path);
             if(url.pathname.startsWith(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/`)&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
-            const path=url.pathname.slice(1),original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);if(original){reading.go('abstract-material-'+original[1]);return;}const next=documents.find(d=>d.path===path||d.id===knowledgeDocumentId(path));if(next){reading.go(next.id,url.hash.slice(1));}else setError('关联文档尚未生成或无法查看。');
+            let path:string;
+            try{path=decodeURIComponent(url.pathname.slice(1));}catch{setError('关联文档地址无效。');return;}
+            const original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);
+            const id=original?'abstract-material-'+original[1]:documents.find(d=>d.path===path)?.id??knowledgeDocumentId(path);
+            if(id)reading.go(id,url.hash.slice(1));else setError('关联文档尚未生成或无法查看。');
           }}><ChatMarkdown text={doc.kind==='wiki-page'&&doc.level==='single'?doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/^#\s+.+$/m,()=>`# ${doc.title}`):doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')} allowRelativeLinks/></div>}
           {!editing&&!doc.id.startsWith('abstract-material-')&&<KnowledgeRelations projectId={projectId} id={doc.id} hash={doc.hash} onOpen={(id,anchor)=>reading.go(id,anchor)}/>}
           {history&&<section className="library-document-history"><h4>版本历史</h4>{history.length?history.map(version=><details key={version.hash}><summary>快照 {version.hash.slice(0,10)}</summary><pre>{version.text}</pre></details>):<p>暂无历史版本。</p>}</section>}
