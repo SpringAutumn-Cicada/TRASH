@@ -1,3 +1,4 @@
+import {legacyMaterialTitle} from './research-exploration-format.js';
 import {topicVersions} from './topic-wiki.js';
 import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {evidenceMigrationPreview,migrateEvidence} from './evidence-migration.js';
@@ -319,7 +320,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
       const markdown=new MarkdownKnowledge(store);
-      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};const current=url.searchParams.get('current_topic_directory')==='true'?exploration.topicDirectories(projectId).current:undefined;sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true',include_evidence:url.searchParams.get('include_evidence')==='true',current_topic_directory:current?.id,archived_topic_discoveries:url.searchParams.get('current_topic_discovery')==='true'?new Set(exploration.topicDiscoveries(projectId).archived.map(doc=>doc.id)):undefined}));return;}
+      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};const current=url.searchParams.get('current_topic_directory')==='true'?exploration.topicDirectories(projectId).current:undefined;sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true',include_evidence:url.searchParams.get('include_evidence')==='true',current_topic_directory:current?.id,summary_titles:url.searchParams.get('include_summaries')==='true'?exploration.summaryTitles(projectId):undefined,archived_topic_discoveries:url.searchParams.get('current_topic_discovery')==='true'?new Set(exploration.topicDiscoveries(projectId).archived.map(doc=>doc.id)):undefined}));return;}
       if(subpath==='markdown-knowledge/summary-name-preview'&&method==='GET'){sendJson(response,200,{items:markdown.summaryNamePreview(projectId)});return;}
       if(subpath==='markdown-knowledge/rename-summary'&&method==='POST'){const input=z.object({id:z.string(),title:z.string().trim().min(4).max(150),expected:z.string()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.renameSummary(projectId,input.id,input.title,input.expected)});return;}
       if(subpath==='markdown-knowledge/migration-preview'&&method==='GET'){sendJson(response,200,migrationPreview(markdown.root(projectId)));return;}
@@ -350,6 +351,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge/log'&&method==='GET'){const page=z.coerce.number().int().positive().default(1).parse(url.searchParams.get('page')??undefined);sendJson(response,200,markdown.operations(projectId,page));return;}
       if(subpath==='markdown-knowledge/document'&&method==='GET'){
         const document=markdown.read(projectId,url.searchParams.get('id')??'');
+        if(document.level==='summary'){
+          const title=legacyMaterialTitle(document.title,document.modified,exploration.summaryTitles(projectId).get(document.id));
+          sendJson(response,200,{document:{...document,title}});return;
+        }
         if(document.level==='discovery'){
           const {current,archived}=exploration.topicDiscoveries(projectId);
           sendJson(response,200,{document:{...document,topic_discovery_history:current?.id===document.id||archived.some(doc=>doc.id===document.id)}});return;

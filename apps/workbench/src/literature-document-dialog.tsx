@@ -62,7 +62,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
   const remove=()=>{if(!doc||doc.source_id||doc.level==='overview'||doc.path.endsWith('/index.md')||!window.confirm(`确认删除“${doc.title}”？条目将移入回收站。`))return;void run(async()=>{await api(base+'/delete',{method:'POST',body:JSON.stringify({id:doc.id,expected:doc.hash,confirm:true})});onSaved();onClose();});};
   const isTopicOverview=Boolean(doc?.topic_id&&doc.id===doc.topic_id);
   const body=doc?.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')??'';
-  const article=isTopicOverview?orderTopicOverview(body.replace(/^\s*#[ \t]+[^\r\n]+(?:\r?\n|$)/,'')):doc?.kind==='wiki-page'&&doc.level==='single'?body.replace(/^#\s+.+$/m,()=>`# ${doc.title}`):body;
+  const article=isTopicOverview?orderTopicOverview(body.replace(/^\s*#[ \t]+[^\r\n]+(?:\r?\n|$)/,'')):doc?.kind==='wiki-page'&&(doc.level==='single'||doc.level==='summary')?body.replace(/^#\s+.+$/m,()=>`# ${doc.title}`):body;
   const review=article.match(/^## 待验证问题[ \t]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??'';
   const questions=[...new Set([...review.matchAll(/^###[ \t]+([^\r\n]+)/gm)].map(match=>match[1].trim()))];
   const directionUrl=(question?:string)=>{

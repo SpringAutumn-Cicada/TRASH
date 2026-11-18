@@ -1,3 +1,4 @@
+import {legacyMaterialTitle} from './research-exploration-format.js';
 import {topicGroupIssues,topicManifest,topicPaths} from './topic-wiki.js';
 import {paperMembership,groupPath,readPaperGroup,groupPhysical,classifyPaperFiles,taskGeneratedHashes,type GroupStatus,type PaperGroup} from './paper-wiki-groups.js';
 import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
@@ -170,10 +171,11 @@ export class MarkdownKnowledge {
     const entry=this.index(project,false,true).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);return this.readIndexed(project,entry);}
   readIndexed(project:string,entry:Omit<MarkdownDocument,'text'>){const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash){this.invalidate(project);fail('VERSION_CONFLICT');}return {...entry,text};}
   list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.readIndexed(project,d))};}
-  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean;include_summaries?:boolean;include_evidence?:boolean;current_topic_directory?:string;archived_topic_discoveries?:Set<string>}={}){
+  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean;include_summaries?:boolean;include_evidence?:boolean;current_topic_directory?:string;archived_topic_discoveries?:Set<string>;summary_titles?:Map<string,string>}={}){
     const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level)&&(!options.current_topic_directory||d.page_role!=='topic-index'||d.id===options.current_topic_directory)&&!options.archived_topic_discoveries?.has(d.id));
     if(!options.include_evidence||q)docs=docs.filter(doc=>!isEvidenceAttachment(doc));
     if(options.kind==='wiki-page'&&!options.level&&!q&&!options.include_summaries)docs=docs.filter(doc=>doc.level!=='summary');
+    if(options.summary_titles)docs=docs.map(doc=>doc.level==='summary'?{...doc,title:legacyMaterialTitle(doc.title,doc.modified,options.summary_titles?.get(doc.id))}:doc);
     const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+(doc.aliases??[]).join(' ')+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
     const rank:Record<string,number>={overview:0,topic:1,hypothesis:2,discovery:3,single:4,summary:5};docs.sort((a,b)=>(rank[a.level??'']??4)-(rank[b.level??'']??4)||b.modified.localeCompare(a.modified));
     const limit=Math.min(100,Math.max(1,options.limit??30)),page=Math.max(1,options.page??1);return {documents:docs.slice((page-1)*limit,page*limit).map(d=>({...d,...(matches[d.id]?{snippet:matches[d.id]}:{})})),total:docs.length,page,limit,errors:indexed.errors};

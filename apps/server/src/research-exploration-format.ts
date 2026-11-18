@@ -5,6 +5,17 @@ export const RESEARCH_SUMMARY_TARGET_MIN_CHARACTERS=6000;
 export const RESEARCH_SUMMARY_TARGET_MAX_CHARACTERS=8000;
 export const RESEARCH_SUMMARY_HARD_MAX_CHARACTERS=10000;
 
+const materialDate=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'});
+export function materialGroupTitle(at:string,category:string,group:number){
+ return `${materialDate.format(new Date(at))}：${category}·第${group}组`;
+}
+export function legacyMaterialTitle(title:string,modified:string,tracked?:string){
+ const legacy=title.match(/^文献知识第(\d+)层分组(\d+)$/);
+ if(legacy)return materialGroupTitle(modified,`文献知识第${legacy[1]}层材料分组`,Number(legacy[2]));
+ if(tracked&&(/^(?:追加材料[：:]\s*第\s*\d+\s*组|.+：材料(?:分组|工作版))$/.test(title)))return tracked;
+ return title;
+}
+
 export function topicDiscoveryEntries(text:string){
  return markdownReferences(text).text.split(/^##[ \t]+/m).slice(1).flatMap(section=>{
   const [heading,...lines]=section.split(/\r?\n/);

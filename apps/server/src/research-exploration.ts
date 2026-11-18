@@ -7,11 +7,12 @@ import {KnowledgeStore,type TrashStore,type KnowledgeTask} from '@trash/storage'
 import {KnowledgeAgent} from './knowledge-agent.js';
 import {MarkdownKnowledge,type MarkdownDocument} from './markdown-knowledge.js';
 import {projectRuntime} from './project-layout.js';
-import {RESEARCH_SUMMARY_HARD_MAX_CHARACTERS,topicDiscoveryEntries} from './research-exploration-format.js';
+import {materialGroupTitle,RESEARCH_SUMMARY_HARD_MAX_CHARACTERS,topicDiscoveryEntries} from './research-exploration-format.js';
 
 type TopicStopAfter='materials'|'discovery'|'synthesis';
 type ResearchMode='directions'|'research-map'|'comparison'|'background'|'topics';
 const modeSkill=(mode:ResearchMode)=>mode==='research-map'?'map' as const:mode==='background'?'background' as const:mode==='directions'?'exploration' as const:'synthesis' as const;
+const materialCategories:Record<ResearchMode,string>={directions:'研究方向探索', 'research-map':'研究地图',comparison:'指定主题综合',background:'研究大背景',topics:'多主题综合'};
 const modeTitles:Record<ResearchMode,string>={directions:'研究方向探索：候选问题','research-map':'研究地图',comparison:'指定主题综合',background:'研究大背景',topics:'多主题综合'};
 type Topic={id:string;title:string;body:string;source_ids:string[];material_ids:string[];existing_id?:string;preview_task_id?:string;status:'candidate'|'pending'|'generating'|'completed'|'failed';task_id?:string;output_id?:string;error?:string};
 type WorkingSummary={origin_id:string;task_id?:string;output_id?:string};
@@ -74,6 +75,26 @@ export class ResearchExploration {
  }
  private superseded(run:Run,runs:Run[]){
   return run.mode==='topics'&&runs.some(other=>other.mode==='topics'&&other.result_id&&other.created_at>run.created_at);
+ }
+ summaryTitles(project:string){
+  const tasks=this.store.db.prepare(`SELECT task_id, json_extract(data,'$.input.research_exploration') AS mode,
+    json_extract(data,'$.input.title') AS title, json_extract(data,'$.output_id') AS output_id
+    FROM knowledge_tasks WHERE project_id=? AND json_extract(data,'$.input.research_exploration') IN ('summary','summary-working')`).all(project) as {task_id:string;mode:string;title:string;output_id?:string}[];
+  const byId=new Map(tasks.map(task=>[task.task_id,task]));
+  const titles=new Map<string,string>();
+  for(const run of this.list(project)){
+   let group=0,workingGroup=0;
+   for(const id of unique([...run.history_tasks,...run.tasks])){
+    const task=byId.get(id);if(!task)continue;
+    const isWorking=task.mode==='summary-working';
+    const ordinal=isWorking?++workingGroup:++group;
+    if(!task.output_id||titles.has(task.output_id))continue;
+    const appendGroup=task.title.match(/^追加材料[：:]\s*第\s*(\d+)\s*组$/)?.[1];
+    const category=materialCategories[run.mode??'directions']+(appendGroup?'追加材料分组':isWorking?'材料工作版':'材料分组');
+    titles.set(task.output_id,materialGroupTitle(run.created_at,category,appendGroup?Number(appendGroup):ordinal));
+   }
+  }
+  return titles;
  }
  summaries(project:string){
   // Project-scoped task metadata and activity timestamps only; never load model logs or snapshots.
@@ -204,7 +225,7 @@ export class ResearchExploration {
      if(!doc||doc.level!=='summary')throw new Error('已完成的追加分组缺少总结，无法发起主题发现。');
      batch.output={id:doc.id,path:doc.path,hash:doc.hash,source_ids:batch.source_ids};
     }else if(!batch.task_id||(retry&&(!task||!['queued','running'].includes(task.status)))){
-     const title=`追加材料：第 ${index+1} 组`;
+     const title=materialGroupTitle(run.created_at,'多主题综合追加材料分组',index+1);
      const input=knowledgeTaskInputSchema.parse({
       kind:'wiki-page',source_ids:batch.source_ids,dependencies:batch.input_ids.map(object_id=>({kind:'wiki-page',object_id,version:1})),
       title,instructions:run.instructions,wiki_level:'summary',research_skill:'synthesis',research_exploration:'summary',regenerate:true,
@@ -271,11 +292,11 @@ export class ResearchExploration {
    return {id:createHash('sha256').update(run.id+match[1]+body).digest('hex').slice(0,20),title:match[1].trim(),question:section('研究问题'),body,evidence:[...new Map(evidence.map(item=>[item.path,item])).values()],complete:['研究问题','文献依据','已有解法与反例','候选假设','最小验证','可行性','补充检索'].every(name=>Boolean(section(name)))&&evidence.length>0};
   });
  }
- private enqueue(run:Run,ids:string[],mode:'summary'|'summary-working'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic'){
+ private enqueue(run:Run,ids:string[],mode:'summary'|'summary-working'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic',batchNumber=1){
   const docs=new MarkdownKnowledge(this.store).index(run.project_id).documents;
   const groupSources=mode==='summary'?[...new Set(docs.filter(d=>ids.includes(d.id)).flatMap(d=>[...(d.source_id?[d.source_id]:[]),...(d.dependencies??[]).flatMap(ref=>ref.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[])]))].filter(id=>run.source_ids.includes(id)):run.source_ids;
   const workingInstruction=mode==='summary-working'?'\n仅压缩已有工作总结并保留原版本，不读取原始论文 Wiki 或 PDF；输出新的材料工作版供后续主题发现使用。':'';
-  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>['summary','summary-working'].includes(mode)||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'?modeTitles[run.mode??'directions']+'：材料分组':mode==='summary-working'?modeTitles[run.mode??'directions']+'：材料工作版':mode==='evidence-plan'?'研究问题：补证据计划':mode==='topic-discovery'?'文献主题发现清单':mode==='topic'?'主题Wiki组':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:'')+workingInstruction,wiki_level:['summary','summary-working'].includes(mode)?'summary':['directions','evidence-plan','topic-discovery'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,...(!['summary','summary-working','topic-discovery'].includes(mode)&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
+  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>['summary','summary-working'].includes(mode)||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'||mode==='summary-working'?materialGroupTitle(run.created_at,materialCategories[run.mode??'directions']+(mode==='summary-working'?'材料工作版':'材料分组'),batchNumber):mode==='evidence-plan'?'研究问题：补证据计划':mode==='topic-discovery'?'文献主题发现清单':mode==='topic'?'主题Wiki组':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:'')+workingInstruction,wiki_level:['summary','summary-working'].includes(mode)?'summary':['directions','evidence-plan','topic-discovery'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,...(!['summary','summary-working','topic-discovery'].includes(mode)&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
  }
  private scheduleWorkingSummaries(run:Run,docs:ReturnType<MarkdownKnowledge['read']>[]){
   if(++run.round>6)throw new Error('材料工作版未能在预算内收敛，请缩小论文范围');
@@ -284,7 +305,7 @@ export class ResearchExploration {
   run.history_tasks.push(...run.tasks);run.tasks=[];this.save(run);
   for(const doc of docs){
    if(doc.level==='summary'&&doc.text.length>RESEARCH_SUMMARY_HARD_MAX_CHARACTERS){
-    const task=this.enqueue(run,[doc.id],'summary-working'),item=run.working_summaries.find(entry=>entry.origin_id===doc.id);if(!item)throw new Error('材料工作版来源记录缺失');item.task_id=task.task_id;run.tasks.push(task.task_id);
+    const task=this.enqueue(run,[doc.id],'summary-working',run.tasks.length+1),item=run.working_summaries.find(entry=>entry.origin_id===doc.id);if(!item)throw new Error('材料工作版来源记录缺失');item.task_id=task.task_id;run.tasks.push(task.task_id);
    }
    this.save(run);
   }
@@ -313,7 +334,7 @@ export class ResearchExploration {
    run.stage='generating';this.save(run);
    run.tasks=[this.enqueue(run,groups[0],run.question_id?'evidence-plan':run.mode??'directions').task_id];
   }
-  else{if(++run.round>6)throw new Error('材料归纳未能在预算内收敛，请缩小论文范围');run.stage='summarizing';this.save(run);for(const ids of groups){run.tasks.push(this.enqueue(run,ids,'summary').task_id);this.save(run);}}
+  else{if(++run.round>6)throw new Error('材料归纳未能在预算内收敛，请缩小论文范围');run.stage='summarizing';this.save(run);for(const [index,ids] of groups.entries()){run.tasks.push(this.enqueue(run,ids,'summary',index+1).task_id);this.save(run);}}
   this.save(run);
  }
  private materialsReady(run:Run,ids:string[]){
