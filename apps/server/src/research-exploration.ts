@@ -44,9 +44,25 @@ export class ResearchExploration {
  private root(project:string){return projectRuntime(this.store.root,project,'research-exploration');}
  private save(run:Run){run.updated_at=new Date().toISOString();const root=this.root(run.project_id);mkdirSync(root,{recursive:true});const file=join(root,run.id+'.json');writeFileSync(file+'.tmp',JSON.stringify(run),{mode:0o600});renameSync(file+'.tmp',file);}
  list(project:string):Run[]{const root=this.root(project);if(!existsSync(root))return [];return readdirSync(root).filter(name=>/^exploration_[a-f0-9-]+\.json$/.test(name)).flatMap(name=>{try{return [JSON.parse(readFileSync(join(root,name),'utf8')) as Run];}catch{return [];}}).sort((a,b)=>b.created_at.localeCompare(a.created_at));}
+ topicDirectories(project:string){
+  const directories=new MarkdownKnowledge(this.store).index(project).documents.filter(doc=>doc.page_role==='topic-index');
+  const published=this.list(project).find(run=>run.mode==='topics'&&directories.some(doc=>doc.id===run.result_id));
+  const current=directories.find(doc=>doc.id===published?.result_id)??directories[0];
+  return {current,archived:directories.filter(doc=>doc.id!==current?.id)};
+ }
+ directoryVersions(project:string,id:string){
+  const md=new MarkdownKnowledge(this.store);
+  const {current,archived}=this.topicDirectories(project);
+  const directories=[...(current?[current]:[]),...archived];
+  if(!directories.some(doc=>doc.id===id))throw Object.assign(new Error('NOT_FOUND'),{statusCode:404});
+  return {versions:directories.flatMap(doc=>{
+   const snapshots=md.history(project,doc.id);
+   if(!snapshots.some(snapshot=>snapshot.hash===doc.hash))snapshots.push({hash:doc.hash,text:md.read(project,doc.id).text,at:doc.modified});
+   return snapshots.map(snapshot=>({...snapshot,id:doc.id,path:doc.path,current:doc.id===current?.id&&snapshot.hash===doc.hash,archived:doc.id!==current?.id}));
+  }).sort((a,b)=>Number(b.current)-Number(a.current)||b.at.localeCompare(a.at))};
+ }
  private superseded(run:Run,runs:Run[]){
-  const directory=run.result_id??run.target_id;
-  return Boolean(directory&&runs.some(other=>other.id!==run.id&&other.append&&other.result_id===directory&&other.created_at>run.created_at));
+  return run.mode==='topics'&&runs.some(other=>other.mode==='topics'&&other.result_id&&other.created_at>run.created_at);
  }
  summaries(project:string){
   // Project-scoped task metadata and activity timestamps only; never load model logs or snapshots.
@@ -217,9 +233,13 @@ export class ResearchExploration {
   if(previous.mode!=='topics')throw Object.assign(new Error('TOPIC_REDISCOVERY_ONLY'),{statusCode:422});
   if(active(previous))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   if(this.list(project).some(run=>active(run)))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
+  if(this.superseded(previous,this.list(project)))throw Object.assign(new Error('RESEARCH_APPEND_OUTDATED'),{statusCode:409});
   const tasks=this.knowledge.tasks(project),outputs=[...new Set(previous.history_tasks.map(taskId=>tasks.find(task=>task.task_id===taskId)).filter(task=>task?.status==='completed'&&task.output_id&&['summary','summary-working'].includes(task.input.research_exploration??'')).map(task=>task!.output_id!))];
   if(!outputs.length)throw Object.assign(new Error('RESEARCH_MATERIALS_NOT_REUSABLE'),{statusCode:422});
   const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:[...previous.source_ids],created_at:at,updated_at:at,stage:'discovering',tasks:[],history_tasks:[],round:0,instructions:previous.instructions,mode:'topics',material_ids:outputs,summary_work_ids:outputs,signature:createHash('sha256').update(JSON.stringify({mode:'topics',source_ids:previous.source_ids,materials:outputs,at})).digest('hex')};
+  const directory=this.topicDirectories(project).current;
+  run.target_id=directory?.id;run.directory_expected=directory?.hash;
+  run.retained_topics=[...(previous.retained_topics??[]),...(previous.topics??[]).filter(topic=>topic.status==='completed')];
   this.save(run);try{run.tasks=[this.enqueue(run,outputs,'topic-discovery').task_id];this.save(run);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'重新发现主题失败';this.save(run);}return run;
  }
  candidates(project:string,id:string){
@@ -288,10 +308,12 @@ export class ResearchExploration {
   const firstPages=mode==='background'?/\/(whoami|background)\.md$/:mode==='comparison'?/\/(whoami|research_problem|insights|method|results)\.md$/:['directions','topics'].includes(mode)?/\/(whoami|research_problem|contributions|insights)\.md$/:/\/(whoami|research_problem|contributions)\.md$/;
   const docs=[...current.filter(d=>firstPages.test(d.path)),...topics];
   const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:18})).digest('hex');
-  const reusable=this.list(project).find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
+  const runs=this.list(project),directory=mode==='topics'?this.topicDirectories(project).current:undefined;
+  const reusable=runs.find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&!this.superseded(r,runs)&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
   if(reusable)return reusable;
   const previous=mode==='directions'?undefined:this.list(project).find(r=>r.stage==='completed'&&r.mode===mode&&r.instructions===instructions&&JSON.stringify([...r.source_ids].sort())===JSON.stringify([...selected].sort())&&r.result_id&&all.some(d=>d.id===r.result_id));
   const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:at,updated_at:at,stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions,question_id:question?.id,question_text:question?.question,mode,topic_ids:topicIds,signature,target_id:previous?.result_id,material_ids:docs.map(d=>d.id),source_hashes:current.map(({path,hash})=>({path,hash})),...(mode==='topics'?{retained_topics:[...(previous?.retained_topics??[]),...(previous?.topics??[]).filter(t=>t.status==='completed')],directory_expected:previous?.result_id?all.find(d=>d.id===previous.result_id)?.hash:undefined}:{})};
+  if(mode==='topics'){run.target_id=directory?.id;run.directory_expected=directory?.hash;}
   this.save(run);try{this.schedule(run,docs.map(d=>d.id));}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'探索启动失败';this.save(run);}return run;
  }
  private discoverTopics(run:Run,task:KnowledgeTask){
@@ -361,9 +383,10 @@ export class ResearchExploration {
  }
  private publishDirectory(run:Run){
   const md=new MarkdownKnowledge(this.store);
-  run.directory_id??=run.target_id??'wiki-'+randomUUID();
-  const path=`knowledge_base/topics/${run.directory_id}.md`,all=md.index(run.project_id).documents;
+  run.directory_id??=run.target_id??this.topicDirectories(run.project_id).current?.id??'wiki-'+randomUUID();
+  const all=md.index(run.project_id).documents;
   const current=all.find(d=>d.id===run.directory_id),before=current?md.read(run.project_id,current.id):undefined;
+  const path=before?.path??`knowledge_base/topics/${run.directory_id}.md`;
   if(run.directory_expected===undefined)run.directory_expected=before?.hash??null;
   this.save(run);
   const label=(s:string)=>s.replace(/[\\`\[\]*_]/g,'\\$&').replace(/[\r\n]/g,' ');

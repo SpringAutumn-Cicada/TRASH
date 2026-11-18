@@ -297,11 +297,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
       const markdown=new MarkdownKnowledge(store);
-      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true'}));return;}
+      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};const current=url.searchParams.get('current_topic_directory')==='true'?exploration.topicDirectories(projectId).current:undefined;sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true',current_topic_directory:current?.id}));return;}
       if(subpath==='markdown-knowledge/summary-name-preview'&&method==='GET'){sendJson(response,200,{items:markdown.summaryNamePreview(projectId)});return;}
       if(subpath==='markdown-knowledge/rename-summary'&&method==='POST'){const input=z.object({id:z.string(),title:z.string().trim().min(4).max(150),expected:z.string()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.renameSummary(projectId,input.id,input.title,input.expected)});return;}
       if(subpath==='markdown-knowledge/migration-preview'&&method==='GET'){sendJson(response,200,migrationPreview(markdown.root(projectId)));return;}
-      if(subpath==='markdown-knowledge/home'&&method==='GET'){const root=markdown.root(projectId);markdown.index(projectId);const manifest=migrationPreview(root);const file=join(root,'knowledge_base/index.md');sendJson(response,200,{path:'knowledge_base/index.md',text:existsSync(file)?readFileSync(file,'utf8'):'# 知识库\n请先预览并迁移到 knowledge_base/。',migration:manifest.migrated});return;}
+      if(subpath==='markdown-knowledge/home'&&method==='GET'){
+        const root=markdown.root(projectId),{archived}=exploration.topicDirectories(projectId),manifest=migrationPreview(root),file=join(root,'knowledge_base/index.md');
+        const oldLinks=new Set(archived.map(doc=>doc.path.replace(/^knowledge_base\//,'')));
+        const text=existsSync(file)?readFileSync(file,'utf8').split('\n').filter(line=>!oldLinks.has(line.match(/^- \[.*\]\(([^)]+)\)$/)?.[1]??'')).join('\n'):'# 知识库\n请先预览并迁移到 knowledge_base/。';
+        sendJson(response,200,{path:'knowledge_base/index.md',text,migration:manifest.migrated});return;
+      }
       if(subpath==='markdown-knowledge/maintenance-log'&&method==='GET'){const file=join(markdown.root(projectId),'knowledge_base/maintenance/log.md');sendJson(response,200,{text:existsSync(file)?readFileSync(file,'utf8'):'暂无维护记录。'});return;}
       if(['markdown-knowledge/migrate','markdown-knowledge/rollback-migration'].includes(subpath)&&method==='POST'){
         const input=z.object({confirm:z.literal(true),expected:z.string().optional()}).strict().parse(await readJson(request));
@@ -334,6 +339,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response,200,manager.act({...input,expected:input.expected}));return;
       }
       if(subpath==='markdown-knowledge/topic-versions'&&method==='GET'){const id=z.string().regex(/^wiki-[A-Za-z0-9_-]+$/).parse(url.searchParams.get('id'));sendJson(response,200,{versions:topicVersions(markdown.root(projectId),id)});return;}
+      if(subpath==='markdown-knowledge/topic-directory-versions'&&method==='GET'){sendJson(response,200,exploration.directoryVersions(projectId,url.searchParams.get('id')??''));return;}
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){
         // Local saves/reviews use the document hash, not the project-wide Agent lock.

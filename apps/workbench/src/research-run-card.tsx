@@ -33,7 +33,7 @@ export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,
   </div>
   <div className="research-current-buttons">
    {r.result_id&&<button type="button" className="primary-button" disabled={busy} onClick={()=>onResult(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}
-   {r.mode==='topics'&&r.stage==='completed'&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可重新发现':undefined} onClick={()=>onRediscover(r)}>重新发现主题</button>}
+   {r.mode==='topics'&&r.stage==='completed'&&!r.superseded&&<button type="button" className="secondary-button" disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可重新发现':undefined} onClick={()=>onRediscover(r)}>重新发现主题</button>}
    {canResume&&<button type="button" className={r.result_id?'secondary-button':'primary-button'} disabled={busy||blocked} title={blocked?'已有分析任务运行，完成后可继续':undefined} onClick={()=>onResume(r)}>{r.stage==='partial'?'继续综合':'继续处理'}</button>}
    {r.can_append&&<button type="button" className="secondary-button" disabled={busy||blocked} onClick={()=>onAppend(r)}>追加文献并综合</button>}
    {canResume&&blocked&&<small>已有分析任务运行，完成后可继续。</small>}
