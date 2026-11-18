@@ -1,6 +1,6 @@
-import {ResearchRunCard,researchActive,type ResearchRun,type ResearchTopic,type TopicStopAfter} from './research-run-card.js';
+import {ResearchRunCard,researchActive,type ResearchRun,type ResearchStageView,type ResearchTopic,type TopicStopAfter} from './research-run-card.js';
 import {LiteratureDocumentDialog} from './literature-document-dialog.js';
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useCallback,useEffect,useRef,useState} from 'react';
 import type {Source,ResearchProject} from '@trash/protocol';
 import {knowledgeDocumentId} from '@trash/protocol/browser';
 import {api,uiError} from './api.js';
@@ -32,6 +32,7 @@ function TopicStagePicker({value,onChange,disabled}:{value:TopicStopAfter;onChan
 
 export function ResearchExplorationButton({projectId,sources,questionId,onQuestionAdded,initialTopicId,initialQuestion}:{projectId:string;sources:Source[];questionId?:string;initialTopicId?:string;initialQuestion?:string;onQuestionAdded?:(project:ResearchProject)=>void}){
  const [ready,setReady]=useState(false);
+ const [stageViews,setStageViews]=useState<Record<string,ResearchStageView>>({});
  const [stopAfter,setStopAfter]=useState<TopicStopAfter>('synthesis');
  const [creating,setCreating]=useState(false),[focusedId,setFocusedId]=useState('');
  const [appendId,setAppendId]=useState(''),[additional,setAdditional]=useState<string[]>([]),[appendPlan,setAppendPlan]=useState<AppendPlan>();
@@ -44,8 +45,8 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const [candidates,setCandidates]=useState<Candidate[]>([]),[resultRun,setResultRun]=useState<string>(),[added,setAdded]=useState<string[]>([]);
  const base='/projects/'+encodeURIComponent(projectId);
  const directionSeed=useRef<string|undefined>(undefined);
- const previewHeading=useRef<HTMLHeadingElement>(null);
- useEffect(()=>{if(preview)previewHeading.current?.focus();},[preview]);
+ const focusPreview=useCallback((heading:HTMLHeadingElement|null)=>{heading?.focus();},[]);
+
  const [seedTitle,setSeedTitle]=useState('');
  useEffect(()=>{
   if(!initialTopicId)return;
@@ -116,14 +117,17 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  });
  const result=(r:Run,id:string,withCandidates=false)=>void showResult(r,id,withCandidates);
  const stop=(r:Run)=>{if(!window.confirm('停止当前任务？已完成内容和草稿会保留，可稍后继续。'))return;void run(()=>api(base+'/research-exploration/'+r.id+'/cancel',{method:'POST',body:JSON.stringify({confirm:true})}));};
+ const selectStage=(r:Run,view:ResearchStageView)=>setStageViews(views=>({...views,[r.id]:view}));
  const previewPath=(r:Run,topic:Topic)=>base+'/research-exploration/'+r.id+'/topics/'+topic.id;
  const generatePreview=(r:Run,topic:Topic)=>void run(async()=>{
   if(topic.preview_status==='completed'&&!window.confirm('重新生成试稿？新试稿将替换本轮的预览入口。'))return;
   await api(previewPath(r,topic)+'/preview',{method:'POST',body:'{}'});
   setPreview(undefined);setFocusedId(r.id);
+  selectStage(r,'discovery');
  });
  const openPreview=(r:Run,topic:Topic)=>void run(async()=>{
   const {draft}=await api<{draft:TopicDraft}>(previewPath(r,topic)+'/preview');
+  selectStage(r,'discovery');
   setPreviewPage(0);setPreview({run:r,topic,draft});
  });
  const publishPreview=()=>void run(async()=>{
@@ -132,7 +136,26 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
   setFocusedId(preview.run.id);setPreview(undefined);
  });
  const setRunStop=(r:Run,stop_after:TopicStopAfter)=>void run(()=>api(base+'/research-exploration/'+r.id+'/stop-after',{method:'POST',body:JSON.stringify({stop_after})}));
- const card=(r:Run)=><ResearchRunCard run={r} projectId={projectId} busy={busy} blocked={hasActive} onResult={result} onResume={(item,topic,nextStage)=>{setFocusedId(item.id);setAppendId('');setCreating(false);void resume(item,topic,nextStage);}} onRediscover={rediscover} onAppend={openAppend} onStop={stop} onGeneratePreview={generatePreview} onPreview={openPreview} onSetStop={setRunStop} sourceTitles={r.source_ids.map(sourceTitle)}/>;
+ const previewPanel=preview&&(<section className="research-create-form" aria-label="单主题试稿">
+     <header><h3 ref={focusPreview} tabIndex={-1}>{preview.draft.title} · 试稿</h3><button type="button" className="text-button" disabled={busy} onClick={()=>setPreview(undefined)}>关闭试稿</button></header>
+     <div className="research-analysis-modes" role="group" aria-label="试稿页面">{preview.draft.files.map((file,index)=><button key={file.path} type="button" className={index===previewPage?'primary-button':'secondary-button'} aria-pressed={index===previewPage} onClick={()=>setPreviewPage(index)}>{file.path.endsWith('--methods.md')?'方法与条件':file.path.endsWith('--results.md')?'结果与分歧':file.path.endsWith('--insights.md')?'可复用认识':'主题总览'}</button>)}</div>
+     <article className="research-result"><ChatMarkdown text={preview.draft.files[previewPage].text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')}/></article>
+     {!preview.draft.published&&<div className="research-create-footer">
+      <button type="button" className="primary-button" disabled={busy||hasActive||runs.some(item=>item.id===preview.run.id&&item.superseded)} onClick={publishPreview}>确认发布主题</button>
+     </div>}
+    </section>);
+ const card=(r:Run)=><ResearchRunCard key={r.id}
+  run={r} projectId={projectId} busy={busy} blocked={hasActive}
+  view={stageViews[r.id]} onView={view=>selectStage(r,view)}
+  preview={preview?.run.id===r.id?previewPanel:undefined}
+  onResult={result} onResume={(item,topic,nextStage)=>{
+   setFocusedId(item.id);setAppendId('');setCreating(false);
+   if(nextStage)selectStage(item,nextStage==='discovery'?'discovery':'synthesis');
+   void resume(item,topic,nextStage);
+  }}
+  onRediscover={rediscover} onAppend={openAppend} onStop={stop}
+  onGeneratePreview={generatePreview} onPreview={openPreview}
+  onSetStop={setRunStop} sourceTitles={r.source_ids.map(sourceTitle)}/>;
  return <>
   {!questionId&&<><button type="button" className="secondary-button" onClick={()=>openFor('research-map')}>研究地图</button><button type="button" className="secondary-button" onClick={()=>openFor('background')}>大背景</button><button type="button" className="secondary-button" onClick={()=>openFor('topics')}>主题综合</button></>}
   <button type="button" className="secondary-button" onClick={()=>openFor('directions')}>{questionId?'定向补证据':'探索研究方向'}</button>
@@ -176,14 +199,6 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
     <label>{mode==='comparison'?'指定主题或比较问题（必填）':'补充关注点（可选）'}<textarea maxLength={5000} value={instructions} onChange={e=>setInstructions(e.target.value)}/></label>
     {!questionId&&mode==='topics'&&<TopicStagePicker value={stopAfter} onChange={setStopAfter} disabled={busy||hasActive}/>}
     <div className="research-create-footer"><button type="button" className="primary-button" disabled={!ready||busy||!chosen.length||hasActive||mode==='comparison'&&!instructions.trim()} onClick={()=>void start()}>{busy?'正在创建任务…':`开始${title} · ${chosen.length} 篇论文`}</button><small>{hasActive?'已有分析任务运行，结束后可新建。':!chosen.length?'请先选择论文。':mode==='comparison'&&!instructions.trim()?'请填写要比较的具体问题。':'启动后将自动切换到任务进度。'}</small></div></section>}
-    {preview&&<section className="research-create-form" aria-label="单主题试稿">
-     <header><h3 ref={previewHeading} tabIndex={-1}>{preview.draft.title} · 试稿</h3><button type="button" className="text-button" disabled={busy} onClick={()=>setPreview(undefined)}>关闭试稿</button></header>
-     <div className="research-analysis-modes" role="group" aria-label="试稿页面">{preview.draft.files.map((file,index)=><button key={file.path} type="button" className={index===previewPage?'primary-button':'secondary-button'} aria-pressed={index===previewPage} onClick={()=>setPreviewPage(index)}>{file.path.endsWith('--methods.md')?'方法与条件':file.path.endsWith('--results.md')?'结果与分歧':file.path.endsWith('--insights.md')?'可复用认识':'主题总览'}</button>)}</div>
-     <article className="research-result"><ChatMarkdown text={preview.draft.files[previewPage].text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')}/></article>
-     {!preview.draft.published&&<div className="research-create-footer">
-      <button type="button" className="primary-button" disabled={busy||hasActive||runs.some(item=>item.id===preview.run.id&&item.superseded)} onClick={publishPreview}>确认发布主题</button>
-     </div>}
-    </section>}
     {error&&<ErrorNotice>{error}</ErrorNotice>}
     {!appendBase&&history.length>0&&<details className="research-history"><summary>历史记录 · {history.length}</summary>{history.map(r=><details className="research-history-row" key={r.id}><summary><span className={`research-state state-${r.stage}`}>{stages[r.stage]??r.stage}</span><strong>{r.source_ids.length} 篇 · {r.append?'追加文献':modes[r.mode??'directions']}</strong><time>{new Date(r.created_at).toLocaleString()}</time></summary><div className="research-history-actions">{r.result_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>result(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}<button type="button" className="text-button" onClick={()=>{setFocusedId(r.id);setCreating(false);}}>置顶查看</button></div>{card(r)}</details>)}</details>}
     {candidates.map(candidate=><div className="research-run" key={candidate.id}><strong>{candidate.title}</strong><p>{candidate.question}</p><button type="button" className="secondary-button" disabled={busy||!candidate.complete||added.includes(candidate.id)} onClick={()=>void run(async()=>{const current=await api<{project:ResearchProject}>(base+'/research-questions');const saved=await api<{project:ResearchProject}>(base+'/research-questions',{method:'POST',body:JSON.stringify({title:candidate.title,question:candidate.question,status:'candidate',rationale:'由文献探索提出，尚需补充检索与验证',expected_updated_at:current.project.updated_at,source_run_id:resultRun,source_candidate_id:candidate.id})});onQuestionAdded?.(saved.project);setAdded(ids=>[...ids,candidate.id]);})}>{added.includes(candidate.id)?'已加入候选问题':candidate.complete?'加入候选问题':'结构或依据不完整，暂不能加入'}</button></div>)}
