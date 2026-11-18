@@ -75,6 +75,8 @@
 .research-stage-heading{margin-bottom:12px}
 .research-stage-heading h4{margin:0;font-size:16px}
 .research-discovery-panel{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.research-discovery-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 2px;border:0;background:transparent;color:var(--text);font:inherit;font-weight:600;text-align:left;cursor:pointer}
+.research-discovery-toggle:hover{color:var(--accent)}
 .research-topic-list li>.research-topic-actions{justify-content:flex-start;align-items:center;flex-wrap:wrap;margin-top:6px;gap:6px 12px}
 .research-discovery-panel .research-create-form{border-top:1px solid var(--line);margin-top:16px;padding-top:16px}
 @media(max-width:600px){.research-stage-link{flex-direction:column;align-items:flex-start;gap:4px;padding-inline:4px}}

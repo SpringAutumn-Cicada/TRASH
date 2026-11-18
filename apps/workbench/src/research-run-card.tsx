@@ -1,4 +1,5 @@
-import React,{useId} from 'react';
+import React,{useId,useState} from 'react';
+import {ChevronDown,ChevronRight} from 'lucide-react';
 import {projectPath} from './navigation.js';
 
 export type ResearchStageView='overview'|'materials'|'discovery'|'synthesis'|'done';
@@ -11,6 +12,8 @@ const statuses:Record<string,string>={running:'处理中',generating:'处理中'
 const duration=(seconds:number)=>seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分${seconds%60?` ${seconds%60} 秒`:''}`;
 export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,onRediscover,onAppend,onStop,onGeneratePreview,onPreview,onSetStop,sourceTitles,view,onView,preview}:{run:ResearchRun;projectId:string;busy:boolean;blocked:boolean;onResult:(run:ResearchRun,id:string,candidates?:boolean)=>void;onResume:(run:ResearchRun,topic?:ResearchTopic,stopAfter?:TopicStopAfter)=>void;onRediscover:(run:ResearchRun)=>void;onAppend:(run:ResearchRun)=>void;onStop:(run:ResearchRun)=>void;onGeneratePreview:(run:ResearchRun,topic:ResearchTopic)=>void;onPreview:(run:ResearchRun,topic:ResearchTopic)=>void;onSetStop:(run:ResearchRun,stage:TopicStopAfter)=>void;sourceTitles:string[];view?:ResearchStageView;onView:(view:ResearchStageView)=>void;preview?:React.ReactNode}){
  const panelId=useId();
+ const formalTopicsId=useId();
+ const [showFormalTopics,setShowFormalTopics]=useState(true);
  const selected=view??(r.stage==='discovery-ready'||r.stage==='previewing'?'discovery':'overview');
  const viewingProgress=selected==='overview'||selected==='synthesis';
  const p=r.progress,working=researchActive(r.stage),now=Date.now();
@@ -50,23 +53,28 @@ export function ResearchRunCard({run:r,projectId,busy,blocked,onResult,onResume,
    {selected==='done'&&!r.result_id&&<p className="research-run-notice">此轮尚无可打开的主题目录。</p>}
    {selected==='discovery'&&<div className="research-discovery-panel">
     <div className="research-discovery-meta">
-     <strong>正式主题 · {formalTopics.length} 个</strong>
+     <button type="button" className="research-discovery-toggle" aria-expanded={showFormalTopics} aria-controls={formalTopicsId} onClick={()=>setShowFormalTopics(open=>!open)}>
+      {showFormalTopics?<ChevronDown size={16} aria-hidden="true"/>:<ChevronRight size={16} aria-hidden="true"/>}
+      正式主题 · {formalTopics.length} 个
+     </button>
      {r.discovery_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>onResult(r,r.discovery_id!)}>查看发现清单</button>}
     </div>
-    {!formalTopics.length&&<p className="research-run-notice">{r.stage==='discovering'?'正在发现主题。':r.discovery_id?'本轮没有可以单独生成的正式主题。':'主题发现结果尚未就绪。'}</p>}
-    {blocked&&!r.superseded&&formalTopics.length>0&&<small>当前任务结束后可生成单主题试稿。</small>}
-    {r.superseded&&<p className="research-run-notice">这是历史轮次。要生成试稿，请打开最新一轮的「发现主题」。</p>}
-    {formalTopics.length>0&&<ul className="research-topic-list">{formalTopics.map(topic=><li key={topic.id}>
-     <div><strong>{topic.title}</strong><small>{topic.preview_status==='queued'?'试稿排队中':topic.preview_status==='running'?'正在生成试稿':topic.preview_status==='completed'?'试稿待确认':statuses[topic.status]}{topic.source_count!==undefined&&` · ${topic.source_count} 篇`}</small></div>
-     {topic.error&&<p>{topic.error}</p>}
-     <div className="research-topic-actions">
-      {topic.output_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>onResult(r,topic.output_id!)}>阅读主题组</button>}
-      {topic.preview_status==='completed'&&<button type="button" className="text-button" disabled={busy} onClick={()=>onPreview(r,topic)}>查看试稿</button>}
-      {!r.superseded&&topic.status!=='generating'&&<button type="button" className="text-button" disabled={busy||blocked} onClick={()=>onGeneratePreview(r,topic)}>{topic.preview_status==='completed'?'重新生成试稿':topic.preview_status&&topic.preview_status!=='published'&&!['queued','running'].includes(topic.preview_status)?'重试单主题试稿':'生成单个主题'}</button>}
-      {topic.preview_task_id&&topic.preview_status!=='published'&&<a href={projectPath(projectId,'tasks',{focus:topic.preview_task_id})}>试稿日志</a>}
-     </div>
-    </li>)}</ul>}
-    {r.topics?.some(topic=>topic.preview_status==='completed')&&<small>已有试稿的主题可单独确认发布，批量综合会处理其余主题。</small>}
+    <div id={formalTopicsId} hidden={!showFormalTopics}>
+     {!formalTopics.length&&<p className="research-run-notice">{r.stage==='discovering'?'正在发现主题。':r.discovery_id?'本轮没有可以单独生成的正式主题。':'主题发现结果尚未就绪。'}</p>}
+     {blocked&&!r.superseded&&formalTopics.length>0&&<small>当前任务结束后可生成单主题试稿。</small>}
+     {r.superseded&&<p className="research-run-notice">这是历史轮次。要生成试稿，请打开最新一轮的「发现主题」。</p>}
+     {formalTopics.length>0&&<ul className="research-topic-list">{formalTopics.map(topic=><li key={topic.id}>
+      <div><strong>{topic.title}</strong><small>{topic.preview_status==='queued'?'试稿排队中':topic.preview_status==='running'?'正在生成试稿':topic.preview_status==='completed'?'试稿待确认':statuses[topic.status]}{topic.source_count!==undefined&&` · ${topic.source_count} 篇`}</small></div>
+      {topic.error&&<p>{topic.error}</p>}
+      <div className="research-topic-actions">
+       {topic.output_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>onResult(r,topic.output_id!)}>阅读主题组</button>}
+       {topic.preview_status==='completed'&&<button type="button" className="text-button" disabled={busy} onClick={()=>onPreview(r,topic)}>查看试稿</button>}
+       {!r.superseded&&topic.status!=='generating'&&<button type="button" className="text-button" disabled={busy||blocked} onClick={()=>onGeneratePreview(r,topic)}>{topic.preview_status==='completed'?'重新生成试稿':topic.preview_status&&topic.preview_status!=='published'&&!['queued','running'].includes(topic.preview_status)?'重试单主题试稿':'生成单个主题'}</button>}
+       {topic.preview_task_id&&topic.preview_status!=='published'&&<a href={projectPath(projectId,'tasks',{focus:topic.preview_task_id})}>试稿日志</a>}
+      </div>
+     </li>)}</ul>}
+     {r.topics?.some(topic=>topic.preview_status==='completed')&&<small>已有试稿的主题可单独确认发布，批量综合会处理其余主题。</small>}
+    </div>
     {preview}
    </div>}
   {viewingProgress&&<div className="research-progress-block">
