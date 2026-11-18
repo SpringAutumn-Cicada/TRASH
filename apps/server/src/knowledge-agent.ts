@@ -123,24 +123,38 @@ export class KnowledgeAgent implements TaskRunner {
     return tasks;
   }
   // Reading checkpoints depend on the PDF and reading rules, not changing library metadata.
-  private readingAttempts(task: KnowledgeTask, includeHistoricalReadings=false): KnowledgeTask[] {
-    const tasks=this.knowledge.tasks(task.project_id), result:KnowledgeTask[]=[], seen=new Set<string>();
+  private readingAttempts(task: KnowledgeTask, includeHistoricalReadings=false): {task_id:string;created_at:string}[] {
+    const result:{task_id:string;created_at:string}[]=[],seen=new Set<string>();
+    const rule=(task.snapshot as {reading_rule_version?:number}).reading_rule_version;
+    const byId=this.store.db.prepare(`SELECT s.task_id,s.created_at,abstract_mode,attempt_of,
+      json_extract(t.data,'$.input.instructions') AS instructions,
+      json_extract(t.data,'$.snapshot.reading_rule_version') AS rule
+      FROM knowledge_task_summaries s JOIN knowledge_tasks t USING(task_id)
+      WHERE s.project_id=? AND s.task_id=?`);
     let id=task.attempt_of;
-    while(id&&!seen.has(id)){seen.add(id);const prior=tasks.find(t=>t.task_id===id);if(!prior)break;
-      if(Boolean(prior.input.abstract_mode)===Boolean(task.input.abstract_mode)&&prior.input.instructions===task.input.instructions&&(prior.snapshot as {reading_rule_version?:number}).reading_rule_version===2&&(task.snapshot as {reading_rule_version?:number}).reading_rule_version===2)result.push(prior);
-      id=prior.attempt_of;
+    while(id&&!seen.has(id)){
+      seen.add(id);
+      const prior=byId.get(task.project_id,id) as {task_id:string;created_at:string;abstract_mode:number|null;attempt_of:string|null;instructions:string|null;rule:number|null}|undefined;
+      if(!prior)break;
+      if(Boolean(prior.abstract_mode)===Boolean(task.input.abstract_mode)&&(prior.instructions??undefined)===task.input.instructions&&prior.rule===2&&rule===2)result.push(prior);
+      id=prior.attempt_of??undefined;
     }
-    // Reading artifacts are reusable across completed analyses, not only retry ancestry.
-    if(includeHistoricalReadings)for(const prior of tasks.filter(prior=>prior.task_id!==task.task_id&&prior.created_at<task.created_at&&prior.input.include_source_wiki&&!prior.input.abstract_mode&&prior.input.source_ids[0]===task.input.source_ids[0]&&prior.input.instructions===task.input.instructions&&(prior.snapshot as {reading_rule_version?:number}).reading_rule_version===(task.snapshot as {reading_rule_version?:number}).reading_rule_version).sort((a,b)=>b.created_at.localeCompare(a.created_at))){
-      if(!seen.has(prior.task_id)){seen.add(prior.task_id);result.push(prior);}
-    }
-    return includeHistoricalReadings?result.sort((a,b)=>b.created_at.localeCompare(a.created_at)):result;
+    if(!includeHistoricalReadings||!task.input.source_ids[0])return result;
+    // Reuse requires matching reading inputs, including for analyses outside this retry chain.
+    const matching=this.store.db.prepare(`SELECT s.task_id,s.created_at FROM knowledge_task_summaries s
+      JOIN knowledge_tasks t ON t.task_id=s.task_id WHERE s.project_id=? AND s.created_at<?
+      AND s.task_id<>? AND s.include_source_wiki=1 AND coalesce(s.abstract_mode,0)=0
+      AND json_extract(s.source_ids,'$[0]')=? AND json_extract(t.data,'$.input.instructions') IS ?
+      AND json_extract(t.data,'$.snapshot.reading_rule_version') IS ?
+      ORDER BY s.created_at DESC`).all(task.project_id,task.created_at,task.task_id,task.input.source_ids[0],task.input.instructions??null,rule??null) as typeof result;
+    result.push(...matching.filter(prior=>!seen.has(prior.task_id)));
+    return result.sort((a,b)=>b.created_at.localeCompare(a.created_at));
   }
   private resumeHints=new Map<string,{until:number;status:string;value:boolean}>();
   resumeHintFor(project:string,id:string,status:string):boolean {
     if(!['failed','interrupted','cancelled'].includes(status))return false;
     const cached=this.resumeHints.get(id);
-    if(cached&&cached.status===status)return cached.value;
+    if(cached&&cached.status===status&&cached.until>Date.now())return cached.value;
     const task=this.knowledge.task(project,id);
     return task?this.resumeHint(task):false;
   }
@@ -166,9 +180,11 @@ export class KnowledgeAgent implements TaskRunner {
     if(existsSync(draftOutput)&&sourceId&&!task.input.abstract_mode&&(task.input.include_source_wiki||task.input.wiki_level==='single'))draftPaths.splice(0,draftPaths.length,...paperWikiOutputPaths(draftOutput,sourceId,draftPaths));
     if(existsSync(draftOutput)&&this.inspectOutputs(task,draftOutput,draftPaths).valid.some(file=>(task.snapshot as {documents?:{path:string;text:string}[]}).documents?.find(doc=>doc.path===file.path)?.text!==file.text))return true;
     if(!sourceId)return false;
+    const attempts=this.readingAttempts(candidate,true);
+    if(!attempts.length)return false;
     let pdfHash:string;
     try{pdfHash=new PdfReading(this.store).original(task.project_id,sourceId).hash;}catch{return false;}
-    for(const prior of this.readingAttempts(candidate,true)){
+    for(const prior of attempts){
       const base=projectRuntime(this.store.root,task.project_id,'tasks',prior.task_id);
       if(hasReadingCheckpoint(base,sourceId,pdfHash,task.input.instructions))return true;
     }
@@ -205,8 +221,9 @@ export class KnowledgeAgent implements TaskRunner {
   private restoreDrafts(task:KnowledgeTask,output:string,paths:string[]) {
     if(!task.attempt_of)return; // A fresh reanalysis only reuses PDF readings, never Wiki drafts.
     const fields=['topic_sources','topic_entry','prompt_version','abstract_expected','sources','dependencies','expectedTargets','bibliography_baselines','skill_hash'];
-    for(const prior of this.readingAttempts(task)){
-      if(prior.input.kind!==task.input.kind||prior.input.include_source_wiki!==task.input.include_source_wiki)continue;
+    for(const attempt of this.readingAttempts(task)){
+      const prior=this.knowledge.task(task.project_id,attempt.task_id);
+      if(!prior||prior.input.kind!==task.input.kind||prior.input.include_source_wiki!==task.input.include_source_wiki)continue;
       const old=prior.snapshot as Record<string,unknown>, current=task.snapshot as Record<string,unknown>;
       if(fields.some(key=>JSON.stringify(old[key])!==JSON.stringify(current[key])))continue;
       const oldOutput=join(projectRuntime(this.store.root,task.project_id,'tasks',prior.task_id),'output');
