@@ -60,6 +60,10 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const appendBase=runs.find(r=>r.id===appendId);
  const appendAvailable=appendBase?available.filter(source=>!appendBase.source_ids.includes(source.source_id)):[];
  const appendLimit=100-(appendBase?.source_ids.length??100);
+ const appendBulkCount=Math.min(appendAvailable.length,appendLimit);
+ const changeAdditional=(update:React.SetStateAction<string[]>)=>{
+  setAdditional(update);setAppendPlan(undefined);setError('');
+ };
  const sourceTitle=(id:string)=>sources.find(source=>source.source_id===id)?.title??'来源已移除';
  const openAppend=(r:Run)=>{setFocusedId(r.id);setCreating(false);setAppendId(r.id);setAdditional([]);setAppendPlan(undefined);setError('');};
  const previewAppend=async()=>{
@@ -88,8 +92,14 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
     {appendBase&&<section className="research-create-form" aria-label="追加文献并综合">
      <header><h3>追加文献并综合</h3><button type="button" className="text-button" disabled={busy} onClick={()=>{setAppendId('');setError('');}}>返回任务</button></header>
      <p>已纳入 {appendBase.source_ids.length} 篇。新增论文先整理为独立材料分组，再与已有主题和相关材料对照。</p>
-     <div className="research-selection-actions"><strong>已选 {additional.length} 篇 · 最多可追加 {appendLimit} 篇</strong></div>
-     <div className="research-source-list">{appendAvailable.map(source=><label key={source.source_id}><input type="checkbox" checked={additional.includes(source.source_id)} disabled={busy||hasActive||(additional.length>=appendLimit&&!additional.includes(source.source_id))} onChange={event=>{const checked=event.target.checked;setAdditional(ids=>checked?[...ids,source.source_id]:ids.filter(id=>id!==source.source_id));setAppendPlan(undefined);setError('');}}/><span>{source.title}</span></label>)}
+     <div className="research-selection-actions">
+      <strong>已选 {additional.length} 篇 · 最多可追加 {appendLimit} 篇</strong>
+      <button type="button" className="text-button" disabled={busy||hasActive||additional.length>=appendBulkCount} onClick={()=>changeAdditional(ids=>[
+       ...ids,...appendAvailable.filter(source=>!ids.includes(source.source_id)).slice(0,appendBulkCount-ids.length).map(source=>source.source_id),
+      ])}>{appendAvailable.length>appendLimit&&appendLimit>0?`选满 ${appendLimit} 篇`:'全选可追加文献'}</button>
+      <button type="button" className="text-button" disabled={busy||hasActive||!additional.length} onClick={()=>changeAdditional([])}>清空</button>
+     </div>
+     <div className="research-source-list">{appendAvailable.map(source=><label key={source.source_id}><input type="checkbox" checked={additional.includes(source.source_id)} disabled={busy||hasActive||(additional.length>=appendLimit&&!additional.includes(source.source_id))} onChange={event=>{const checked=event.target.checked;changeAdditional(ids=>checked?[...ids,source.source_id]:ids.filter(id=>id!==source.source_id));}}/><span>{source.title}</span></label>)}
       {!appendAvailable.length&&<p>暂无可追加的全文 Wiki。</p>}
      </div>
      {appendPlan&&<div className="research-run-notice" role="status">
