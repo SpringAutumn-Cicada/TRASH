@@ -14,8 +14,8 @@ import {projectPath,useUnsavedChanges} from './navigation.js';
 import './markdown-knowledge.css';
 import './wiki-reading.css';
 
-type Document={topic_id?:string;page_role?:string;material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
-type DirectoryVersion={id:string;hash:string;text:string;at:string;current:boolean;archived:boolean};
+type Document={topic_discovery_history?:boolean;topic_id?:string;page_role?:string;material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
+type DirectoryVersion={id:string;title:string;hash:string;text:string;at:string;current:boolean;archived:boolean};
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,documentId,onDocumentNavigate,onClose,onSaved,embedded=false,onReadingLock}:{onReadingLock?:(locked:boolean)=>void;embedded?:boolean;projectId:string;source?:Source;initialType?:string;initialId?:string;documentId?:string;onDocumentNavigate?:(id:string)=>void;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
   const [type]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
@@ -51,11 +51,11 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
   },[base,selected,reload]);
   const reading=useWikiReadingNavigation(selected??'',doc?.id,loading,scroll,id=>{if(onDocumentNavigate)onDocumentNavigate(id);else setLinked(id);setHistory(undefined);});
   const run=async(fn:()=>Promise<void>)=>{if(acting.current)return;acting.current=true;setBusy(true);setError('');try{await fn();}catch(e){setError(uiError(e,'操作失败，当前草稿已保留。'));}finally{acting.current=false;setBusy(false);}};
-  const toggleDirectoryVersions=()=>{
+  const toggleDocumentVersions=()=>{
     if(directoryVersions){setDirectoryVersions(undefined);return;}
     if(!doc)return;
     void run(async()=>{
-      const result=await api<{versions:DirectoryVersion[]}>(base+'/topic-directory-versions?id='+encodeURIComponent(doc.id));
+      const result=await api<{versions:DirectoryVersion[]}>(base+(doc.topic_discovery_history?'/topic-discovery-versions?id=':'/topic-directory-versions?id=')+encodeURIComponent(doc.id));
       setDirectoryVersions(result.versions);scroll.current?.scrollTo({top:0});
     });
   };
@@ -87,9 +87,9 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       {doc?.topic_id&&topicVersions&&<div className="topic-wiki-versions">{topicVersions.map(version=><details key={version.revision}><summary>版本 {version.revision} · {new Date(version.at).toLocaleString()} · {version.current.length} 页</summary>{version.current.map(file=><p key={file.path}><code>{file.path.split('/').at(-1)} · {file.hash.slice(0,12)}</code> <button type="button" disabled={busy} onClick={()=>void run(async()=>{const id=knowledgeDocumentId(file.path);const versions=(await api<{versions:{hash:string;text:string}[]}>(base+'/history?id='+encodeURIComponent(id??''))).versions;const snapshot=versions.find(item=>item.hash===file.hash);if(!snapshot)throw new Error('该文件快照不存在');setHistory([snapshot]);})}>查看快照</button></p>)}</details>)}{!topicVersions.length&&<p>暂无整组发布快照。</p>}</div>}
       <div ref={scroll} className="library-document-scroll">
         {(loading||!directoryLoaded)?<p role="status"><LoaderCircle className="spin" size={16}/> 正在读取内容…</p>:directoryVersions?<section className="library-document-history">
-          <h4>综合目录版本</h4>
+          <h4>{doc?.topic_discovery_history?'发现清单历史版本':'综合目录版本'}</h4>
           {directoryVersions.map(version=><details key={version.id+':'+version.hash}>
-            <summary>{version.current?'当前目录':version.archived?'历史独立目录':'目录历史快照'} · {new Date(version.at).toLocaleString()} · {version.hash.slice(0,8)}</summary>
+            <summary>{doc?.topic_discovery_history?(version.current?'当前清单':version.archived?'历史清单':'清单历史快照'):(version.current?'当前目录':version.archived?'历史独立目录':'目录历史快照')}{doc?.topic_discovery_history&&' · '+version.title} · {new Date(version.at).toLocaleString()} · {version.hash.slice(0,8)}</summary>
             <pre>{version.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/<!-- synthesis-directory:(?:start|end) -->\r?\n?/g,'')}</pre>
           </details>)}
         </section>:doc?<>
@@ -114,7 +114,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
         </>:!error&&<p>该内容尚未生成，请先分析这篇论文。</p>}
       </div>
       {versionSource&&<PaperWikiVersionPanel projectId={projectId} sourceId={versionSource} onClose={()=>setVersionSource('')} onChanged={()=>{setReload(n=>n+1);onSaved();}} onWorking={setBusy}/>}
-      <footer><span>{editing?(dirty?'有未保存修改':'编辑 Markdown'):doc?.path}</span><div>{editing?<><button type="button" className="secondary-button" disabled={busy} onClick={()=>{if(!dirty||window.confirm('放弃未保存的修改？')){setDraft(doc!.text);setEditing(false);}}}>取消编辑</button><button type="button" className="primary-button" disabled={busy||!dirty} onClick={()=>void run(async()=>{await api(base+'/save',{method:'POST',body:JSON.stringify({path:doc!.path,text:draft,expected:doc!.hash})});setEditing(false);setReload(n=>n+1);onSaved();})}><Save size={14}/>{busy?'正在保存':'保存修改'}</button></>:<>{doc?.topic_id?<button type="button" className="secondary-button" disabled={busy} aria-expanded={Boolean(topicVersions)} onClick={toggleTopicVersions}>整组版本</button>:<button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'||(!doc.source_id&&doc.page_role!=='topic-index')} onClick={()=>doc?.page_role==='topic-index'?toggleDirectoryVersions():setVersionSource(doc!.source_id!)}>{directoryVersions?'返回正文':'版本管理'}</button>}<button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'||Boolean(directoryVersions)} onClick={()=>{setDraft(doc!.text);setEditing(true);setHistory(undefined);}}>编辑内容</button></>}</div></footer>
+      <footer><span>{editing?(dirty?'有未保存修改':'编辑 Markdown'):doc?.path}</span><div>{editing?<><button type="button" className="secondary-button" disabled={busy} onClick={()=>{if(!dirty||window.confirm('放弃未保存的修改？')){setDraft(doc!.text);setEditing(false);}}}>取消编辑</button><button type="button" className="primary-button" disabled={busy||!dirty} onClick={()=>void run(async()=>{await api(base+'/save',{method:'POST',body:JSON.stringify({path:doc!.path,text:draft,expected:doc!.hash})});setEditing(false);setReload(n=>n+1);onSaved();})}><Save size={14}/>{busy?'正在保存':'保存修改'}</button></>:<>{doc?.topic_id?<button type="button" className="secondary-button" disabled={busy} aria-expanded={Boolean(topicVersions)} onClick={toggleTopicVersions}>整组版本</button>:<button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'||(!doc.source_id&&doc.page_role!=='topic-index'&&!doc.topic_discovery_history)} onClick={()=>doc?.page_role==='topic-index'||doc?.topic_discovery_history?toggleDocumentVersions():setVersionSource(doc!.source_id!)}>{directoryVersions?'返回正文':'版本管理'}</button>}<button type="button" className="secondary-button" disabled={busy||!doc||doc.material_scope==='abstract'||Boolean(directoryVersions)} onClick={()=>{setDraft(doc!.text);setEditing(true);setHistory(undefined);}}>编辑内容</button></>}</div></footer>
     </div>
   </div>;
   return embedded?panel:<ModalLayer>{panel}</ModalLayer>;

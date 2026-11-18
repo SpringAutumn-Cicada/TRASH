@@ -51,15 +51,25 @@ export class ResearchExploration {
   const current=directories.find(doc=>doc.id===published?.result_id)??directories[0];
   return {current,archived:directories.filter(doc=>doc.id!==current?.id)};
  }
- directoryVersions(project:string,id:string){
+ topicDiscoveries(project:string){
+  const publishedIds=this.list(project).filter(run=>run.mode==='topics'&&run.discovery_id).map(run=>run.discovery_id!);
+  const documents=new MarkdownKnowledge(this.store).index(project).documents
+   .filter(doc=>doc.level==='discovery'&&(publishedIds.includes(doc.id)||doc.page_role==='topic-discovery'||['文献主题发现清单','追加文献：主题发现清单'].includes(doc.title)))
+   .sort((a,b)=>b.modified.localeCompare(a.modified)||b.id.localeCompare(a.id));
+  const byId=new Map(documents.map(doc=>[doc.id,doc]));
+  const current=publishedIds.map(id=>byId.get(id)).find(Boolean)??documents[0];
+  return {current,archived:documents.filter(doc=>doc.id!==current?.id)};
+ }
+ directoryVersions(project:string,id:string){return this.documentVersions(project,id,this.topicDirectories(project));}
+ discoveryVersions(project:string,id:string){return this.documentVersions(project,id,this.topicDiscoveries(project));}
+ private documentVersions(project:string,id:string,{current,archived}:ReturnType<ResearchExploration['topicDirectories']>){
   const md=new MarkdownKnowledge(this.store);
-  const {current,archived}=this.topicDirectories(project);
   const directories=[...(current?[current]:[]),...archived];
   if(!directories.some(doc=>doc.id===id))throw Object.assign(new Error('NOT_FOUND'),{statusCode:404});
   return {versions:directories.flatMap(doc=>{
    const snapshots=md.history(project,doc.id);
    if(!snapshots.some(snapshot=>snapshot.hash===doc.hash))snapshots.push({hash:doc.hash,text:md.read(project,doc.id).text,at:doc.modified});
-   return snapshots.map(snapshot=>({...snapshot,id:doc.id,path:doc.path,current:doc.id===current?.id&&snapshot.hash===doc.hash,archived:doc.id!==current?.id}));
+   return snapshots.map(snapshot=>({...snapshot,id:doc.id,path:doc.path,title:doc.title,current:doc.id===current?.id&&snapshot.hash===doc.hash,archived:doc.id!==current?.id}));
   }).sort((a,b)=>Number(b.current)-Number(a.current)||b.at.localeCompare(a.at))};
  }
  private superseded(run:Run,runs:Run[]){
