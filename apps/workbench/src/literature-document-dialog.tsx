@@ -92,7 +92,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
             <pre>{version.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(/<!-- synthesis-directory:(?:start|end) -->\r?\n?/g,'')}</pre>
           </details>)}
         </section>:doc?<>
-          {linked&&<p>关联文档：{doc.title}</p>}{doc.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}
+          {linked&&!isTopicOverview&&<p>关联文档：{doc.title}</p>}{doc.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}
           {isTopicOverview&&!editing&&<div className="topic-direction-actions">
             <a className="text-button" href={directionUrl()}>从此主题探索方向</a>
             {questions.length>0&&<details><summary>选择待验证问题</summary><ul>{questions.map(question=><li key={question}><a href={directionUrl(question)}>{question}</a></li>)}</ul></details>}

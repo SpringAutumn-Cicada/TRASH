@@ -43,7 +43,7 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const [instructions,setInstructions]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[doc,setDoc]=useState<Doc>();
  const [candidates,setCandidates]=useState<Candidate[]>([]),[resultRun,setResultRun]=useState<string>(),[added,setAdded]=useState<string[]>([]);
  const base='/projects/'+encodeURIComponent(projectId);
- const directionSeed=useRef<string>();
+ const directionSeed=useRef<string|undefined>(undefined);
  const previewHeading=useRef<HTMLHeadingElement>(null);
  useEffect(()=>{if(preview)previewHeading.current?.focus();},[preview]);
  const [seedTitle,setSeedTitle]=useState('');
