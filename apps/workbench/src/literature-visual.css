@@ -1,6 +1,6 @@
 /* Literature title and navigation share the project theme. */
 .literature-section-header{
- display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px 24px;
+ display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:14px 24px;
  padding:16px 20px;border:1px solid var(--line);border-radius:14px;
  background:var(--surface);box-shadow:var(--shadow-soft)
 }
