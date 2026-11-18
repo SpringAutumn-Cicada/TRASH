@@ -37,3 +37,9 @@
 .topic-wiki-navigation button:hover,.topic-wiki-navigation button.selected{background:color-mix(in srgb,var(--accent-bright) 10%,var(--surface));color:var(--accent);border-color:var(--line)}
 .topic-wiki-navigation button:disabled{opacity:.5;cursor:default}
 .topic-wiki-versions{max-height:180px;overflow:auto;padding:8px 24px;font-size:13px;border-bottom:1px solid var(--line)}
+
+.topic-direction-actions{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:16px;color:var(--muted)}
+.topic-direction-actions details{flex-basis:100%}
+.topic-direction-actions summary,.topic-reading-citations summary{cursor:pointer}
+.topic-direction-actions ul{margin:8px 0 0;padding-inline-start:24px}
+.topic-reading-citations{margin-top:20px;padding-top:12px;border-top:1px solid var(--line)}
