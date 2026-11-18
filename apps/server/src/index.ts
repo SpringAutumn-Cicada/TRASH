@@ -190,18 +190,20 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(!questionRoute&&input.source_run_id){const candidate=exploration.candidates(projectId,input.source_run_id).find(c=>c.id===input.source_candidate_id);if(!candidate?.complete){sendJson(response,422,{error:'RESEARCH_CANDIDATE_INCOMPLETE'});return;}evidence=candidate.evidence;}
       sendJson(response,200,saveProjectQuestion(store,project,{...input,evidence},questionRoute?.[1]));return;
     }
+    const topicStopAfter=z.enum(['materials','discovery','synthesis']).optional();
     const candidatesRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/candidates$/);
     if(candidatesRoute&&method==='GET'){sendJson(response,200,{project,candidates:exploration.candidates(projectId,candidatesRoute[1])});return;}
     if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.summaries(projectId),capabilities:{multi_topic:true,progress_summary:true,research_skills:['map','background','synthesis','exploration'],version:15}});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([])}).strict().parse(await readJson(request));
+      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([]),stop_after:topicStopAfter}).strict().parse(await readJson(request));
+      if(input.stop_after&&input.mode!=='topics'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}
       const question=input.question_id?projectQuestions(project).find(q=>q.id===input.question_id):undefined;
       if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
-      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids)});return;
+      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids,input.stop_after)});return;
     }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
-    if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional()}).strict().parse(await readJson(request));if(input.topic_id&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id):exploration.cancel(projectId,explorationAction[1])});return;}
+    if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional(),stop_after:topicStopAfter}).strict().parse(await readJson(request));if((input.topic_id||input.stop_after)&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id,input.stop_after):exploration.cancel(projectId,explorationAction[1])});return;}
     const rediscoverRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/rediscover$/);
     if(rediscoverRoute&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1])});return;}
     const appendRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(append-preview|append)$/);
@@ -213,8 +215,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response,200,{plan:exploration.previewAppend(projectId,runId,input.source_ids)});return;
       }
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:sourceIds,token:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(body);
-      sendJson(response,202,{run:exploration.appendSources(projectId,runId,input.source_ids,input.token)});return;
+      const input=z.object({source_ids:sourceIds,token:z.string().regex(/^[a-f0-9]{64}$/),stop_after:topicStopAfter}).strict().parse(body);
+      sendJson(response,202,{run:exploration.appendSources(projectId,runId,input.source_ids,input.token,input.stop_after)});return;
     }
     const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
     if(pdfView&&method==='GET'){const source=store.getSource(pdfView[1]);if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}response.writeHead(302,{location:`/pdf-reader?project=${encodeURIComponent(projectId)}&source=${encodeURIComponent(pdfView[1])}&hash=${encodeURIComponent(url.searchParams.get('hash')??'')}`});response.end();return;}

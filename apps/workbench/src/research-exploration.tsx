@@ -1,4 +1,4 @@
-import {ResearchRunCard,researchActive,type ResearchRun,type ResearchTopic} from './research-run-card.js';
+import {ResearchRunCard,researchActive,type ResearchRun,type ResearchTopic,type TopicStopAfter} from './research-run-card.js';
 import {LiteratureDocumentDialog} from './literature-document-dialog.js';
 import React,{useEffect,useState} from 'react';
 import type {Source,ResearchProject} from '@trash/protocol';
@@ -18,10 +18,20 @@ type Run=ResearchRun;
 type Doc={id:string;path:string;text:string};
 type Candidate={id:string;title:string;question:string;complete:boolean};
 type AppendPlan={token:string;added_ids:string[];rebuilt_ids:string[];reused_count:number;batch_count:number;total:number};
-const stages:Record<string,string>={summarizing:'分组整理材料',generating:'组织研究内容',discovering:'发现并合并主题',topics:'分别综合主题',partial:'本轮结束，可继续处理',completed:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已停止'};
+const stages:Record<string,string>={summarizing:'分组整理材料','materials-ready':'材料已就绪','discovery-ready':'主题已发现',generating:'组织研究内容',discovering:'发现并合并主题',topics:'分别综合主题',partial:'本轮结束，可继续处理',completed:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已停止'};
+
+function TopicStagePicker({value,onChange,disabled}:{value:TopicStopAfter;onChange:(next:TopicStopAfter)=>void;disabled:boolean}){
+ return <div className="research-analysis-modes" role="group" aria-label="执行到哪个阶段">
+  <strong>执行到</strong>
+  {([['materials','整理材料'],['discovery','发现主题'],['synthesis','完成综合']] as const).map(([stage,label])=>
+   <button key={stage} type="button" className={value===stage?'primary-button':'secondary-button'} aria-pressed={value===stage} disabled={disabled} onClick={()=>onChange(stage)}>{label}</button>
+  )}
+ </div>;
+}
 
 export function ResearchExplorationButton({projectId,sources,questionId,onQuestionAdded}:{projectId:string;sources:Source[];questionId?:string;onQuestionAdded?:(project:ResearchProject)=>void}){
  const [ready,setReady]=useState(false);
+ const [stopAfter,setStopAfter]=useState<TopicStopAfter>('synthesis');
  const [creating,setCreating]=useState(false),[focusedId,setFocusedId]=useState('');
  const [appendId,setAppendId]=useState(''),[additional,setAdditional]=useState<string[]>([]),[appendPlan,setAppendPlan]=useState<AppendPlan>();
  const [readingId,setReadingId]=useState<string>();
@@ -46,8 +56,8 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  },[open,base]);
  const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await action();setRuns((await api<{runs:Run[]}>(base+'/research-exploration')).runs);}catch(e){setError(uiError(e,'研究分析操作失败，请查看任务或研究领域配置。'));}finally{setBusy(false);}};
  const openFor=(value:ResearchMode)=>{setMode(value);setCreating(false);setAppendId('');setFocusedId('');setDoc(undefined);setCandidates([]);setError('');setOpen(true);};
- const start=()=>run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:chosen,instructions,question_id:questionId,mode:questionId?'directions':mode,topic_ids:topicIds})});setFocusedId(data.run.id);setCreating(false);});
- const resume=(r:Run,topic?:Topic)=>run(()=>api(base+'/research-exploration/'+r.id+'/resume',{method:'POST',body:JSON.stringify({confirm:true,...(topic?{topic_id:topic.id}:{})})}));
+ const start=()=>run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:chosen,instructions,question_id:questionId,mode:questionId?'directions':mode,topic_ids:topicIds,stop_after:mode==='topics'&&!questionId?stopAfter:undefined})});setFocusedId(data.run.id);setCreating(false);});
+ const resume=(r:Run,topic?:Topic,nextStage?:TopicStopAfter)=>run(()=>api(base+'/research-exploration/'+r.id+'/resume',{method:'POST',body:JSON.stringify({confirm:true,topic_id:topic?.id,stop_after:nextStage})}));
  const rediscover=(r:Run)=>{if(!window.confirm('复用已整理材料重新发现主题？不会重新分析论文或 PDF。'))return;void run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration/'+r.id+'/rediscover',{method:'POST',body:JSON.stringify({confirm:true})});setFocusedId(data.run.id);setCreating(false);});};
  const showResult=(r:Run,id:string,withCandidates=false)=>run(async()=>{if(['topics','comparison'].includes(r.mode??'')){setReadingId(id);return;}setDoc((await api<{document:Doc}>(base+'/markdown-knowledge/document?id='+encodeURIComponent(id))).document);setResultRun(r.id);setCandidates(withCandidates?(await api<{candidates:Candidate[]}>(base+'/research-exploration/'+r.id+'/candidates')).candidates:[]);});
  const title=questionId?'定向补证据':['topics','comparison'].includes(mode)?'主题综合':modes[mode];
@@ -75,12 +85,12 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  };
  const submitAppend=()=>run(async()=>{
   if(!appendPlan)return;
-  const data=await api<{run:Run}>(base+'/research-exploration/'+appendId+'/append',{method:'POST',body:JSON.stringify({source_ids:appendPlan.added_ids,token:appendPlan.token})});
+  const data=await api<{run:Run}>(base+'/research-exploration/'+appendId+'/append',{method:'POST',body:JSON.stringify({source_ids:appendPlan.added_ids,token:appendPlan.token,stop_after:stopAfter})});
   setFocusedId(data.run.id);setAppendId('');setCreating(false);
  });
  const result=(r:Run,id:string,withCandidates=false)=>void showResult(r,id,withCandidates);
  const stop=(r:Run)=>{if(!window.confirm('停止当前任务？已完成内容和草稿会保留，可稍后继续。'))return;void run(()=>api(base+'/research-exploration/'+r.id+'/cancel',{method:'POST',body:JSON.stringify({confirm:true})}));};
- const card=(r:Run)=><ResearchRunCard run={r} projectId={projectId} busy={busy} blocked={hasActive} onResult={result} onResume={(item,topic)=>{setFocusedId(item.id);setAppendId('');setCreating(false);void resume(item,topic);}} onRediscover={rediscover} onAppend={openAppend} onStop={stop} sourceTitles={r.source_ids.map(sourceTitle)}/>;
+ const card=(r:Run)=><ResearchRunCard run={r} projectId={projectId} busy={busy} blocked={hasActive} onResult={result} onResume={(item,topic,nextStage)=>{setFocusedId(item.id);setAppendId('');setCreating(false);void resume(item,topic,nextStage);}} onRediscover={rediscover} onAppend={openAppend} onStop={stop} sourceTitles={r.source_ids.map(sourceTitle)}/>;
  return <>
   {!questionId&&<><button type="button" className="secondary-button" onClick={()=>openFor('research-map')}>研究地图</button><button type="button" className="secondary-button" onClick={()=>openFor('background')}>大背景</button><button type="button" className="secondary-button" onClick={()=>openFor('topics')}>主题综合</button></>}
   <button type="button" className="secondary-button" onClick={()=>openFor('directions')}>{questionId?'定向补证据':'探索研究方向'}</button>
@@ -102,7 +112,8 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
      <div className="research-source-list">{appendAvailable.map(source=><label key={source.source_id}><input type="checkbox" checked={additional.includes(source.source_id)} disabled={busy||hasActive||(additional.length>=appendLimit&&!additional.includes(source.source_id))} onChange={event=>{const checked=event.target.checked;changeAdditional(ids=>checked?[...ids,source.source_id]:ids.filter(id=>id!==source.source_id));}}/><span>{source.title}</span></label>)}
       {!appendAvailable.length&&<p>暂无可追加的全文 Wiki。</p>}
      </div>
-     {appendPlan&&<div className="research-run-notice" role="status">
+     <TopicStagePicker value={stopAfter} onChange={setStopAfter} disabled={busy||hasActive}/>
+    {appendPlan&&<div className="research-run-notice" role="status">
       <strong>复用 {appendPlan.reused_count} 篇 · 整理新增 {appendPlan.added_ids.length} 篇{appendPlan.rebuilt_ids.length>0&&` · 重整旧材料 ${appendPlan.rebuilt_ids.length} 篇`}</strong>
       <p>本轮计划生成 {appendPlan.batch_count} 组材料，综合范围共 {appendPlan.total} 篇。</p>
       {appendPlan.rebuilt_ids.length>0&&<details><summary>查看需要重整的论文</summary><p>有旧分组缺失或版本变化，以下论文涉及这些分组。</p><ul>{appendPlan.rebuilt_ids.map(id=><li key={id}>{sourceTitle(id)}</li>)}</ul></details>}
@@ -114,12 +125,13 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
     </section>}
     {showForm&&<section className="research-create-form"><header><h3>新建{title}</h3>{featured&&<button type="button" className="text-button" disabled={busy} onClick={()=>setCreating(false)}>返回任务</button>}</header>
     {!questionId&&['topics','comparison'].includes(mode)&&<div className="research-analysis-modes" role="group" aria-label="主题综合方式">{(['topics','comparison'] as const).map(value=><button type="button" key={value} className={mode===value?'primary-button':'secondary-button'} aria-pressed={mode===value} disabled={busy} onClick={()=>setMode(value)}>{modes[value]}</button>)}</div>}
-    <p>{questionId?'针对当前问题整理已有支持、反例和定向补证据计划。':mode==='directions'?'结合项目研究条件提出候选假设、方法差异和推荐取舍，由你选择方向。':mode==='research-map'?'组织论文中的问题、路线和关系，形成可跳转的研究地图。':mode==='background'?'围绕需求、困难、已有进展和共同矛盾，生成可独立引用和组合的分点大背景。':mode==='comparison'?'围绕你指定的问题，深入比较相关方法、条件、认识和反例。':'从所选论文中发现并合并多个主题，为支撑充分的主题分别生成 Wiki 组，证据不足的保留为候选线索。每轮最多展开8个，剩余项可继续。'}</p>
+    <p>{questionId?'针对当前问题整理已有支持、反例和定向补证据计划。':mode==='directions'?'结合项目研究条件提出候选假设、方法差异和推荐取舍，由你选择方向。':mode==='research-map'?'组织论文中的问题、路线和关系，形成可跳转的研究地图。':mode==='background'?'围绕需求、困难、已有进展和共同矛盾，生成可独立引用和组合的分点大背景。':mode==='comparison'?'围绕你指定的问题，深入比较相关方法、条件、认识和反例。':'从所选论文中发现并合并多个主题，为支撑充分的主题分别生成 Wiki 组，证据不足的保留为候选线索。可在发现后停下来选择要综合的主题。'}</p>
     <small>使用已发布 Wiki，按需读取原始依据；不重新分析 PDF 或执行实验。</small>
     <div className="research-selection-actions"><strong>论文范围 · 已选 {chosen.length} 篇</strong><button type="button" className="text-button" disabled={busy} onClick={()=>{if(available.length>100){setError('单次最多100篇，请分批选择。');return;}setChosen(available.map(s=>s.source_id));}}>全选可用论文</button><button type="button" className="text-button" disabled={busy} onClick={()=>setChosen([])}>清空</button></div>
     <div className="research-source-list">{available.map(s=><label key={s.source_id}><input type="checkbox" checked={chosen.includes(s.source_id)} disabled={busy||chosen.length>=100&&!chosen.includes(s.source_id)} onChange={e=>setChosen(ids=>e.target.checked?[...ids,s.source_id]:ids.filter(id=>id!==s.source_id))}/><span>{s.title}</span></label>)}{!available.length&&<p>暂无可用全文 Wiki，请先完成单篇分析。</p>}</div>
     {topics.length>0&&<details><summary>参考已有知识（已选 {topicIds.length} 项）</summary><div className="research-source-list">{topics.map(t=><label key={t.id}><input type="checkbox" disabled={busy||topicIds.length>=30&&!topicIds.includes(t.id)} checked={topicIds.includes(t.id)} onChange={e=>setTopicIds(ids=>e.target.checked?[...ids,t.id]:ids.filter(id=>id!==t.id))}/><span>{t.title}{t.stale?' · 来源有变化':''}</span></label>)}</div></details>}
     <label>{mode==='comparison'?'指定主题或比较问题（必填）':'补充关注点（可选）'}<textarea maxLength={5000} value={instructions} onChange={e=>setInstructions(e.target.value)}/></label>
+    {!questionId&&mode==='topics'&&<TopicStagePicker value={stopAfter} onChange={setStopAfter} disabled={busy||hasActive}/>}
     <div className="research-create-footer"><button type="button" className="primary-button" disabled={!ready||busy||!chosen.length||hasActive||mode==='comparison'&&!instructions.trim()} onClick={()=>void start()}>{busy?'正在创建任务…':`开始${title} · ${chosen.length} 篇论文`}</button><small>{hasActive?'已有分析任务运行，结束后可新建。':!chosen.length?'请先选择论文。':mode==='comparison'&&!instructions.trim()?'请填写要比较的具体问题。':'启动后将自动切换到任务进度。'}</small></div></section>}
     {error&&<ErrorNotice>{error}</ErrorNotice>}
     {!appendBase&&history.length>0&&<details className="research-history"><summary>历史记录 · {history.length}</summary>{history.map(r=><details className="research-history-row" key={r.id}><summary><span className={`research-state state-${r.stage}`}>{stages[r.stage]??r.stage}</span><strong>{r.source_ids.length} 篇 · {r.append?'追加文献':modes[r.mode??'directions']}</strong><time>{new Date(r.created_at).toLocaleString()}</time></summary><div className="research-history-actions">{r.result_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>result(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}<button type="button" className="text-button" onClick={()=>{setFocusedId(r.id);setCreating(false);}}>置顶查看</button></div>{card(r)}</details>)}</details>}

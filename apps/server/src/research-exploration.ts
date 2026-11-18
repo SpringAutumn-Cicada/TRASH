@@ -9,6 +9,7 @@ import {MarkdownKnowledge,type MarkdownDocument} from './markdown-knowledge.js';
 import {projectRuntime} from './project-layout.js';
 import {RESEARCH_SUMMARY_HARD_MAX_CHARACTERS,topicDiscoveryEntries} from './research-exploration-format.js';
 
+type TopicStopAfter='materials'|'discovery'|'synthesis';
 type ResearchMode='directions'|'research-map'|'comparison'|'background'|'topics';
 const modeSkill=(mode:ResearchMode)=>mode==='research-map'?'map' as const:mode==='background'?'background' as const:mode==='directions'?'exploration' as const:'synthesis' as const;
 const modeTitles:Record<ResearchMode,string>={directions:'研究方向探索：候选问题','research-map':'研究地图',comparison:'指定主题综合',background:'研究大背景',topics:'多主题综合'};
@@ -17,7 +18,7 @@ type WorkingSummary={origin_id:string;task_id?:string;output_id?:string};
 type MaterialRef={id:string;path:string;hash:string;source_ids:string[]};
 type MaterialBatch={input_ids:string[];source_ids:string[];task_id?:string;output?:MaterialRef};
 type AppendRound={parent_id:string;previous_discovery_id?:string;added_ids:string[];rebuilt_ids:string[];reused:MaterialRef[];batches:MaterialBatch[];unresolved:Topic[]};
-type Run={append?:AppendRound;summary_source_ids?:string[];working_summaries?:WorkingSummary[];summary_work_ids?:string[];retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
+type Run={stop_after?:TopicStopAfter;discovery_material_ids?:string[];append?:AppendRound;summary_source_ids?:string[];working_summaries?:WorkingSummary[];summary_work_ids?:string[];retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'materials-ready'|'discovery-ready'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
 const active=(run:Run)=>['summarizing','generating','discovering','topics'].includes(run.stage);
 const unique=(ids:string[])=>[...new Set(ids)];
 const paperSource=(path:string)=>path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.[1];
@@ -72,13 +73,13 @@ export class ResearchExploration {
   const runs=this.list(project);
   return runs.map(run=>{
    const details=run.tasks.map((id,index)=>{const task=byId.get(id);return {id,title:run.topics?.find(topic=>topic.task_id===id)?.title??(task?.mode==='summary'?(run.append?task.title:`第 ${index+1} 组材料`):task?.mode==='summary-working'?`第 ${index+1} 组材料工作版`:task?.mode==='topic-discovery'?'发现主题':task?.title??'任务记录缺失'),status:task?.status??'missing',last_activity_at:(task?.status==='running'?(latest.get(id) as {at:string}|undefined)?.at:undefined)??task?.created_at};});
-   const phase=run.stage==='summarizing'?'materials':run.stage==='discovering'?'discovery':run.stage==='completed'?'done':run.stage==='topics'||run.topics?'synthesis':details.some(task=>byId.get(task.id)?.mode==='summary')||run.append?.batches.some(batch=>!batch.output)?'materials':run.mode==='topics'?'discovery':'synthesis';
-   const countingTopics=['synthesis','done'].includes(phase)&&Boolean(run.topics);
+   const phase=['summarizing','materials-ready'].includes(run.stage)?'materials':['discovering','discovery-ready'].includes(run.stage)?'discovery':run.stage==='completed'?'done':run.stage==='topics'||run.topics?'synthesis':details.some(task=>byId.get(task.id)?.mode==='summary')||run.append?.batches.some(batch=>!batch.output)?'materials':run.mode==='topics'?'discovery':'synthesis';
+   const countingTopics=(['synthesis','done'].includes(phase)||run.stage==='discovery-ready')&&Boolean(run.topics);
    const states=countingTopics?run.topics!.filter(topic=>topic.status!=='candidate').map(topic=>topic.status):details.map(task=>task.status);
    const count=(names:string[])=>states.filter(state=>names.includes(state)).length;
    const current=details.find(task=>task.status==='running');
    const last=[run.updated_at,...details.flatMap(task=>task.last_activity_at?[task.last_activity_at]:[])].sort().at(-1);
-   return {id:run.id,mode:run.mode,question_id:run.question_id,stage:run.stage,source_ids:run.source_ids,created_at:run.created_at,updated_at:run.updated_at,instructions:run.instructions,error:run.error,result_id:run.result_id,discovery_id:run.discovery_id,tasks:run.tasks,
+   return {id:run.id,mode:run.mode,question_id:run.question_id,stage:run.stage,source_ids:run.source_ids,created_at:run.created_at,updated_at:run.updated_at,instructions:run.instructions,error:run.error,result_id:run.result_id,discovery_id:run.discovery_id,tasks:run.tasks,stop_after:run.stop_after,material_output_ids:run.discovery_material_ids,
     superseded:this.superseded(run,runs),
     can_append:run.mode==='topics'&&Boolean(run.result_id)&&['completed','partial'].includes(run.stage)&&!this.superseded(run,runs),
     append:run.append?{parent_id:run.append.parent_id,added_ids:run.append.added_ids,rebuilt_ids:run.append.rebuilt_ids,batches:run.append.batches.map(batch=>({source_ids:batch.source_ids,task_id:batch.task_id,output_id:batch.output?.id}))}:undefined,
@@ -153,14 +154,14 @@ export class ResearchExploration {
   const plan=this.planAppend(project,id,sourceIds);
   return {token:plan.token,added_ids:plan.added,rebuilt_ids:plan.rebuiltIds,reused_count:plan.parent.source_ids.length-plan.rebuiltIds.length,batch_count:plan.batches.length,total:plan.selected.length};
  }
- appendSources(project:string,id:string,sourceIds:string[],token:string){
+ appendSources(project:string,id:string,sourceIds:string[],token:string,stopAfter?:TopicStopAfter){
   const plan=this.planAppend(project,id,sourceIds);
   if(token!==plan.token)throw Object.assign(new Error('RESEARCH_APPEND_PLAN_CHANGED'),{statusCode:409});
   const {parent,directory,selected,added,rebuiltIds,reused,batches,sourceHashes}=plan;
   const time=new Date().toISOString();
   const run:Run={
    id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:time,updated_at:time,
-   stage:'summarizing',tasks:[],history_tasks:[],round:1,instructions:parent.instructions,mode:'topics',
+   stage:'summarizing',tasks:[],history_tasks:[],round:1,instructions:parent.instructions,mode:'topics',stop_after:stopAfter,
    source_hashes:sourceHashes,target_id:directory.id,directory_expected:directory.hash,topic_ids:parent.topic_ids,
    retained_topics:[...(parent.retained_topics??[]),...(parent.topics??[]).filter(topic=>topic.status==='completed')],
    append:{parent_id:id,previous_discovery_id:parent.discovery_id,added_ids:added,rebuilt_ids:rebuiltIds,reused,batches,unresolved:(parent.topics??[]).filter(topic=>['pending','failed'].includes(topic.status))},
@@ -203,6 +204,9 @@ export class ResearchExploration {
    }
    if(append.batches.every(batch=>batch.output)){
     const newIds=append.batches.map(batch=>batch.output!.id);
+    run.discovery_material_ids=newIds;
+    if(run.stop_after==='materials'){run.stage='materials-ready';this.save(run);return run;}
+    this.save(run);
     // All new summaries are staged. Keep the inline input below the normal discovery budget.
     const inline=batchMaterials(newIds.map(id=>({id,characters:md.read(run.project_id,id).text.length})))[0];
     const inlineIds=inline.map(doc=>doc.id);
@@ -289,11 +293,26 @@ export class ResearchExploration {
   for(const doc of docs){if(doc.text.length>40000)throw new Error('单页材料超过探索预算，请先将知识页合理拆分，不截断正文');if((size+doc.text.length>40000||group.length>=80)&&group.length){groups.push(group);group=[];size=0;}group.push(doc.id);size+=doc.text.length;}if(group.length)groups.push(group);
   run.history_tasks.push(...run.tasks);run.tasks=[];
   if(!groups.length)throw new Error('没有可用的综合材料');
-  if(groups.length===1){run.stage=run.mode==='topics'?'discovering':'generating';this.save(run);run.tasks=[this.enqueue(run,groups[0],run.question_id?'evidence-plan':run.mode==='topics'?'topic-discovery':run.mode??'directions').task_id];}
+  const needsSummary=run.mode==='topics'&&run.stop_after==='materials'&&run.round===0;
+  if(groups.length===1&&!needsSummary){
+   if(run.mode==='topics'){this.materialsReady(run,groups[0]);return;}
+   run.stage='generating';this.save(run);
+   run.tasks=[this.enqueue(run,groups[0],run.question_id?'evidence-plan':run.mode??'directions').task_id];
+  }
   else{if(++run.round>6)throw new Error('材料归纳未能在预算内收敛，请缩小论文范围');run.stage='summarizing';this.save(run);for(const ids of groups){run.tasks.push(this.enqueue(run,ids,'summary').task_id);this.save(run);}}
   this.save(run);
  }
- start(project:string,sourceIds:string[],instructions:string,question?:{id:string;question:string},mode:ResearchMode='directions',topicIds:string[]=[]){
+ private materialsReady(run:Run,ids:string[]){
+  const published=new MarkdownKnowledge(this.store).index(run.project_id).documents;
+  if(!ids.length||ids.some(id=>!published.some(doc=>doc.id===id&&!doc.stale))||run.source_hashes?.some(ref=>!published.some(doc=>doc.path===ref.path&&doc.hash===ref.hash)))
+   throw new Error('整理好的材料已缺失或变化，请新建综合重新核对。');
+  run.discovery_material_ids=ids;
+  run.stage='materials-ready';run.error=undefined;this.save(run);
+  if(run.stop_after==='materials')return;
+  const task=this.enqueue(run,ids,'topic-discovery');
+  run.tasks=[task.task_id];run.stage='discovering';this.save(run);
+ }
+ start(project:string,sourceIds:string[],instructions:string,question?:{id:string;question:string},mode:ResearchMode='directions',topicIds:string[]=[],stopAfter?:TopicStopAfter){
   const existing=this.list(project).find(active);if(existing)throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   const p=this.store.getProject(project);if(mode==='directions'&&!p?.research_area)throw Object.assign(new Error('RESEARCH_AREA_REQUIRED'),{statusCode:422});
   const md=new MarkdownKnowledge(this.store),all=md.index(project).documents,selected=[...new Set(sourceIds)];
@@ -309,12 +328,20 @@ export class ResearchExploration {
   const docs=[...current.filter(d=>firstPages.test(d.path)),...topics];
   const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:18})).digest('hex');
   const runs=this.list(project),directory=mode==='topics'?this.topicDirectories(project).current:undefined;
-  const reusable=runs.find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&!this.superseded(r,runs)&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
+  const reusable=(!stopAfter||stopAfter==='synthesis')&&runs.find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&!this.superseded(r,runs)&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
   if(reusable)return reusable;
   const previous=mode==='directions'?undefined:this.list(project).find(r=>r.stage==='completed'&&r.mode===mode&&r.instructions===instructions&&JSON.stringify([...r.source_ids].sort())===JSON.stringify([...selected].sort())&&r.result_id&&all.some(d=>d.id===r.result_id));
   const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:at,updated_at:at,stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions,question_id:question?.id,question_text:question?.question,mode,topic_ids:topicIds,signature,target_id:previous?.result_id,material_ids:docs.map(d=>d.id),source_hashes:current.map(({path,hash})=>({path,hash})),...(mode==='topics'?{retained_topics:[...(previous?.retained_topics??[]),...(previous?.topics??[]).filter(t=>t.status==='completed')],directory_expected:previous?.result_id?all.find(d=>d.id===previous.result_id)?.hash:undefined}:{})};
-  if(mode==='topics'){run.target_id=directory?.id;run.directory_expected=directory?.hash;}
-  this.save(run);try{this.schedule(run,docs.map(d=>d.id));}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'探索启动失败';this.save(run);}return run;
+  if(mode==='topics'){run.stop_after=stopAfter;run.target_id=directory?.id;run.directory_expected=directory?.hash;}
+  const reusableMaterials=mode==='topics'?runs.find(prior=>
+   prior.signature===signature&&prior.discovery_material_ids?.length&&prior.discovery_material_ids.every(id=>
+    all.some(doc=>doc.id===id&&!doc.stale&&(stopAfter!=='materials'||doc.level==='summary'))
+   )
+  )?.discovery_material_ids:undefined;
+  this.save(run);
+  try{if(reusableMaterials)this.materialsReady(run,reusableMaterials);else this.schedule(run,docs.map(d=>d.id));}
+  catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'探索启动失败';this.save(run);}
+  return run;
  }
  private discoverTopics(run:Run,task:KnowledgeTask){
   if(!task.output_id)throw new Error('主题发现任务没有输出');
@@ -366,8 +393,7 @@ export class ResearchExploration {
   if(run.source_hashes?.some(ref=>!current.some(d=>d.path===ref.path&&d.hash===ref.hash)))throw new Error('论文材料已变化，请新建综合；已完成主题与候选清单保留。');
   this.syncTopics(run);run.history_tasks.push(...run.tasks);run.tasks=[];run.stage='topics';run.error=undefined;this.save(run);
   const md=new MarkdownKnowledge(this.store),all=md.index(run.project_id).documents;
-  // This is an execution budget, not a limit on discovered themes. Resume opens the next batch.
-  const next=(run.topics??[]).filter(t=>(!topicId||t.id===topicId)&&(!only||only.has(t.id))&&['pending','failed'].includes(t.status)).slice(0,8);
+  const next=(run.topics??[]).filter(t=>(!topicId||t.id===topicId)&&(!only||only.has(t.id))&&['pending','failed'].includes(t.status));
   for(const topic of next){
    try{
     const ids:string[]=[];let size=0;
@@ -419,7 +445,15 @@ export class ResearchExploration {
   if(tasks.some(t=>!t||['failed','cancelled','interrupted'].includes(t.status))){run.stage='failed';run.error='部分探索任务未完成；已完成的知识和日志保留，可继续探索。';this.save(run);return;}
   if(tasks.some(t=>t?.status!=='completed'))return;
   const done=tasks as KnowledgeTask[];
-  if(run.stage==='discovering'){try{const affected=this.discoverTopics(run,done[0]);this.scheduleTopics(run,undefined,run.append?affected:undefined);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题发现失败';this.save(run);}return;}
+  if(run.stage==='discovering'){
+   try{
+    const affected=this.discoverTopics(run,done[0]);
+    if(run.stop_after==='discovery'){
+     run.stage='discovery-ready';run.error=undefined;this.save(run);
+    }else this.scheduleTopics(run,undefined,run.append?affected:undefined);
+   }catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题发现失败';this.save(run);}
+   return;
+  }
   if(run.stage==='generating'){run.result_id=done[0].output_id;run.stage='completed';this.save(run);return;}
   try{
    if(run.working_summaries?.length){
@@ -431,10 +465,23 @@ export class ResearchExploration {
    this.schedule(run,done.map(t=>t.output_id!));
   }catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'归纳失败';this.save(run);}
  }
- resume(project:string,id:string,topicId?:string){const run=this.detail(project,id);if(active(run)||run.stage==='completed')return run;
+ resume(project:string,id:string,topicId?:string,stopAfter?:TopicStopAfter){const run=this.detail(project,id);if(active(run)||run.stage==='completed')return run;
   const runs=this.list(project);
   if(runs.some(active))throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   if(this.superseded(run,runs))throw Object.assign(new Error('RESEARCH_APPEND_OUTDATED'),{statusCode:409});
+  if(stopAfter&&run.mode!=='topics')throw Object.assign(new Error('INVALID_REQUEST'),{statusCode:400});
+  if(run.stage==='materials-ready'){
+   if(topicId||stopAfter==='materials')throw Object.assign(new Error('INVALID_REQUEST'),{statusCode:400});
+   run.stop_after=stopAfter??'discovery';
+   if(run.append)return this.continueAppend(run,true);
+   try{this.materialsReady(run,run.discovery_material_ids??[]);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题发现启动失败';this.save(run);}
+   return run;
+  }
+  if(stopAfter)run.stop_after=stopAfter;
+  if(run.mode==='topics'&&!run.append&&!run.tasks.length&&run.discovery_material_ids?.length&&!run.topics){
+   try{this.materialsReady(run,run.discovery_material_ids);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题发现启动失败';this.save(run);}
+   return run;
+  }
   if(topicId&&!run.topics?.some(t=>t.id===topicId&&['pending','failed'].includes(t.status)))throw Object.assign(new Error('TOPIC_NOT_RESUMABLE'),{statusCode:409});
   if(run.mode==='topics'&&run.topics){try{this.scheduleTopics(run,topicId);}catch(error){run.stage='failed';run.error=error instanceof Error?error.message:'主题恢复失败';this.save(run);}return run;}const all=this.knowledge.tasks(project);
   if(run.append&&!run.tasks.some(id=>all.some(task=>task.task_id===id&&task.input.research_exploration==='topic-discovery')))return this.continueAppend(run,true);
