@@ -46,7 +46,7 @@ function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projec
   if(error)return <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>;
   if(!sources)return <div className="page-loading">正在加载项目资料…</div>;
   if(page==='tasks')return <TaskWorkspace key={projectId} projectId={projectId} focusId={focusId}/>;
-  if(page==='cards'||page==='wiki')return <KnowledgeBaseWorkspace projectId={projectId} sources={sources} focusId={focusId} onNavigate={onNavigate}/>;
+  if(page==='cards'||page==='wiki')return <KnowledgeBaseWorkspace key={projectId} projectId={projectId} sources={sources} focusId={focusId} onNavigate={onNavigate}/>;
   const section={cards:"literature-cards",wiki:"wiki-pages",results:"experiment-results",tasks:"knowledge-tasks"} as const;
   return <KnowledgePanel projectId={projectId} sources={sources} section={section[page]} action={action} focusId={focusId} initialStatus={status} onNavigate={onNavigate}/>;
 }

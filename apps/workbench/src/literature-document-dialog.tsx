@@ -15,7 +15,7 @@ import './wiki-reading.css';
 
 type Document={topic_id?:string;page_role?:string;material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
 type DirectoryVersion={id:string;hash:string;text:string;at:string;current:boolean;archived:boolean};
-export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,onClose,onSaved,embedded=false,onReadingLock}:{onReadingLock?:(locked:boolean)=>void;embedded?:boolean;projectId:string;source?:Source;initialType?:string;initialId?:string;onClose:()=>void;onSaved:()=>void}){
+export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,documentId,onDocumentNavigate,onClose,onSaved,embedded=false,onReadingLock}:{onReadingLock?:(locked:boolean)=>void;embedded?:boolean;projectId:string;source?:Source;initialType?:string;initialId?:string;documentId?:string;onDocumentNavigate?:(id:string)=>void;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
   const [type]=useState(initialType),[documents,setDocuments]=useState<Document[]>([]),[doc,setDoc]=useState<Document>(),[linked,setLinked]=useState(initialId??'');
   const [loading,setLoading]=useState(true),[directoryLoaded,setDirectoryLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[editing,setEditing]=useState(false),[draft,setDraft]=useState('');
@@ -42,13 +42,13 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       }catch(e){if(active){setLoading(false);setDirectoryLoaded(true);setError(uiError(e,'无法读取文档目录。'));}}
     })();return()=>{active=false;};
   },[base,reload]);
-  const selected=linked||(type==='wiki'&&source?(documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/whoami.md`)??documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/index.md`))?.id:undefined)||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id;
+  const selected=documentId??(linked||(type==='wiki'&&source?(documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/whoami.md`)??documents.find(d=>d.path===`knowledge_base/papers/${source.source_id}/index.md`))?.id:undefined)||documents.find(d=>Boolean(source)&&d.source_id===source?.source_id&&(type==='wiki'?d.kind==='wiki-page':d.card_type===type))?.id);
   useEffect(()=>{
     let active=true;setDoc(undefined);setEditing(false);setHistory(undefined);setTopicVersions(undefined);setDirectoryVersions(undefined);setError('');setLoading(Boolean(selected));
     if(selected)void api<{document:Document}>(base+'/document?id='+encodeURIComponent(selected)).then(data=>{if(active){setDoc(data.document);setDraft(data.document.text);}}).catch(e=>{if(active)setError(uiError(e,'无法读取文档。'));}).finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
   },[base,selected,reload]);
-  const reading=useWikiReadingNavigation(selected??'',doc?.id,loading,scroll,id=>{setLinked(id);setHistory(undefined);});
+  const reading=useWikiReadingNavigation(selected??'',doc?.id,loading,scroll,id=>{if(onDocumentNavigate)onDocumentNavigate(id);else setLinked(id);setHistory(undefined);});
   const run=async(fn:()=>Promise<void>)=>{if(acting.current)return;acting.current=true;setBusy(true);setError('');try{await fn();}catch(e){setError(uiError(e,'操作失败，当前草稿已保留。'));}finally{acting.current=false;setBusy(false);}};
   const toggleDirectoryVersions=()=>{
     if(directoryVersions){setDirectoryVersions(undefined);return;}

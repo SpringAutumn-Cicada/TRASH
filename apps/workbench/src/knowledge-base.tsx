@@ -1,5 +1,6 @@
 import {EvidenceMigration} from './evidence-migration.js';
 import {useWikiReadingNavigation} from './wiki-reading-navigation.js';
+import {readPreference,writePreference} from './navigation.js';
 import React,{useEffect,useRef,useState} from 'react';
 import type {Source,ProjectPage} from '@trash/protocol';
 import {knowledgeDocumentId} from '@trash/protocol/browser';
@@ -16,6 +17,20 @@ import './knowledge-base.css';
 type Doc={topic_id?:string;id:string;title:string;path:string;kind:string;card_type?:string;level?:string;source_id?:string;material_scope?:string;summary?:string;hash:string;text?:string;stale?:boolean};
 type Migration={migrated:boolean;items:{from:string;to:string;active:boolean}[];conflicts:string[];fingerprint:string;backup?:string};
 const groups=[['papers','论文 Wiki'],['abstracts','摘要 Wiki'],['topic','知识主题'],['hypothesis','研究假设'],['discovery','发现清单'],['summary','分批总结']] as const;
+type KnowledgeView='directory'|'graph'|'maintenance';
+type GroupKey=typeof groups[number][0];
+type ReadingState={view:KnowledgeView;selected:string;expanded:Partial<Record<GroupKey,boolean>>};
+function readReadingState(key:string):ReadingState{
+ const defaults:ReadingState={view:'directory',selected:'@home',expanded:{}};
+ try{
+  const saved=JSON.parse(readPreference(key)??'null') as Partial<ReadingState>|null;
+  if(!saved)return defaults;
+  if(saved.view==='graph'||saved.view==='maintenance')defaults.view=saved.view;
+  if(typeof saved.selected==='string'&&saved.selected)defaults.selected=saved.selected;
+  for(const [group] of groups)if(typeof saved.expanded?.[group]==='boolean')defaults.expanded[group]=saved.expanded[group];
+ }catch{/* Fall back to the knowledge homepage if storage is unavailable or invalid. */}
+ return defaults;
+}
 const label=(doc:Doc)=>doc.id.includes('--')?(doc.path===`knowledge_base/papers/${doc.source_id}/whoami.md`?'论文身份':doc.path===`knowledge_base/papers/${doc.source_id}/index.md`?'旧论文索引':doc.title):doc.material_scope==='abstract'?(doc.kind==='wiki-page'?'研究记忆 · 摘要级':'摘要解读'):doc.card_type?({basic:'基本信息',key:'关键卡片',detail:'详细卡片'}[doc.card_type]??doc.card_type):doc.level==='single'?'研究记忆':doc.level==='summary'?'分批总结':doc.level==='overview'?'项目总览':doc.title;
 type WikiCardEntry={id:string;title:string;metadata:string;stale?:boolean;active:boolean};
 function WikiDirectoryCard({item,disabled,onSelect}:{item:WikiCardEntry;disabled:boolean;onSelect:(id:string)=>void}){
@@ -25,12 +40,18 @@ export function KnowledgeBaseWorkspace({projectId,sources,focusId,onNavigate}:{p
  const [evidenceMigration,setEvidenceMigration]=useState(false);
  const [readingLocked,setReadingLocked]=useState(false);
  const base='/projects/'+encodeURIComponent(projectId)+'/markdown-knowledge';
- const [docs,setDocs]=useState<Doc[]>([]),[query,setQuery]=useState(''),[view,setView]=useState<'directory'|'graph'|'maintenance'>('directory'),[selected,setSelected]=useState(focusId??'@home'),[doc,setDoc]=useState<Doc>(),[text,setText]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0),[preview,setPreview]=useState<string>(),[names,setNames]=useState(false),[migration,setMigration]=useState<Migration>(),[migrationOpen,setMigrationOpen]=useState(false),[busy,setBusy]=useState(false),[manageKind,setManageKind]=useState<'literature-card'|'wiki-page'>('wiki-page');
+ const preference=`trash-knowledge-reading:${projectId}`;
+ const [saved]=useState(()=>readReadingState(preference));
+ const [view,setView]=useState<KnowledgeView>(focusId?'directory':saved.view);
+ const [selected,setSelected]=useState(focusId??saved.selected);
+ const [expanded,setExpanded]=useState(saved.expanded);
+ const [docs,setDocs]=useState<Doc[]>([]),[query,setQuery]=useState(''),[doc,setDoc]=useState<Doc>(),[text,setText]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0),[preview,setPreview]=useState<string>(),[names,setNames]=useState(false),[migration,setMigration]=useState<Migration>(),[migrationOpen,setMigrationOpen]=useState(false),[busy,setBusy]=useState(false),[manageKind,setManageKind]=useState<'literature-card'|'wiki-page'>('wiki-page');
  const content=useRef<HTMLDivElement>(null),article=useRef<HTMLElement>(null);const [loadedId,setLoadedId]=useState('');
  const reading=useWikiReadingNavigation(selected,loadedId,loading,article,setSelected);
  const request=useRef(0),alive=useRef(true),lock=useRef(false);
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
  useEffect(()=>{if(focusId){setSelected(focusId);setView('directory');}},[focusId]);
+ useEffect(()=>{writePreference(preference,JSON.stringify({view,selected,expanded}));},[preference,view,selected,expanded]);
  useEffect(()=>{let active=true,loadingDirectory=false;const controller=new AbortController();const current=++request.current;
   const load=async()=>{if(!active||loadingDirectory||document.hidden)return;loadingDirectory=true;try{const first=await api<{documents:Doc[];total:number}>(base+'?limit=100&include_summaries=true&current_topic_directory=true&q='+encodeURIComponent(query),{signal:controller.signal});const all=[...first.documents];for(let page=2;all.length<first.total;page++){const next=await api<{documents:Doc[]}>(base+'?limit=100&include_summaries=true&current_topic_directory=true&page='+page+'&q='+encodeURIComponent(query),{signal:controller.signal});if(!active)break;if(!next.documents.length)break;all.push(...next.documents);}if(active&&request.current===current)setDocs(all);}catch(cause){if(active)setError(uiError(cause,'无法读取知识库目录。'));}finally{loadingDirectory=false;}};
   const delay=setTimeout(()=>void load(),180),timer=setInterval(()=>void load(),5000);return()=>{active=false;controller.abort();clearTimeout(delay);clearInterval(timer);};
@@ -40,9 +61,12 @@ export function KnowledgeBaseWorkspace({projectId,sources,focusId,onNavigate}:{p
    if(selected==='@home'||selected==='@log'){const data=await api<{text:string}>(base+(selected==='@home'?'/home':'/maintenance-log'));if(active)setText(data.text);}
    else if(selected.startsWith('@source:')){const data=await api<{source:Source}>('/projects/'+encodeURIComponent(projectId)+'/sources/'+encodeURIComponent(selected.slice(8)));if(active)setText('# '+data.source.title+'\n\n'+data.source.authors.join(', ')+'\n\n'+(data.source.publication_date??'')+'\n\n'+(data.source.abstract??'未录入摘要'));}
    else {const data=await api<{document:Doc}>(base+'/document?id='+encodeURIComponent(selected));if(active){setDoc(data.document);setText(data.document.text??'');}}
-  }catch(cause){if(active)setError(uiError(cause,'无法读取知识文档。'));}finally{if(active){setLoadedId(selected);setLoading(false);}}};
+  }catch(cause){if(active){
+   if(!focusId&&selected===saved.selected&&cause instanceof Error&&['NOT_FOUND','SOURCE_NOT_FOUND'].includes(cause.message))setSelected('@home');
+   else setError(uiError(cause,'无法读取知识文档。'));
+  }}finally{if(active){setLoadedId(selected);setLoading(false);}}};
   void load();return()=>{active=false;};
- },[base,selected,revision,docs.find(item=>item.id===selected)?.hash]);
+ },[base,selected,revision,focusId,saved.selected,docs.find(item=>item.id===selected)?.hash]);
  const navigateLink=(event:React.MouseEvent)=>{const anchor=(event.target as HTMLElement).closest('a'),href=anchor?.getAttribute('href');if(!href||/^https?:/i.test(href))return;event.preventDefault();
   const url=new URL(href,'https://knowledge.local/'+(doc?.path??(selected==='@log'?'knowledge_base/maintenance/log.md':'knowledge_base/index.md')));
   if(url.pathname.startsWith('/api/v1/')&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
@@ -58,9 +82,10 @@ export function KnowledgeBaseWorkspace({projectId,sources,focusId,onNavigate}:{p
   const source=sources.find(item=>item.source_id===sourceId);
   return {sourceId,source,entry,title:source?.title??entry.title,metadata:[source?.publication_date??source?.year,source?.authors.join(', ')].filter(Boolean).join(' · ')};
  }).sort((a,b)=>a.title.localeCompare(b.title));
- const selectedPaper=docs.find(item=>item.id===selected&&matches(item,'papers'));
+ const currentDoc=docs.find(item=>item.id===selected)??(doc?.id===selected?doc:undefined);
+ const selectedPaper=currentDoc&&matches(currentDoc,'papers')?currentDoc:undefined;
  const paperSource=selectedPaper?.source_id;
- const selectedWiki=docs.find(item=>item.id===selected&&item.kind==='wiki-page');
+ const selectedWiki=currentDoc?.kind==='wiki-page'||/^(?:abstract-)?wiki-/.test(selected);
  const choose=(id:string)=>{if(readingLocked)return;setSelected(id);};
  return <section className="knowledge-base-workspace">
  <header className="kb-heading"><div><h2>知识库 <span>{docs.length}</span></h2><p>浏览论文知识与跨文献研究成果。</p></div><div><button type="button" className="secondary-button" onClick={()=>setEvidenceMigration(true)}>依据拆分</button><button type="button" className="secondary-button" disabled={busy} onClick={()=>void showMigration()}>目录迁移</button><button type="button" className="icon-button" aria-label="刷新知识库" onClick={()=>setRevision(value=>value+1)}><RefreshCw size={16}/></button></div></header>
@@ -75,10 +100,11 @@ export function KnowledgeBaseWorkspace({projectId,sources,focusId,onNavigate}:{p
    const group=items.filter(item=>item.source_id===sourceId),entry=group.find(item=>item.kind==='wiki-page')??group[0],source=sources.find(item=>item.source_id===sourceId);
    return {id:entry.id,title:source?.title??entry.title,metadata:source?.authors.join(', ')??'',stale:entry.stale,active:group.some(item=>item.id===selected)};
   }):items.filter(item=>!item.topic_id||item.id===item.topic_id||Boolean(query)).map(item=>{const members=items.filter(page=>page.topic_id===item.id);return {id:item.id,title:item.title,metadata:members.length?`主题 Wiki 组 · ${members.length} 页`:(item.summary??''),stale:item.stale||members.some(page=>page.stale),active:item.id===selected||members.some(page=>page.id===selected)};});
-  return <details key={key} className="kb-directory-group" open={key==='papers'||Boolean(query)||entries.some(item=>item.active)}><summary><FolderOpen size={15}/><strong>{name}</strong><span>{entries.length}</span></summary><div className="kb-directory-items">{entries.map(item=><WikiDirectoryCard key={item.id} item={item} disabled={readingLocked} onSelect={choose}/>)}{!entries.length&&<small>{query?'没有匹配内容':'暂无内容'}</small>}</div></details>;
+  const open=Boolean(query)||(expanded[key]??entries.some(item=>item.active));
+  return <details key={key} className="kb-directory-group" open={open} onToggle={event=>{const next=event.currentTarget.open;if(!query&&next!==open)setExpanded(state=>({...state,[key]:next}));}}><summary><FolderOpen size={15}/><strong>{name}</strong><span>{entries.length}</span></summary><div className="kb-directory-items">{entries.map(item=><WikiDirectoryCard key={item.id} item={item} disabled={readingLocked} onSelect={choose}/>)}{!entries.length&&<small>{query?'没有匹配内容':'暂无内容'}</small>}</div></details>;
  })}
 
- <button type="button" className="kb-root-entry" onClick={()=>choose('@log')}>维护记录</button></aside>{(paperSource||selectedWiki)?<LiteratureDocumentDialog key={paperSource??selected} embedded onReadingLock={setReadingLocked} projectId={projectId} source={sources.find(source=>source.source_id===paperSource)} initialId={selected} onClose={()=>setSelected('@home')} onSaved={()=>setRevision(value=>value+1)}/>:<article ref={article}><header><div><small>{doc?label(doc):selected==='@home'?'知识库首页':selected==='@log'?'知识维护记录':'原始摘要'}</small><h3>{doc?.title??(selected==='@home'?'知识库':selected==='@log'?'维护记录':'原始摘要资料')}</h3>{doc?.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}</div>{doc&&<button type="button" className="secondary-button" onClick={()=>setPreview(doc.id)}>打开阅读{doc.material_scope!=='abstract'&&'与编辑'}<ArrowUpRight size={13}/></button>}</header>{selected==='@home'?<div className="kb-body"><p className="kb-home-intro">浏览论文知识与跨论文研究成果。选择左侧分类，或从下方打开论文。</p><h3>论文 Wiki · {paperGroups.length}</h3><div className="kb-home-list">{paperGroups.map(paper=><button type="button" className="kb-home-row" key={paper.sourceId} onClick={()=>choose(paper.entry.id)}><strong>{paper.title}</strong>{paper.metadata&&<small>{paper.metadata}</small>}</button>)}</div><details><summary>知识库说明与其他入口</summary><div onClick={navigateLink}><ChatMarkdown text={text.replace(/^#\s+.+$/m,'')} allowRelativeLinks/></div></details></div>:loading?<p role="status">正在读取…</p>:<div ref={content} className="kb-body" onClick={navigateLink}><ChatMarkdown text={text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(doc?/^#\s+.+$/m:/$^/,'')} allowRelativeLinks/></div>}{doc&&<footer><code>{doc.path}</code></footer>}</article>}</div>}
+ <button type="button" className="kb-root-entry" onClick={()=>choose('@log')}>维护记录</button></aside>{(paperSource||selectedWiki)?<LiteratureDocumentDialog embedded onReadingLock={setReadingLocked} projectId={projectId} source={sources.find(source=>source.source_id===paperSource)} documentId={selected} onDocumentNavigate={setSelected} onClose={()=>setSelected('@home')} onSaved={()=>setRevision(value=>value+1)}/>:<article ref={article}><header><div><small>{doc?label(doc):selected==='@home'?'知识库首页':selected==='@log'?'知识维护记录':'原始摘要'}</small><h3>{doc?.title??(selected==='@home'?'知识库':selected==='@log'?'维护记录':'原始摘要资料')}</h3>{doc?.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}</div>{doc&&<button type="button" className="secondary-button" onClick={()=>setPreview(doc.id)}>打开阅读{doc.material_scope!=='abstract'&&'与编辑'}<ArrowUpRight size={13}/></button>}</header>{selected==='@home'?<div className="kb-body"><p className="kb-home-intro">浏览论文知识与跨论文研究成果。选择左侧分类，或从下方打开论文。</p><h3>论文 Wiki · {paperGroups.length}</h3><div className="kb-home-list">{paperGroups.map(paper=><button type="button" className="kb-home-row" key={paper.sourceId} onClick={()=>choose(paper.entry.id)}><strong>{paper.title}</strong>{paper.metadata&&<small>{paper.metadata}</small>}</button>)}</div><details><summary>知识库说明与其他入口</summary><div onClick={navigateLink}><ChatMarkdown text={text.replace(/^#\s+.+$/m,'')} allowRelativeLinks/></div></details></div>:loading?<p role="status">正在读取…</p>:<div ref={content} className="kb-body" onClick={navigateLink}><ChatMarkdown text={text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').replace(doc?/^#\s+.+$/m:/$^/,'')} allowRelativeLinks/></div>}{doc&&<footer><code>{doc.path}</code></footer>}</article>}</div>}
  {preview&&<LiteratureDocumentDialog key={preview} projectId={projectId} initialId={preview} onClose={()=>setPreview(undefined)} onSaved={()=>setRevision(value=>value+1)}/>}
  {names&&<SummaryNamePreview projectId={projectId} onClose={()=>setNames(false)} onSaved={()=>setRevision(value=>value+1)}/>}
  </section>;
