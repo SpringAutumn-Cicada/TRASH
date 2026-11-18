@@ -1,3 +1,4 @@
+import {invalidateSourceAnalysis} from './source-analysis-cache.js';
 import {legacyMaterialTitle} from './research-exploration-format.js';
 import {topicGroupIssues,topicManifest,topicPaths} from './topic-wiki.js';
 import {paperMembership,groupPath,readPaperGroup,groupPhysical,classifyPaperFiles,taskGeneratedHashes,type GroupStatus,type PaperGroup} from './paper-wiki-groups.js';
@@ -55,7 +56,7 @@ export function currentPaperWiki(documents:Pick<MarkdownDocument,'path'|'source_
 }
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}
-  invalidate(project:string){indexCaches.get(this.store)?.delete(project);}
+  invalidate(project:string){indexCaches.get(this.store)?.delete(project);invalidateSourceAnalysis(this.store,project);}
   root(project:string){if(!this.store.getProject(project))fail('PROJECT_NOT_FOUND',404);const root=join(this.store.root,'projects',project);mkdirSync(root,{recursive:true});return realpathSync(root);}
   locate(project:string,path:string){
     if(!legacyKnowledgePath.test(path)&&!knowledgeBasePath.test(path)&&!/^abstract-library\/(notes|wiki)\/source_[A-Za-z0-9_-]+\.md$/.test(path))fail('KNOWLEDGE_PATH_INVALID',400);

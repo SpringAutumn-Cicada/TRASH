@@ -7,10 +7,10 @@ import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
 import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
-import {bibliographyState,parseIdcard} from './source-bibliography.js';
+import {sourceAnalyses} from './source-analyses.js';
 import { PdfReading } from "./pdf-reading.js";
 import { createResearchFolder } from "./project-layout.js";
-import { currentPaperWiki, MarkdownKnowledge } from "./markdown-knowledge.js";
+import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
 import { directoryRepairBusy } from "./experiment/directory-repair.js";
@@ -420,14 +420,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       return;
     }
     if(subpath==='source-analyses' && method==='GET'){
-      const markdown=new MarkdownKnowledge(store);
-      const docs=markdown.index(projectId).documents;
-      const tasks=knowledge.tasks(projectId).filter(t=>!(t as {dismissed_reanalysis?:boolean}).dismissed_reanalysis&&t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
-      const bySource=new Map<string,typeof docs>();for(const doc of docs)if(doc.source_id){const pages=bySource.get(doc.source_id)??[];pages.push(doc);bySource.set(doc.source_id,pages);}
-      sendJson(response,200,store.listSources(projectId).map(source=>{const docs=bySource.get(source.source_id)??[];const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);const idcard=docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/idcard.md`);let bibliography:ReturnType<typeof parseIdcard>|undefined;
-      if(idcard){try{bibliography=parseIdcard(markdown.readIndexed(projectId,idcard).text);const manual=bibliographyState(store,source.source_id).manual??[];for(const field of ['title','authors','publication_date'] as const)if(manual.includes(field))delete bibliography[field];}catch{/* Keep original source metadata when no readable idcard is available. */}}
-      const wiki=currentPaperWiki(docs,source.source_id);
-      return {bibliography,hasWiki:wiki.hasWiki,stale:wiki.stale,currentWikiFiles:wiki.current_paths.length,oldWikiFiles:wiki.retired_paths.length,source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),hasKey:docs.some(d=>d.source_id===source.source_id&&d.card_type==='key'),hasDetail:docs.some(d=>d.source_id===source.source_id&&d.card_type==='detail'),hasCards:['key','detail'].every(type=>docs.some(d=>d.source_id===source.source_id&&d.card_type===type)),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumeHint(task):false};}));return;
+      const sourceId=url.searchParams.get('source_id')??undefined;
+      sendJson(response,200,sourceAnalyses(store,agent,projectId,sourceId));
+      return;
     }
     const keepOriginal=subpath.match(/^sources\/([^/]+)\/keep-original$/);
     if(keepOriginal&&method==='POST'){

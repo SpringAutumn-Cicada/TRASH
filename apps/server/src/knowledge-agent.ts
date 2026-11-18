@@ -137,6 +137,13 @@ export class KnowledgeAgent implements TaskRunner {
     return includeHistoricalReadings?result.sort((a,b)=>b.created_at.localeCompare(a.created_at)):result;
   }
   private resumeHints=new Map<string,{until:number;status:string;value:boolean}>();
+  resumeHintFor(project:string,id:string,status:string):boolean {
+    if(!['failed','interrupted','cancelled'].includes(status))return false;
+    const cached=this.resumeHints.get(id);
+    if(cached&&cached.status===status)return cached.value;
+    const task=this.knowledge.task(project,id);
+    return task?this.resumeHint(task):false;
+  }
   /** UI availability hint only; actual resume validates provenance and hashes before reuse. */
   resumeHint(task:KnowledgeTask):boolean {
     if(!['failed','interrupted','cancelled'].includes(task.status))return false;

@@ -46,8 +46,8 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 4) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 4) return;
+    if (version > 5) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 5) return;
     if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
@@ -137,7 +137,7 @@ export class TrashStore {
         coalesce(json_extract(data,'$.archived_duplicate'),0),
         json_extract(data,'$.deleted_at'), coalesce(json_extract(data,'$.dismissed_reanalysis'),0)
       FROM knowledge_tasks`;
-    this.db.exec(`
+    if (version < 4) this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE knowledge_task_summaries (
         task_id TEXT PRIMARY KEY REFERENCES knowledge_tasks(task_id) ON DELETE CASCADE,
@@ -158,6 +158,21 @@ export class TrashStore {
       PRAGMA user_version = 4;
       COMMIT;
     `);
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE source_analysis_display (
+        source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL, data TEXT NOT NULL, idcard_hash TEXT
+      );
+      CREATE INDEX source_analysis_display_project ON source_analysis_display(project_id);
+      CREATE INDEX task_summaries_paper ON knowledge_task_summaries(
+        project_id,json_extract(source_ids,'$[0]'),created_at DESC,task_id DESC
+      ) WHERE include_source_wiki=1;
+      CREATE TABLE IF NOT EXISTS source_bibliography(source_id TEXT PRIMARY KEY,data TEXT NOT NULL);
+      PRAGMA user_version = 5;
+      COMMIT;
+    `);
+
 
   }
 
