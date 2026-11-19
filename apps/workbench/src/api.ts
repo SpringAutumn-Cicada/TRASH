@@ -71,6 +71,12 @@ const errorMessages: Record<string, string> = {
   WEBPAGE_TOO_LARGE: "网页内容超过允许的大小。",
   WEBPAGE_REDIRECT_LIMIT: "网页跳转次数过多，无法导入。",
   QUERY_TOO_SHORT: "检索词至少需要 2 个字符。",
+  RESEARCH_AREA_REQUIRED: "请先在项目设置填写研究领域。",
+  DIRECTION_SCOPE_CHANGED: "主题目录或论文 Wiki 已更新。请核对刷新后的范围再开始。",
+  DIRECTION_SOURCE_LIMIT: "可用论文超过 100 篇，请分批选择。",
+  SOURCES_REQUIRED: "请先选择至少一篇可用的论文 Wiki。",
+  SOURCE_WIKI_REQUIRED: "选中的论文缺少可用 Wiki，请重新选择。",
+  RESEARCH_EXPLORATION_BUSY: "已有研究分析任务正在运行。",
   INTERNAL_ERROR: "发生意外错误，请稍后重试。"
 };
 

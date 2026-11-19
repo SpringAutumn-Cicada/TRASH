@@ -34,7 +34,7 @@ function sourceTypeLabel(sourceType: Source["source_type"]): string {
   return labels[sourceType];
 }
 
-export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void}) {
+export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource,onOpenSettings,projectUpdatedAt}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void;onOpenSettings?:()=>void;projectUpdatedAt?:string}) {
   const [detail, setDetail] = useState<ProjectDetail>();
   const [searchScope,setSearchScope]=useState<'project'|'external'>('project');
   const [projectSearched,setProjectSearched]=useState(false),[externalSearched,setExternalSearched]=useState(false);
@@ -230,7 +230,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                 {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown，也可拖入页面</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
               </div><LibraryDeleteManager projectId={projectId} sources={detail.sources} disabled={importing||searching} blockedIds={[...submitting,...analyses.filter(item=>['queued','running'].includes(item.status??'')).map(item=>item.source_id)]} onBusyChange={busy=>setDeleting(busy?'batch':undefined)} onDeleted={onSourceDeleted}/></div>
               <div className="library-research-actions">
-                <ResearchExplorationButton projectId={projectId} sources={detail.sources} initialTopicId={action==='directions-from-topic'?focusId:undefined} initialQuestion={action==='directions-from-topic'?new URLSearchParams(window.location.search).get('question')??undefined:undefined}/>
+                <ResearchExplorationButton projectId={projectId} onOpenSettings={onOpenSettings} projectUpdatedAt={projectUpdatedAt} sources={detail.sources} initialTopicId={action==='directions-from-topic'?focusId:undefined} initialQuestion={action==='directions-from-topic'?new URLSearchParams(window.location.search).get('question')??undefined:undefined}/>
                 <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
               </div>
             </div>

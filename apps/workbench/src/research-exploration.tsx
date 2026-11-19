@@ -1,6 +1,6 @@
 import {ResearchRunCard,researchActive,type ResearchRun,type ResearchStageView,type ResearchTopic,type TopicStopAfter} from './research-run-card.js';
 import {LiteratureDocumentDialog} from './literature-document-dialog.js';
-import React,{useCallback,useEffect,useRef,useState} from 'react';
+import React,{useCallback,useEffect,useState} from 'react';
 import type {Source,ResearchProject} from '@trash/protocol';
 import {knowledgeDocumentId} from '@trash/protocol/browser';
 import {api,uiError} from './api.js';
@@ -31,7 +31,15 @@ function TopicStagePicker({value,onChange,disabled}:{value:TopicStopAfter;onChan
  </div>;
 }
 
-export function ResearchExplorationButton({projectId,sources,questionId,onQuestionAdded,initialTopicId,initialQuestion}:{projectId:string;sources:Source[];questionId?:string;initialTopicId?:string;initialQuestion?:string;onQuestionAdded?:(project:ResearchProject)=>void}){
+type DirectionMaterials={
+ directory?:{id:string;hash:string};
+ topics:{id:string;title:string;source_ids:string[];stale:boolean}[];
+ sources:{id:string;title:string;status:'available'|'stale'|'missing-wiki'|'missing-source';extra:boolean}[];
+ source_ids:string[];invalid_topic_ids:string[];available_sources:{id:string;title:string}[];
+ research_area?:string;research_constraints?:string;token?:string;
+};
+const materialLabels={'available':'可用','stale':'Wiki 待更新','missing-wiki':'缺少论文 Wiki','missing-source':'论文已移除'};
+export function ResearchExplorationButton({projectId,sources,questionId,onQuestionAdded,initialTopicId,initialQuestion,onOpenSettings,projectUpdatedAt}:{projectId:string;sources:Source[];questionId?:string;initialTopicId?:string;initialQuestion?:string;onOpenSettings?:()=>void;projectUpdatedAt?:string;onQuestionAdded?:(project:ResearchProject)=>void}){
  const [ready,setReady]=useState(false);
  const [stageViews,setStageViews]=useState<Record<string,ResearchStageView>>({});
  const [stopAfter,setStopAfter]=useState<TopicStopAfter>('synthesis');
@@ -45,17 +53,23 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
  const [instructions,setInstructions]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[doc,setDoc]=useState<Doc>();
  const [candidates,setCandidates]=useState<Candidate[]>([]),[resultRun,setResultRun]=useState<string>(),[added,setAdded]=useState<string[]>([]);
  const base='/projects/'+encodeURIComponent(projectId);
- const directionSeed=useRef<string|undefined>(undefined);
+ const [scopeRefresh,setScopeRefresh]=useState(0);
+ const [byTopic,setByTopic]=useState(true),[extraSources,setExtraSources]=useState<string[]>([]);
+ const [materialPreview,setMaterialPreview]=useState<{key:string;data:DirectionMaterials}>();
+ const [materialError,setMaterialError]=useState<{key:string;message:string}>();
+ const isDirection=mode==='directions'&&!questionId;
+ const scopeQuery=new URLSearchParams([...topicIds.map(id=>['topic_id',id]),...extraSources.map(id=>['source_id',id])]).toString();
+ const scope=materialPreview?.data;
+ const useTopics=isDirection&&byTopic&&Boolean(scope?.topics.length||topicIds.length);
+ const currentScope=materialPreview?.key===scopeQuery?scope:undefined;
  const focusPreview=useCallback((heading:HTMLHeadingElement|null)=>{heading?.focus();},[]);
 
- const [seedTitle,setSeedTitle]=useState('');
  useEffect(()=>{
   if(!initialTopicId)return;
-  directionSeed.current=initialTopicId;
+  setByTopic(true);setExtraSources([]);
   setMode('directions');setCreating(true);setOpen(true);
-  setSeedTitle('');setAppendId('');setFocusedId('');setTopicIds([initialTopicId]);setChosen([]);
+  setAppendId('');setFocusedId('');setTopicIds([initialTopicId]);setChosen([]);
   setInstructions(initialQuestion?.slice(0,5000)??'');setError('');
-  return()=>{directionSeed.current=undefined;};
  },[base,initialTopicId,initialQuestion]);
  useEffect(()=>{if(!open)return;let alive=true,loading=false;const controller=new AbortController();
   const load=async()=>{if(!alive||loading||document.hidden)return;loading=true;try{const data=await api<{runs:Run[];capabilities?:{multi_topic?:boolean}}>(base+'/research-exploration',{signal:controller.signal});if(alive){setRuns(data.runs);setReady(Boolean(data.capabilities?.multi_topic));}}catch(e){if(alive)setError(uiError(e,'无法读取研究分析记录'));}finally{loading=false;}};
@@ -68,23 +82,20 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
    }
    if(!alive)return;
    setEligible(ids);setTopics(topicDocs);
-   const topicId=directionSeed.current;
-   if(topicId){
-    const {document}=await api<{document:Doc&{title:string;topic_id?:string;links:{path:string;source_section?:string}[]}}>(base+'/markdown-knowledge/document?id='+encodeURIComponent(topicId),{signal:controller.signal});
-    if(!alive||directionSeed.current!==topicId)return;
-    if(document.topic_id!==document.id)throw new Error('请选择主题 Wiki 总览。');
-    const paperIds=(links:typeof document.links)=>links.flatMap(link=>link.path.match(/^knowledge_base\/papers\/(source_[^/]+)\/whoami\.md$/)?.slice(1)??[]);
-    const linked=paperIds(document.links.filter(link=>link.source_section==='关联论文'));
-    directionSeed.current=undefined;
-    setSeedTitle(document.title);
-    setChosen([...new Set(linked.length?linked:paperIds(document.links))].filter(id=>ids.includes(id)).slice(0,100));
-   }
   }catch(e){if(alive)setError(uiError(e,'无法读取论文 Wiki'));}})();
   return()=>{alive=false;controller.abort();window.clearInterval(timer);};
  },[open,base,initialTopicId,initialQuestion]);
- const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await action();setRuns((await api<{runs:Run[]}>(base+'/research-exploration')).runs);}catch(e){setError(uiError(e,'研究分析操作失败，请查看任务或研究领域配置。'));}finally{setBusy(false);}};
- const openFor=(value:ResearchMode)=>{directionSeed.current=undefined;setSeedTitle('');setMode(value);setCreating(false);setAppendId('');setFocusedId('');setDoc(undefined);setPreview(undefined);setCandidates([]);setError('');setOpen(true);};
- const start=()=>run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:chosen,instructions,question_id:questionId,mode:questionId?'directions':mode,topic_ids:topicIds,stop_after:mode==='topics'&&!questionId?stopAfter:undefined})});setFocusedId(data.run.id);setCreating(false);});
+ useEffect(()=>{
+  if(!open||mode!=='directions')return;
+  const controller=new AbortController();
+  void api<DirectionMaterials>(base+'/research-exploration/direction-materials?'+scopeQuery,{signal:controller.signal})
+   .then(data=>{if(!controller.signal.aborted){setMaterialPreview({key:scopeQuery,data});setMaterialError(undefined);}})
+   .catch(cause=>{if(!controller.signal.aborted)setMaterialError({key:scopeQuery,message:uiError(cause,'无法读取方向探索材料。')});});
+  return()=>controller.abort();
+ },[open,mode,base,scopeQuery,projectUpdatedAt,scopeRefresh]);
+ const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await action();setRuns((await api<{runs:Run[]}>(base+'/research-exploration')).runs);}catch(e){if(e instanceof Error&&e.message==='DIRECTION_SCOPE_CHANGED'){setMaterialPreview(undefined);setScopeRefresh(value=>value+1);}setError(uiError(e,'研究分析操作失败，请查看任务或研究领域配置。'));}finally{setBusy(false);}};
+ const openFor=(value:ResearchMode)=>{setByTopic(true);setExtraSources([]);setTopicIds([]);setChosen([]);setInstructions('');setMaterialPreview(undefined);setMaterialError(undefined);setMode(value);setCreating(value==='directions');setAppendId('');setFocusedId('');setDoc(undefined);setPreview(undefined);setCandidates([]);setError('');setOpen(true);};
+ const start=()=>run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration',{method:'POST',body:JSON.stringify({source_ids:useTopics?extraSources:chosen,topic_token:useTopics?currentScope?.token:undefined,instructions,question_id:questionId,mode:questionId?'directions':mode,topic_ids:topicIds,stop_after:mode==='topics'&&!questionId?stopAfter:undefined})});setFocusedId(data.run.id);setCreating(false);});
  const resume=(r:Run,topic?:Topic,nextStage?:TopicStopAfter)=>run(()=>api(base+'/research-exploration/'+r.id+'/resume',{method:'POST',body:JSON.stringify({confirm:true,topic_id:topic?.id,stop_after:nextStage})}));
  const rediscover=(r:Run)=>{if(!window.confirm('复用已整理材料重新发现主题？不会重新分析论文或 PDF。'))return;void run(async()=>{const data=await api<{run:Run}>(base+'/research-exploration/'+r.id+'/rediscover',{method:'POST',body:JSON.stringify({confirm:true})});setFocusedId(data.run.id);setCreating(false);});};
  const showResult=(r:Run,id:string,withCandidates=false)=>run(async()=>{if(['topics','comparison'].includes(r.mode??'')){setReadingId(id);return;}setDoc((await api<{document:Doc}>(base+'/markdown-knowledge/document?id='+encodeURIComponent(id))).document);setResultRun(r.id);setCandidates(withCandidates?(await api<{candidates:Candidate[]}>(base+'/research-exploration/'+r.id+'/candidates')).candidates:[]);});
@@ -195,15 +206,57 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
     {!questionId&&['topics','comparison'].includes(mode)&&<div className="research-analysis-modes" role="group" aria-label="主题综合方式">{(['topics','comparison'] as const).map(value=><button type="button" key={value} className={mode===value?'primary-button':'secondary-button'} aria-pressed={mode===value} disabled={busy} onClick={()=>setMode(value)}>{modes[value]}</button>)}</div>}
     <p>{questionId?'针对当前问题整理已有支持、反例和定向补证据计划。':mode==='directions'?'结合项目研究条件提出候选假设、方法差异和推荐取舍，由你选择方向。':mode==='research-map'?'组织论文中的问题、路线和关系，形成可跳转的研究地图。':mode==='background'?'围绕需求、困难、已有进展和共同矛盾，生成可独立引用和组合的分点大背景。':mode==='comparison'?'围绕你指定的问题，深入比较相关方法、条件、认识和反例。':'从所选论文中发现并合并多个主题，为支撑充分的主题分别生成 Wiki 组，证据不足的保留为候选线索。可在发现后停下来选择要综合的主题。'}</p>
     <small>使用已发布 Wiki，按需读取原始依据；不重新分析 PDF 或执行实验。</small>
-    {mode==='directions'&&seedTitle&&<p className="research-run-notice">已引用主题「{seedTitle}」，可调整论文范围和关注点。</p>}
+    {isDirection&&scope?.topics.length? <div className="research-analysis-modes" role="group" aria-label="探索材料来源">
+      <button type="button" className={byTopic?'primary-button':'secondary-button'} onClick={()=>setByTopic(true)} disabled={busy} aria-pressed={byTopic}>按主题探索</button>
+      <button type="button" className={!byTopic?'primary-button':'secondary-button'} onClick={()=>{setByTopic(false);setTopicIds([]);setExtraSources([]);}} disabled={busy} aria-pressed={!byTopic}>按论文探索</button>
+    </div>:null}
+    {isDirection&&byTopic&&!scope&&!materialError&&<p role="status">正在读取本轮已发布主题…</p>}
+    {useTopics&&<section className="research-run" aria-label="本轮主题">
+      <div className="research-selection-actions"><strong>本轮主题 · 已选 {topicIds.length} / {scope?.topics.length??0}</strong>
+        <button type="button" className="text-button" disabled={busy||!scope?.topics.length} onClick={()=>setTopicIds(scope?.topics.map(topic=>topic.id)??[])}>全选本轮主题</button>
+        <button type="button" className="text-button" disabled={busy||!topicIds.length} onClick={()=>setTopicIds([])}>清空</button>
+      </div>
+      <div className="research-source-list">{scope?.topics.map(topic=><label key={topic.id}>
+        <input type="checkbox" checked={topicIds.includes(topic.id)} disabled={busy} onChange={event=>setTopicIds(ids=>event.target.checked?[...ids,topic.id]:ids.filter(id=>id!==topic.id))}/>
+        <span>{topic.title} · {topic.source_ids.length} 篇{topic.stale?' · 来源待更新':''}</span>
+      </label>)}</div>
+      {!!currentScope?.invalid_topic_ids.length&&<ErrorNotice>有选中的主题已不在当前目录。请重新选择，或点击「全选本轮主题」。</ErrorNotice>}
+      <details><summary>关联论文{currentScope?` · ${currentScope.source_ids.length} 篇可用`:' · 正在核对'}</summary>
+        <ul>{currentScope?.sources.map(source=><li key={source.id}>{source.title} · {materialLabels[source.status]}{source.extra?' · 手动补充':''}</li>)}</ul>
+        <details><summary>补充对照论文</summary><div className="research-source-list">{scope?.available_sources
+          .filter(source=>!currentScope?.sources.some(item=>item.id===source.id&&!item.extra))
+          .map(source=><label key={source.id}><input type="checkbox" disabled={busy||extraSources.length>=100&&!extraSources.includes(source.id)} checked={extraSources.includes(source.id)}
+            onChange={event=>setExtraSources(ids=>event.target.checked?[...ids,source.id]:ids.filter(id=>id!==source.id))}/><span>{source.title}</span></label>)}</div></details>
+      </details>
+    </section>}
+    {isDirection&&byTopic&&scope&&!scope.topics.length&&<p>当前目录暂无已发布主题，可以先按论文探索。</p>}
+    {(!isDirection||!byTopic||scope&&!scope.topics.length&&!topicIds.length)&&<>
     <div className="research-selection-actions"><strong>论文范围 · 已选 {chosen.length} 篇</strong><button type="button" className="text-button" disabled={busy} onClick={()=>{if(available.length>100){setError('单次最多100篇，请分批选择。');return;}setChosen(available.map(s=>s.source_id));}}>全选可用论文</button><button type="button" className="text-button" disabled={busy} onClick={()=>setChosen([])}>清空</button></div>
     <div className="research-source-list">{available.map(s=><label key={s.source_id}><input type="checkbox" checked={chosen.includes(s.source_id)} disabled={busy||chosen.length>=100&&!chosen.includes(s.source_id)} onChange={e=>setChosen(ids=>e.target.checked?[...ids,s.source_id]:ids.filter(id=>id!==s.source_id))}/><span>{s.title}</span></label>)}{!available.length&&<p>暂无可用全文 Wiki，请先完成单篇分析。</p>}</div>
     {topics.length>0&&<details><summary>参考已有知识（已选 {topicIds.length} 项）</summary><div className="research-source-list">{topics.map(t=><label key={t.id}><input type="checkbox" disabled={busy||topicIds.length>=30&&!topicIds.includes(t.id)} checked={topicIds.includes(t.id)} onChange={e=>setTopicIds(ids=>e.target.checked?[...ids,t.id]:ids.filter(id=>id!==t.id))}/><span>{t.title}{t.stale?' · 来源有变化':''}</span></label>)}</div></details>}
+    </>}
+    {mode==='directions'&&scope&&<div className="research-run">
+      <strong>研究条件</strong>
+      <p>{scope.research_area?`研究领域 · ${scope.research_area}`:'请先在项目设置填写研究领域。'}</p>
+      {scope.research_constraints?<details><summary>查看项目研究约束</summary><p style={{whiteSpace:'pre-wrap'}}>{scope.research_constraints}</p></details>:<small>项目尚未填写代码、数据、算力或时间等研究约束，可在下方补充。</small>}
+      {onOpenSettings&&<button type="button" className="text-button" disabled={busy} onClick={onOpenSettings}>打开项目设置</button>}
+    </div>}
+    {materialError?.key===scopeQuery&&mode==='directions'&&<ErrorNotice>{materialError.message}</ErrorNotice>}
     <label>{mode==='comparison'?'指定主题或比较问题（必填）':'补充关注点（可选）'}<textarea maxLength={5000} value={instructions} onChange={e=>setInstructions(e.target.value)}/></label>
     {!questionId&&mode==='topics'&&<TopicStagePicker value={stopAfter} onChange={setStopAfter} disabled={busy||hasActive}/>}
-    <div className="research-create-footer"><button type="button" className="primary-button" disabled={!ready||busy||!chosen.length||hasActive||mode==='comparison'&&!instructions.trim()} onClick={()=>void start()}>{busy?'正在创建任务…':`开始${title} · ${chosen.length} 篇论文`}</button><small>{hasActive?'已有分析任务运行，结束后可新建。':!chosen.length?'请先选择论文。':mode==='comparison'&&!instructions.trim()?'请填写要比较的具体问题。':'启动后将自动切换到任务进度。'}</small></div></section>}
+    <div className="research-create-footer">
+      <button type="button" className="primary-button" disabled={!ready||busy||hasActive||
+        mode==='directions'&&!currentScope?.research_area||
+        (useTopics?!currentScope?.token||!currentScope.source_ids.length||currentScope.source_ids.length>100:!chosen.length)||
+        mode==='comparison'&&!instructions.trim()} onClick={()=>void start()}>
+        {busy?'正在创建任务…':useTopics?`开始探索方向 · ${topicIds.length} 个主题`:`开始${title} · ${chosen.length} 篇论文`}
+      </button>
+      <small>{hasActive?'已有分析任务运行，结束后可新建。':mode==='directions'&&scope&&!scope.research_area?'填写研究领域后即可启动。':
+        useTopics?(currentScope&&currentScope.source_ids.length>100?'关联论文超过 100 篇，请分批选择。':!topicIds.length?'请先选择主题。':currentScope&&!currentScope.source_ids.length?'暂无可用论文 Wiki，请补充或更新材料。':'启动后将自动切换到任务进度。'):
+        !chosen.length?'请先选择论文。':mode==='comparison'&&!instructions.trim()?'请填写要比较的具体问题。':'启动后将自动切换到任务进度。'}</small>
+    </div></section>}
     {error&&<ErrorNotice>{error}</ErrorNotice>}
-    {!appendBase&&history.length>0&&<details className="research-history"><summary>历史记录 · {history.length}</summary>{history.map(r=><details className="research-history-row" key={r.id}><summary><span className={`research-state state-${r.stage}`}>{stages[r.stage]??r.stage}</span><strong>{r.source_ids.length} 篇 · {r.append?'追加文献':modes[r.mode??'directions']}</strong><time>{new Date(r.created_at).toLocaleString()}</time></summary><div className="research-history-actions">{r.result_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>result(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}<button type="button" className="text-button" onClick={()=>{setFocusedId(r.id);setCreating(false);}}>置顶查看</button></div>{card(r)}</details>)}</details>}
+    {!appendBase&&history.length>0&&<details className="research-history"><summary>历史记录 · {history.length}</summary>{history.map(r=><details className="research-history-row" key={r.id}><summary><span className={`research-state state-${r.stage}`}>{stages[r.stage]??r.stage}</span><strong>{r.direction_scope?`${r.direction_scope.topics.length} 个主题 · `:''}{r.source_ids.length} 篇 · {r.append?'追加文献':modes[r.mode??'directions']}</strong><time>{new Date(r.created_at).toLocaleString()}</time></summary><div className="research-history-actions">{r.result_id&&<button type="button" className="text-button" disabled={busy} onClick={()=>result(r,r.result_id!,r.mode!=='topics')}>{r.mode==='topics'?'打开主题目录':'查看结果'}</button>}<button type="button" className="text-button" onClick={()=>{setFocusedId(r.id);setCreating(false);}}>置顶查看</button></div>{card(r)}</details>)}</details>}
     {candidates.map(candidate=><div className="research-run" key={candidate.id}><strong>{candidate.title}</strong><p>{candidate.question}</p><button type="button" className="secondary-button" disabled={busy||!candidate.complete||added.includes(candidate.id)} onClick={()=>void run(async()=>{const current=await api<{project:ResearchProject}>(base+'/research-questions');const saved=await api<{project:ResearchProject}>(base+'/research-questions',{method:'POST',body:JSON.stringify({title:candidate.title,question:candidate.question,status:'candidate',rationale:'由文献探索提出，尚需补充检索与验证',expected_updated_at:current.project.updated_at,source_run_id:resultRun,source_candidate_id:candidate.id})});onQuestionAdded?.(saved.project);setAdded(ids=>[...ids,candidate.id]);})}>{added.includes(candidate.id)?'已加入候选问题':candidate.complete?'加入候选问题':'结构或依据不完整，暂不能加入'}</button></div>)}
     {doc&&<article className="research-result" onClick={event=>{const a=(event.target as HTMLElement).closest('a');if(!a)return;const href=a.getAttribute('href')??'';if(href.startsWith('./')||href.startsWith('../')){const path=new URL(href,'https://local/'+doc.path).pathname.slice(1),id=knowledgeDocumentId(path);if(id){event.preventDefault();window.location.href=projectPath(projectId,'wiki',{focus:id});}}}}><ChatMarkdown text={doc.text.replace(/^---\n[\s\S]*?\n---\n/,'')} allowRelativeLinks/></article>}
    </div>
