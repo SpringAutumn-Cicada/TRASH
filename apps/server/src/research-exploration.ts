@@ -5,7 +5,7 @@ import {join,posix} from 'node:path';
 import {knowledgeTaskInputSchema} from '@trash/protocol';
 import {KnowledgeStore,type TrashStore,type KnowledgeTask} from '@trash/storage';
 import {KnowledgeAgent} from './knowledge-agent.js';
-import {MarkdownKnowledge,type MarkdownDocument} from './markdown-knowledge.js';
+import {MarkdownKnowledge,skillText,type MarkdownDocument} from './markdown-knowledge.js';
 import {projectRuntime} from './project-layout.js';
 import {materialGroupTitle,RESEARCH_SUMMARY_HARD_MAX_CHARACTERS,topicDiscoveryEntries} from './research-exploration-format.js';
 
@@ -344,9 +344,15 @@ export class ResearchExploration {
  }
  private enqueue(run:Run,ids:string[],mode:'summary'|'summary-working'|'directions'|'evidence-plan'|'research-map'|'comparison'|'background'|'topic-discovery'|'topic',batchNumber=1){
   const docs=new MarkdownKnowledge(this.store).index(run.project_id).documents;
+  const topicRefs=run.direction_scope?.topics;
+  if(topicRefs){
+   const byPath=new Map(docs.map(doc=>[doc.path,doc.hash]));
+   if([...topicRefs,...(run.source_hashes??[])].some(ref=>byPath.get(ref.path)!==ref.hash))
+    throw new Error('探索使用的主题或论文 Wiki 版本已变化，请核对当前材料并新建探索。');
+  }
   const groupSources=mode==='summary'?[...new Set(docs.filter(d=>ids.includes(d.id)).flatMap(d=>[...(d.source_id?[d.source_id]:[]),...(d.dependencies??[]).flatMap(ref=>ref.path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.slice(1)??[])]))].filter(id=>run.source_ids.includes(id)):run.source_ids;
   const workingInstruction=mode==='summary-working'?'\n仅压缩已有工作总结并保留原版本，不读取原始论文 Wiki 或 PDF；输出新的材料工作版供后续主题发现使用。':'';
-  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>['summary','summary-working'].includes(mode)||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'||mode==='summary-working'?materialGroupTitle(run.created_at,materialCategories[run.mode??'directions']+(mode==='summary-working'?'材料工作版':'材料分组'),batchNumber):mode==='evidence-plan'?'研究问题：补证据计划':mode==='topic-discovery'?'文献主题发现清单':mode==='topic'?'主题Wiki组':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:'')+workingInstruction,wiki_level:['summary','summary-working'].includes(mode)?'summary':['directions','evidence-plan','topic-discovery'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,...(!['summary','summary-working','topic-discovery'].includes(mode)&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
+  return this.agent.enqueue(run.project_id,knowledgeTaskInputSchema.parse({kind:'wiki-page',source_ids:groupSources,dependencies:ids.filter(id=>['summary','summary-working'].includes(mode)||id!==run.target_id).map(object_id=>({kind:'wiki-page',object_id,version:1})),title:mode==='summary'||mode==='summary-working'?materialGroupTitle(run.created_at,materialCategories[run.mode??'directions']+(mode==='summary-working'?'材料工作版':'材料分组'),batchNumber):mode==='evidence-plan'?'研究问题：补证据计划':mode==='topic-discovery'?'文献主题发现清单':mode==='topic'?'主题Wiki组':modeTitles[mode],instructions:run.instructions+(run.question_text?'\n当前待核查研究问题：'+run.question_text:'')+workingInstruction,wiki_level:['summary','summary-working'].includes(mode)?'summary':['directions','evidence-plan','topic-discovery'].includes(mode)?'discovery':'topic',research_skill:modeSkill(run.mode??'directions'),research_exploration:mode,research_topic_refs:topicRefs,...(!['summary','summary-working','topic-discovery'].includes(mode)&&run.target_id?{target_id:run.target_id}:{}),regenerate:true}))[0];
  }
  private scheduleWorkingSummaries(run:Run,docs:ReturnType<MarkdownKnowledge['read']>[]){
   if(++run.round>6)throw new Error('材料工作版未能在预算内收敛，请缩小论文范围');
@@ -414,7 +420,7 @@ export class ResearchExploration {
   const current=all.filter(d=>selected.includes(d.source_id??'')&&d.kind==='wiki-page'&&d.level==='single'&&d.path.startsWith('knowledge_base/papers/')&&(d.group_status===undefined||d.group_status==='current'));
   const firstPages=mode==='background'?/\/(whoami|background)\.md$/:mode==='comparison'?/\/(whoami|research_problem|insights|method|results)\.md$/:['directions','topics'].includes(mode)?/\/(whoami|research_problem|contributions|insights)\.md$/:/\/(whoami|research_problem|contributions)\.md$/;
   const docs=[...current.filter(d=>firstPages.test(d.path)),...topics];
-  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,direction_scope:preview?.scope,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:18})).digest('hex');
+  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,direction_scope:preview?.scope,skill:mode==='directions'?skillText('trash-research-exploration'):undefined,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:18})).digest('hex');
   const runs=this.list(project),directory=mode==='topics'?this.topicDirectories(project).current:undefined;
   const reusable=(!stopAfter||stopAfter==='synthesis')&&runs.find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&!this.superseded(r,runs)&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
   if(reusable)return reusable;

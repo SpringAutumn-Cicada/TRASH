@@ -76,7 +76,6 @@ const errorMessages: Record<string, string> = {
   DIRECTION_SOURCE_LIMIT: "可用论文超过 100 篇，请分批选择。",
   SOURCES_REQUIRED: "请先选择至少一篇可用的论文 Wiki。",
   SOURCE_WIKI_REQUIRED: "选中的论文缺少可用 Wiki，请重新选择。",
-  RESEARCH_EXPLORATION_BUSY: "已有研究分析任务正在运行。",
   INTERNAL_ERROR: "发生意外错误，请稍后重试。"
 };
 

@@ -101,6 +101,13 @@ export class KnowledgeAgent implements TaskRunner {
       if(appendReferences?.some(id=>!index.some(doc=>doc.id===id&&doc.kind==='wiki-page')))requestError('DEPENDENCY_NOT_FOUND',404);
       const referenceDocuments=!paperBundle&&part.kind==='wiki-page'&&part.source_ids.length&&part.research_exploration!=='summary-working'
         ?index.filter(d=>(!appendReferences||!selectedIds.has(d.id))&&(appendReferences?.includes(d.id)||((topicEntry?topicSources:part.source_ids).includes(d.source_id??'')&&d.kind==='wiki-page'&&(d.group_status===undefined||d.group_status==='current')))).map(d=>markdown.read(projectId,d.id)):[];
+      if(part.research_topic_refs?.length){
+        for(const ref of part.research_topic_refs){
+          const entry=index.find(doc=>doc.id===ref.id&&doc.topic_id===doc.id&&doc.path===ref.path&&doc.hash===ref.hash);
+          if(!entry)requestError('DIRECTION_SCOPE_CHANGED',409);
+          if(part.research_exploration==='directions'&&!selectedIds.has(ref.id))referenceDocuments.push(markdown.readIndexed(projectId,entry));
+        }
+      }
       const dependencies=[...new Map([...selected,...referenceDocuments,...topicMembers].map(d=>[d.path,{id:d.id,path:d.path,hash:d.hash}])).values()];
       if(part.kind==='literature-card'&&sources[0])part={...part,title:sources[0].source.title};
       const targetPaths=part.kind==='literature-card'?[`literature/cards/idcard-${part.source_ids[0]}.md`,...(part.include_source_wiki?[`wiki/wiki-${part.source_ids[0]}.md`]:[])]:previous?[previous.path]:[];
@@ -352,6 +359,10 @@ export class KnowledgeAgent implements TaskRunner {
         input_version:2
       }:snapshot.reference_documents?.length?{...(task.snapshot as object),reference_documents:undefined,material_index:(snapshot.reference_documents??[]).map(({id,path,title,source_id,stale})=>({id,path,title,source_id,stale}))}: {...(task.snapshot as Record<string,unknown>)};
       if(taskSkill(task.input)==='trash-literature-synthesis')Object.assign(modelInput,{source_scope:task.input.source_ids,material_versions:(snapshot.dependencies??[]).map(({path,hash})=>({path,hash})),coverage_note:'source_scope 是本次选择范围，索引不代表已读；summary 仅沉淀逐篇差异和短引用，完整来源身份由后台索引维护'});
+      if(task.input.research_topic_refs?.length)Object.assign(modelInput,{
+        research_topics:task.input.research_topic_refs,
+        research_topic_note:'research_topics 是本轮范围。只引用本任务实际提供且已读取的主题正文和论文依据。',
+      });
       if(task.input.topic_discovery_append)modelInput.topic_discovery_append=task.input.topic_discovery_append;
       if(topicEntry)Object.assign(modelInput,{topic_group:{entry_id:topicEntry,allowed:topicPaths(topicEntry),required:paths},outputs:paths.map(path=>({path,id:knowledgeDocumentId(path)}))});
       writeFileSync(join(directory,'input.json'),JSON.stringify(modelInput,null,2),{mode:0o600});
