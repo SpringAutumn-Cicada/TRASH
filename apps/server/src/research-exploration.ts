@@ -19,7 +19,9 @@ type WorkingSummary={origin_id:string;task_id?:string;output_id?:string};
 type MaterialRef={id:string;path:string;hash:string;source_ids:string[]};
 type MaterialBatch={input_ids:string[];source_ids:string[];task_id?:string;output?:MaterialRef};
 type AppendRound={parent_id:string;previous_discovery_id?:string;added_ids:string[];rebuilt_ids:string[];reused:MaterialRef[];batches:MaterialBatch[];unresolved:Topic[]};
-type Run={preview?:{topic_id:string;return_stage:Run['stage']};stop_after?:TopicStopAfter;discovery_material_ids?:string[];append?:AppendRound;summary_source_ids?:string[];working_summaries?:WorkingSummary[];summary_work_ids?:string[];retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'materials-ready'|'discovery-ready'|'previewing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
+type DirectionScope={directory:{id:string;hash:string};topics:{id:string;title:string;path:string;hash:string}[];extra_source_ids:string[]};
+type DirectionSelection={topic_ids:string[];source_ids:string[];token?:string};
+type Run={direction_scope?:DirectionScope;preview?:{topic_id:string;return_stage:Run['stage']};stop_after?:TopicStopAfter;discovery_material_ids?:string[];append?:AppendRound;summary_source_ids?:string[];working_summaries?:WorkingSummary[];summary_work_ids?:string[];retained_topics?:Topic[];source_hashes?:{path:string;hash:string}[];topics?:Topic[];discovery_id?:string;directory_id?:string;directory_expected?:string|null;material_ids?:string[];target_id?:string;mode?:ResearchMode;signature?:string;topic_ids?:string[];question_id?:string;question_text?:string;id:string;project_id:string;source_ids:string[];created_at:string;updated_at:string;stage:'summarizing'|'materials-ready'|'discovery-ready'|'previewing'|'generating'|'discovering'|'topics'|'partial'|'completed'|'failed'|'interrupted'|'cancelled';tasks:string[];history_tasks:string[];round:number;result_id?:string;error?:string;instructions:string};
 const active=(run:Run)=>['summarizing','generating','discovering','topics','previewing'].includes(run.stage);
 const unique=(ids:string[])=>[...new Set(ids)];
 const paperSource=(path:string)=>path.match(/^knowledge_base\/papers\/(source_[^/]+)\//)?.[1];
@@ -51,6 +53,42 @@ export class ResearchExploration {
   const published=this.list(project).find(run=>run.mode==='topics'&&directories.some(doc=>doc.id===run.result_id));
   const current=directories.find(doc=>doc.id===published?.result_id)??directories[0];
   return {current,archived:directories.filter(doc=>doc.id!==current?.id)};
+ }
+ directionMaterials(project:string,selection:DirectionSelection){
+  const markdown=new MarkdownKnowledge(this.store);
+  const docs=markdown.index(project).documents;
+  const directory=this.topicDirectories(project).current;
+  const projectMeta=this.store.getProject(project);
+  const papers=new Map(this.store.listSources(project).map(source=>[source.source_id,source.title]));
+  const overviews=new Map(docs.filter(doc=>doc.kind==='wiki-page'&&doc.level==='single'&&doc.source_id&&
+   doc.path===`knowledge_base/papers/${doc.source_id}/whoami.md`).map(doc=>[doc.source_id!,doc]));
+  const status=(id:string)=>!papers.has(id)?'missing-source':!overviews.has(id)?'missing-wiki':overviews.get(id)?.stale?'stale':'available';
+  const paths=new Map(docs.filter(doc=>doc.level==='topic'&&doc.kind==='wiki-page'&&doc.topic_id===doc.id).map(doc=>[doc.path,doc]));
+  const topics=unique((directory?.links??[]).filter(link=>link.source_section==='正式主题目录').map(link=>link.path))
+   .flatMap(path=>{const doc=paths.get(path);return doc?[doc]:[];})
+   .map(doc=>{
+    const related=(doc.links??[]).filter(link=>/^knowledge_base\/papers\/source_[^/]+\/whoami\.md$/.test(link.path));
+    const primary=related.filter(link=>link.source_section==='关联论文');
+    const ids=unique((primary.length?primary:related).map(link=>paperSource(link.path)!));
+    return {id:doc.id,title:doc.title,path:doc.path,hash:doc.hash,stale:Boolean(doc.stale),source_ids:ids};
+   });
+  const selectedIds=unique(selection.topic_ids),selected=topics.filter(topic=>selectedIds.includes(topic.id));
+  const invalid_topic_ids=selectedIds.filter(id=>!selected.some(topic=>topic.id===id));
+  const linked=new Set(selected.flatMap(topic=>topic.source_ids));
+  const extra_source_ids=unique(selection.source_ids).filter(id=>!linked.has(id)).sort();
+  const sources=unique([...linked,...extra_source_ids]).map(id=>({
+   id,title:papers.get(id)??overviews.get(id)?.title??id,status:status(id),extra:!linked.has(id),
+  }));
+  const source_ids=sources.filter(source=>source.status==='available').map(source=>source.id);
+  const directoryRef=directory&&{id:directory.id,hash:directory.hash};
+  const scope=directoryRef&&{directory:directoryRef,topics:selected.map(({id,title,path,hash})=>({id,title,path,hash})),extra_source_ids};
+  const materials=docs.filter(doc=>doc.source_id&&source_ids.includes(doc.source_id)&&doc.kind==='wiki-page')
+   .map(({path,hash,stale})=>[path,hash,Boolean(stale)]).sort();
+  const token=scope&&selected.length&&!invalid_topic_ids.length?createHash('sha256')
+   .update(JSON.stringify({scope,topics:selected,sources,materials})).digest('hex'):undefined;
+  return {directory:directoryRef,topics,source_ids,sources,invalid_topic_ids,scope,token,
+   available_sources:[...papers].filter(([id])=>status(id)==='available').map(([id,title])=>({id,title})),
+   research_area:projectMeta?.research_area,research_constraints:projectMeta?.research_constraints};
  }
  topicDiscoveries(project:string){
   const publishedIds=this.list(project).filter(run=>run.mode==='topics'&&run.discovery_id).map(run=>run.discovery_id!);
@@ -123,7 +161,7 @@ export class ResearchExploration {
    const count=(names:string[])=>states.filter(state=>names.includes(state)).length;
    const current=details.find(task=>task.status==='running');
    const last=[run.updated_at,...details.flatMap(task=>task.last_activity_at?[task.last_activity_at]:[])].sort().at(-1);
-   return {id:run.id,mode:run.mode,question_id:run.question_id,stage:run.stage,source_ids:run.source_ids,created_at:run.created_at,updated_at:run.updated_at,instructions:run.instructions,error:run.error,result_id:run.result_id,discovery_id:run.discovery_id,tasks:run.tasks,stop_after:run.stop_after,material_output_ids:run.discovery_material_ids,
+   return {id:run.id,mode:run.mode,question_id:run.question_id,direction_scope:run.direction_scope,stage:run.stage,source_ids:run.source_ids,created_at:run.created_at,updated_at:run.updated_at,instructions:run.instructions,error:run.error,result_id:run.result_id,discovery_id:run.discovery_id,tasks:run.tasks,stop_after:run.stop_after,material_output_ids:run.discovery_material_ids,
     superseded:this.superseded(run,runs),
     can_append:run.mode==='topics'&&Boolean(run.result_id)&&['completed','partial'].includes(run.stage)&&!this.superseded(run,runs),
     append:run.append?{parent_id:run.append.parent_id,added_ids:run.append.added_ids,rebuilt_ids:run.append.rebuilt_ids,batches:run.append.batches.map(batch=>({source_ids:batch.source_ids,task_id:batch.task_id,output_id:batch.output?.id}))}:undefined,
@@ -359,10 +397,13 @@ export class ResearchExploration {
   const task=this.enqueue(run,ids,'topic-discovery');
   run.tasks=[task.task_id];run.stage='discovering';this.save(run);
  }
- start(project:string,sourceIds:string[],instructions:string,question?:{id:string;question:string},mode:ResearchMode='directions',topicIds:string[]=[],stopAfter?:TopicStopAfter){
+ start(project:string,sourceIds:string[],instructions:string,question?:{id:string;question:string},mode:ResearchMode='directions',topicIds:string[]=[],stopAfter?:TopicStopAfter,topicToken?:string){
   const existing=this.list(project).find(active);if(existing)throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
   const p=this.store.getProject(project);if(mode==='directions'&&!p?.research_area)throw Object.assign(new Error('RESEARCH_AREA_REQUIRED'),{statusCode:422});
-  const md=new MarkdownKnowledge(this.store),all=md.index(project).documents,selected=[...new Set(sourceIds)];
+  const preview=topicToken?this.directionMaterials(project,{topic_ids:topicIds,source_ids:sourceIds}):undefined;
+  if(topicToken&&(!preview?.scope||preview.token!==topicToken))throw Object.assign(new Error('DIRECTION_SCOPE_CHANGED'),{statusCode:409});
+  const md=new MarkdownKnowledge(this.store),all=md.index(project).documents,selected=unique(preview?.source_ids??sourceIds);
+  if(selected.length>100)throw Object.assign(new Error('DIRECTION_SOURCE_LIMIT'),{statusCode:422});
   if(!selected.length)throw Object.assign(new Error('SOURCES_REQUIRED'),{statusCode:422});
   for(const id of selected)if(this.store.getSource(id)?.project_id!==project||!all.some(d=>d.source_id===id&&d.path.endsWith('/whoami.md')))throw Object.assign(new Error('SOURCE_WIKI_REQUIRED'),{statusCode:422});
   if(['topics','comparison'].includes(mode)&&selected.some(id=>all.some(d=>d.source_id===id&&d.path.endsWith('/whoami.md')&&d.stale)))throw Object.assign(new Error('SOURCE_WIKI_STALE'),{statusCode:422});
@@ -373,12 +414,12 @@ export class ResearchExploration {
   const current=all.filter(d=>selected.includes(d.source_id??'')&&d.kind==='wiki-page'&&d.level==='single'&&d.path.startsWith('knowledge_base/papers/')&&(d.group_status===undefined||d.group_status==='current'));
   const firstPages=mode==='background'?/\/(whoami|background)\.md$/:mode==='comparison'?/\/(whoami|research_problem|insights|method|results)\.md$/:['directions','topics'].includes(mode)?/\/(whoami|research_problem|contributions|insights)\.md$/:/\/(whoami|research_problem|contributions)\.md$/;
   const docs=[...current.filter(d=>firstPages.test(d.path)),...topics];
-  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:18})).digest('hex');
+  const signature=createHash('sha256').update(JSON.stringify({mode,question,source_ids:[...selected].sort(),instructions,project:p,direction_scope:preview?.scope,materials:[...current,...topics].map(d=>[d.path,d.hash,d.stale]).sort(),version:18})).digest('hex');
   const runs=this.list(project),directory=mode==='topics'?this.topicDirectories(project).current:undefined;
   const reusable=(!stopAfter||stopAfter==='synthesis')&&runs.find(r=>r.signature===signature&&r.stage==='completed'&&r.result_id&&!this.superseded(r,runs)&&all.some(d=>d.id===r.result_id&&!d.stale)&&(r.topics??[]).filter(t=>t.status==='completed').every(t=>all.some(d=>d.id===t.output_id&&!d.stale)));
   if(reusable)return reusable;
   const previous=mode==='directions'?undefined:this.list(project).find(r=>r.stage==='completed'&&r.mode===mode&&r.instructions===instructions&&JSON.stringify([...r.source_ids].sort())===JSON.stringify([...selected].sort())&&r.result_id&&all.some(d=>d.id===r.result_id));
-  const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:at,updated_at:at,stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions,question_id:question?.id,question_text:question?.question,mode,topic_ids:topicIds,signature,target_id:previous?.result_id,material_ids:docs.map(d=>d.id),source_hashes:current.map(({path,hash})=>({path,hash})),...(mode==='topics'?{retained_topics:[...(previous?.retained_topics??[]),...(previous?.topics??[]).filter(t=>t.status==='completed')],directory_expected:previous?.result_id?all.find(d=>d.id===previous.result_id)?.hash:undefined}:{})};
+  const at=new Date().toISOString(),run:Run={id:'exploration_'+randomUUID(),project_id:project,source_ids:selected,created_at:at,updated_at:at,stage:'summarizing',tasks:[],history_tasks:[],round:0,instructions,question_id:question?.id,question_text:question?.question,mode,topic_ids:topicIds,direction_scope:preview?.scope,signature,target_id:previous?.result_id,material_ids:docs.map(d=>d.id),source_hashes:current.map(({path,hash})=>({path,hash})),...(mode==='topics'?{retained_topics:[...(previous?.retained_topics??[]),...(previous?.topics??[]).filter(t=>t.status==='completed')],directory_expected:previous?.result_id?all.find(d=>d.id===previous.result_id)?.hash:undefined}:{})};
   if(mode==='topics'){run.stop_after=stopAfter;run.target_id=directory?.id;run.directory_expected=directory?.hash;}
   const reusableMaterials=mode==='topics'?runs.find(prior=>
    prior.signature===signature&&prior.discovery_material_ids?.length&&prior.discovery_material_ids.every(id=>

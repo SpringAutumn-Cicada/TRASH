@@ -195,14 +195,20 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const topicStopAfter=z.enum(['materials','discovery','synthesis']).optional();
     const candidatesRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/candidates$/);
     if(candidatesRoute&&method==='GET'){sendJson(response,200,{project,candidates:exploration.candidates(projectId,candidatesRoute[1])});return;}
+    if(subpath==='research-exploration/direction-materials'&&method==='GET'){
+      const selection=z.object({topic_ids:z.array(z.string().min(1)).max(1000),source_ids:z.array(z.string().min(1)).max(100)}).parse({
+        topic_ids:url.searchParams.getAll('topic_id'),source_ids:url.searchParams.getAll('source_id'),
+      });
+      sendJson(response,200,exploration.directionMaterials(projectId,selection));return;
+    }
     if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.summaries(projectId),capabilities:{multi_topic:true,progress_summary:true,stage_checkpoints:true,topic_preview:true,research_skills:['map','background','synthesis','exploration'],version:16}});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(30).default([]),stop_after:topicStopAfter}).strict().parse(await readJson(request));
-      if(input.stop_after&&input.mode!=='topics'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}
+      const input=z.object({source_ids:z.array(z.string()).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(1000).default([]),topic_token:z.string().regex(/^[a-f0-9]{64}$/).optional(),stop_after:topicStopAfter}).strict().parse(await readJson(request));
+      if((input.stop_after&&input.mode!=='topics')||(input.topic_token&&(input.mode!=='directions'||input.question_id||!input.topic_ids.length))||(!input.topic_token&&input.topic_ids.length>30)){sendJson(response,400,{error:'INVALID_REQUEST'});return;}
       const question=input.question_id?projectQuestions(project).find(q=>q.id===input.question_id):undefined;
       if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
-      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids,input.stop_after)});return;
+      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids,input.stop_after,input.topic_token)});return;
     }
     const topicPreviewRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/topics\/([a-f0-9]{20})\/(preview|publish)$/);
     if(topicPreviewRoute){
