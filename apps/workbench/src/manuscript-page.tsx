@@ -4,6 +4,7 @@ import type { ProjectPage } from '@trash/protocol';
 import { api, uiError } from './api.js';
 import { ErrorNotice } from './error-notice.js';
 import './manuscript-page.css';
+import { ManuscriptRepository } from './manuscript-repository.js';
 
 const statusLabels = {draft:'草稿', revision:'修订中', submitted:'已投稿'} as const;
 const sectionLabels = {
@@ -19,7 +20,7 @@ type PaperDetail = Paper & {
   drafts:{name:string;path:string}[];
   sections:{key:keyof typeof sectionLabels;path:string;exists:boolean;blocked:boolean}[];
 };
-type Shelf = {papers:Paper[];unfiled:number};
+type Shelf = {papers:Paper[];unfiled:number;legacy?:{folder:string;title:string}[]};
 type Navigate = (page:ProjectPage,options?:{focus?:string;action?:string})=>void;
 
 export function ManuscriptPage({projectId,focusId,onNavigate}:{
@@ -33,6 +34,8 @@ export function ManuscriptPage({projectId,focusId,onNavigate}:{
   const [title,setTitle]=useState('');
   const [slug,setSlug]=useState('');
   const [creating,setCreating]=useState(false);
+  const [legacyFolder,setLegacyFolder]=useState('');
+  const [legacyId,setLegacyId]=useState('');
   const [revision,setRevision]=useState(0);
   const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false);
@@ -112,6 +115,7 @@ export function ManuscriptPage({projectId,focusId,onNavigate}:{
           <button className="primary-button" disabled={busy||(current===(paper.current??'')&&status===paper.status)}>保存</button>
         </form>
       </section>
+      <ManuscriptRepository key={paper.id} projectId={projectId} paperId={paper.id}/>
       <section className="manuscript-panel">
         <h3>稿件与素材目录</h3>
         <div className="manuscript-sections">
@@ -140,6 +144,17 @@ export function ManuscriptPage({projectId,focusId,onNavigate}:{
           <FileText size={19}/><span><strong>{item.title}</strong><code>{item.path}/</code></span><small>{statusLabels[item.status]}</small><ChevronRight size={16}/>
         </button>)}
       </div>
+      {Boolean(shelf.legacy?.length)&&<form className="manuscript-panel manuscript-settings" onSubmit={event=>{
+        event.preventDefault();
+        void run(async()=>{
+          const value=await post<PaperDetail>('/adopt',{folder:legacyFolder,id:legacyId});
+          onNavigate('paper',{focus:value.id});
+        },'登记旧稿件失败。');
+      }}>
+        <label>旧稿件目录<select required value={legacyFolder} onChange={event=>setLegacyFolder(event.target.value)}><option value="">选择已有稿件</option>{shelf.legacy?.map(item=><option key={item.folder} value={item.folder}>{item.title}</option>)}</select></label>
+        <label>论文 ID<input required maxLength={80} pattern={String.raw`[a-z0-9][a-z0-9_\-]{0,79}`} value={legacyId} onChange={event=>setLegacyId(event.target.value)}/></label>
+        <button className="secondary-button" disabled={busy||!legacyFolder}>登记旧稿件</button>
+      </form>}
       {!shelf.papers.length&&<p className="manuscript-panel">暂无已登记的论文。</p>}
       {shelf.unfiled>0&&<button type="button" className="secondary-button manuscript-legacy" onClick={()=>browse('manuscript')}><Folder size={15}/>查看未归档文件 · {shelf.unfiled} 项</button>}
     </>}

@@ -9,7 +9,7 @@ type Task = {
 };
 const statusNames: Record<string, string> = { running: "运行中", cancelling: "正在取消", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断，需核对旧进程" };
 const errors: Record<string, string> = { PROJECT_HAS_ACTIVE_TASKS: "当前项目正在分析文献或处理知识任务，请等待完成或先停止分析。", CODE_AGENT_BUSY: "该仓库有 Agent 正在执行，请等待或先取消。", CODE_AGENT_RECOVERY_REQUIRED: "旧任务已中断，请核对旧进程并确认停止后再启动。", EXPERIMENT_ACTIVE: "该仓库有未结束实验，请先处理实验状态。", SERVER_STOPPING: "服务正在停止。", INVALID_REQUEST: "请检查任务、时限及授权选项。", NOT_FOUND: "任务不存在或已结束。" };
-export function CodeAgentPanel({ projectId, repositoryPath }: { projectId: string; repositoryPath: string }) {
+export function CodeAgentPanel({ projectId, repositoryPath, repositoryId }: { projectId: string; repositoryPath: string; repositoryId?:string }) {
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/code-agent`;
   const [instructions, setInstructions] = useState(""), [model, setModel] = useState(""), [sandbox, setSandbox] = useState("workspace-write"), [timeout, setTimeoutValue] = useState(30), [confirmed, setConfirmed] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]), [selectedId, setSelectedId] = useState(""), [selected, setSelected] = useState<Task>();
@@ -37,7 +37,7 @@ export function CodeAgentPanel({ projectId, repositoryPath }: { projectId: strin
     <div className="section-heading"><div><h3><Bot size={17}/>本机 Codex Agent</h3><p>在绑定仓库中读取代码、修改文件和执行命令，使用运行 TRASH 的 WSL / 本机 Codex 配置。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={() => void act(async () => { const value = await call<{ available: boolean; version?: string; wsl?: string; error?: string }>("/detect"); setDetection(value.available ? `${value.version} · ${value.wsl || "本机环境"}` : value.error || "CLI 不可用"); })}><RefreshCw size={14}/>检测 CLI</button></div>
     {detection && <p role="status">{detection}</p>}
     <form onSubmit={event => { event.preventDefault(); void act(async () => {
-      const value = await call<{ task: Task }>("/tasks", { instructions, model, sandbox, timeout_seconds: timeout * 60, confirm: confirmed });
+      const value = await call<{ task: Task }>("/tasks", { instructions, model, sandbox, repository_id:repositoryId, timeout_seconds: timeout * 60, confirm: confirmed });
       setSelectedId(value.task.task_id); setSelected(value.task); setTasks(old => [value.task, ...old]); setInstructions(""); setConfirmed(false);
     }); }}>
       <label>交给 Agent 的任务<textarea required value={instructions} onChange={event => setInstructions(event.target.value)} maxLength={30000} placeholder="例如：阅读仓库结构，实现训练入口，并说明修改了哪些文件。本次不运行测试。" disabled={busy}/></label>

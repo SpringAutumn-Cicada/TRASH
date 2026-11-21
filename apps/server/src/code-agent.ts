@@ -18,6 +18,7 @@ import { autoChatSkillInstruction, chatSkillId, chatSkillInstruction, stageSchol
 
 const execute = promisify(execFile);
 const inputSchema = z.object({
+  repository_id:z.string().min(1).optional(),
   attachments:z.array(z.string().regex(/^artifact_[A-Za-z0-9-]+$/)).max(10).default([]),
   conversation_id: z.string().uuid().optional(), instructions: z.string().trim().min(1).max(30000), model: z.string().trim().max(200).default(""),
   reasoning_effort: reasoningEffort.optional(),
@@ -27,7 +28,7 @@ const inputSchema = z.object({
 }).strict();
 type Input = z.infer<typeof inputSchema>;
 export interface CodeTask {
-  purpose?: "project-chat"; conversation_id?: string; session_id?: string; repository_path?: string;
+  purpose?: "project-chat"; conversation_id?: string; session_id?: string; repository_path?: string; repository_id?: string;
   task_id: string; project_id: string; path: string; instructions: string; model: string; sandbox: Input["sandbox"];
   status: "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
   created_at: string; finished_at?: string; version?: string; exit_code?: number | null; error?: string;
@@ -150,19 +151,22 @@ export class CodeAgent {
     if (this.closed) experimentError("SERVER_STOPPING", 409);
     if (this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(project)) experimentError("PROJECT_HAS_ACTIVE_TASKS", 409);
     if (this.busy(project)) experimentError("CODE_AGENT_BUSY", 409);
-    const repo = chatUrl ? this.experiments.data.repository(project) : this.experiments.repository.bound(project);
+    const previous=chatUrl&&input.conversation_id?this.list(project).find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined;
+    if(previous&&input.repository_id&&input.repository_id!==previous.repository_id)experimentError('CHAT_REPOSITORY_CHANGED',409);
+    const repo = previous
+      ? previous.repository_id?this.experiments.data.repository(project,previous.repository_id):undefined
+      : input.repository_id||!chatUrl?this.experiments.repository.bound(project,input.repository_id):this.experiments.data.repository(project);
     const path = await realpath(chatUrl ? prepareChatWorkspace(this.store, project, input.skill_id) : repo!.path);
     if (this.busy(project) || [...this.active.values()].some(item => item.task.path === path || (Boolean(path) && item.task.repository_path === path))) experimentError("CODE_AGENT_BUSY", 409);
     if (this.experiments.data.runs().some(run => this.experiments.data.active(run) && (run.plan.repository.path === path || run.project_id === project || (Boolean(repo) && run.plan.repository.path === repo!.path)))) experimentError("EXPERIMENT_ACTIVE", 409);
     if (this.list(project).some(task => task.status === "interrupted")) experimentError("CODE_AGENT_RECOVERY_REQUIRED", 409);
-    const task: CodeTask = { task_id: `code_${randomUUID()}`, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "" };
+    const task: CodeTask = { task_id: `code_${randomUUID()}`, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "",repository_id:repo?.repository_id??previous?.repository_id };
     if (chatUrl) {
       task.skill_id = input.skill_id;
       task.attachments=attachments.map(({id,name,size,mime,image})=>({id,name,size,mime,image}));
-      task.purpose = "project-chat"; task.conversation_id = input.conversation_id ?? randomUUID(); task.repository_path = repo?.path;
+      task.purpose = "project-chat"; task.conversation_id = input.conversation_id ?? randomUUID(); task.repository_path = repo?.path??previous?.repository_path;
       if (input.conversation_id) {
         if(this.conversationMeta(project,input.conversation_id).deleted)experimentError("CHAT_SESSION_NOT_FOUND",404);
-        const previous = this.list(project).find(t => t.purpose === "project-chat" && t.conversation_id === input.conversation_id && t.session_id);
         if (!previous) experimentError("CHAT_SESSION_NOT_FOUND", 409);
         task.session_id = previous.session_id;
       }

@@ -160,7 +160,12 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     try{
     if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}
     if(parts.length===1&&method==="POST"){experimentError("REPRODUCTION_ZIP_REQUIRED",400);}
-    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")),z.string().max(255).optional().parse(url.searchParams.get("filename")??undefined))});return true;}
+    if(parts[1]==="git"&&parts.length===2&&method==="POST"){send(response,201,{code:await service.reproductions.registerGit(projectId,await readJson(request))});return true;}
+    if(parts.length===3&&parts[2]==="git"&&method==="POST"){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      send(response,200,{code:await service.reproductions.initializeGit(projectId,parts[1])});return true;
+    }
+    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")),z.string().max(255).optional().parse(url.searchParams.get("filename")??undefined),z.string().min(1).max(120).optional().parse(url.searchParams.get("source_id")??undefined))});return true;}
     if(parts[1]){
       service.reproductions.get(projectId,parts[1]);
       if(parts.length===2&&method==="PUT"){send(response,200,{code:service.reproductions.update(projectId,parts[1],await readJson(request))});return true;}

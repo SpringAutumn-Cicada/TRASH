@@ -9,6 +9,7 @@ export const manuscriptDraftPath = z.string().max(4096).refine(value =>
 );
 export const manuscriptManifest = z.object({
   format_version: z.literal(1),
+  paper_id: manuscriptId.optional(),
   title: manuscriptTitle,
   status: manuscriptStatus,
   current: manuscriptDraftPath.nullable()

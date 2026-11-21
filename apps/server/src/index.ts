@@ -302,10 +302,30 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         if(subpath==='workspace/manuscripts/detail'&&method==='GET'){
           sendJson(response,200,files.manuscriptDetails(projectId,url.searchParams.get('id')??''));return;
         }
+        if(subpath==='workspace/manuscripts/repository'&&method==='GET'){
+          const paperId=url.searchParams.get('id')??'';
+          files.manuscriptPath(projectId,paperId);
+          sendJson(response,200,{repository:experiments.repository.forPaper(projectId,paperId)??null,repositories:experiments.data.repositories(projectId)});return;
+        }
+        if(subpath==='workspace/manuscripts/repository'&&method==='POST'){
+          const input=z.discriminatedUnion('action',[
+            z.object({id:z.string(),action:z.literal('create')}).strict(),
+            z.object({id:z.string(),action:z.literal('link'),repository_id:z.string()}).strict(),
+            z.object({id:z.string(),action:z.literal('bind'),path:z.string().min(1)}).strict()
+          ]).parse(await readJson(request));
+          files.manuscriptPath(projectId,input.id);
+          if(workspaces.busy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+          if(input.action==='create'){
+            sendJson(response,201,{repository:await experiments.repository.initializePaper(projectId,input.id,anchor)});return;
+          }
+          const repositoryId=input.action==='link'?input.repository_id:(await experiments.repository.bind(projectId,{path:input.path},false)).repository_id;
+          sendJson(response,200,{repository:experiments.repository.linkPaper(projectId,input.id,repositoryId)});return;
+        }
         if(method==='POST'){
           const actions={
             'workspace/manuscripts':files.createManuscript.bind(files),
             'workspace/manuscripts/update':files.updateManuscript.bind(files),
+            'workspace/manuscripts/adopt':files.adoptManuscript.bind(files),
             'workspace/manuscripts/section':files.createManuscriptSection.bind(files)
           };
           if(Object.hasOwn(actions,subpath)){

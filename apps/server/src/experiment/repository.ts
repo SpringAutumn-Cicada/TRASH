@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { realpath, readdir, stat, readFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { realpath, readdir, stat, readFile, mkdir, mkdtemp, rm, lstat, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { ExperimentStore, experimentError } from "@trash/storage";
 import { commitShaSchema, repositoryInputSchema, type ProjectRepository } from "@trash/protocol";
@@ -23,6 +23,33 @@ export class RepositoryService {
     this.store.saveRepository(record,makeDefault);return record;
   }
   bound(projectId:string,id?:string):ProjectRepository {return this.store.repository(projectId,id)??experimentError("REPOSITORY_NOT_BOUND",404);}
+  forPaper(projectId:string,paperId:string){
+    return this.store.repositories(projectId).find(repo=>repo.paper_id===paperId);
+  }
+  linkPaper(projectId:string,paperId:string,repositoryId:string){
+    const current=this.forPaper(projectId,paperId),repo=this.bound(projectId,repositoryId);
+    if(current&&current.repository_id!==repositoryId||repo.paper_id&&repo.paper_id!==paperId)experimentError('PAPER_REPOSITORY_CONFLICT',409);
+    const record={...repo,paper_id:paperId};
+    this.store.saveRepository(record,false);
+    return record;
+  }
+  async initializePaper(projectId:string,paperId:string,projectRoot:string){
+    if(this.forPaper(projectId,paperId))experimentError('PAPER_REPOSITORY_CONFLICT',409);
+    const root=await realpath(projectRoot);
+    let parent=root;
+    for(const part of ['code','papers']){
+      parent=join(parent,part);
+      await mkdir(parent).catch(error=>{if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;});
+      if(!(await lstat(parent)).isDirectory())experimentError('REPOSITORY_PATH_INVALID',403);
+    }
+    const path=join(parent,paperId);
+    if(basename(path)!==paperId)experimentError('REPOSITORY_PATH_INVALID',403);
+    await mkdir(path);
+    try {await git(path,['init']);}
+    catch(error){await rmdir(path).catch(()=>{});throw error;}
+    const repo=await this.bind(projectId,{path,name:paperId},false);
+    return this.linkPaper(projectId,paperId,repo.repository_id);
+  }
   async safePath(projectId:string,path:string,id?:string):Promise<string> {
     const root=this.bound(projectId,id).path;
     if(isAbsolute(path)||path.split(/[\\/]/).some(p=>p===".."||p===".git")||path.includes("\0"))experimentError("REPOSITORY_PATH_INVALID");

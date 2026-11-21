@@ -1,11 +1,12 @@
+import { git } from './repository.js';
 import { projectRuntime } from "../project-layout.js";
 /* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, rmSync, rmdirSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, existsSync, renameSync, writeFileSync, rmSync } from "node:fs";
 import { realpath, stat, readdir, readFile, rm, mkdir } from "node:fs/promises";
-import { join, resolve, relative, isAbsolute, sep, posix, dirname, basename } from "node:path";
+import { join, resolve, relative, isAbsolute, sep, posix } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createWriteStream } from "node:fs";
@@ -36,53 +37,70 @@ export class ReproductionService {
  acquire(project:string){if(this.pending.has(project))experimentError("REPRODUCTION_BUSY",409);this.pending.add(project);return ()=>this.pending.delete(project);}
  recordUpload(project:string,id:string,profile:string,value:{path:string;snapshot:ReproductionSnapshot}){const code=this.get(project,id);this.save({...code,uploads:[...(code.uploads??[]),{profile_id:profile,path:value.path,snapshot_id:value.snapshot.snapshot_id,sha256:value.snapshot.sha256,at:new Date().toISOString()}].slice(-50)});}
 
- private root(project:string){return projectRuntime(this.store.root,project,'reproductions');}
+ private root(project:string){
+  const workspace=join(this.store.root,'projects',project);
+  const legacy=join(workspace,'reproductions'),publicRoot=this.publicRoot(project);
+  const runtime=join(workspace,'.trash','runtime','reproductions');
+  if(existsSync(runtime))return runtime;
+  if(existsSync(legacy))return legacy;
+  if(existsSync(publicRoot)&&readdirSync(publicRoot).some(name=>name==='snapshots'||/^repro_[a-f0-9-]+\.json$/.test(name)))return publicRoot;
+  return runtime;
+ }
  private archiveName(name:string){
   if(!name||name==="."||name===".."||/[\\/\x00-\x1f\x7f]/.test(name)||!name.toLowerCase().endsWith(".zip")||Buffer.byteLength(name,"utf8")>255)experimentError("REPRODUCTION_ARCHIVE_NAME_INVALID",400);
   return name;
  }
- private directoryName(name:string){
-  const cleaned=name.normalize("NFC").replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_").trim().replace(/[. ]+$/g,"");
-  let slug="";for(const char of cleaned){if(Buffer.byteLength(slug+char,"utf8")>180)break;slug+=char;}
-  return `repro_${slug||"未命名"}`;
- }
- private allocateDirectory(project:string,name:string){
-  mkdirSync(this.root(project),{recursive:true});const base=this.directoryName(name);
-  for(let suffix=1;suffix<=10000;suffix++){
-   const path=join(this.root(project),suffix===1?base:`${base}_${suffix}`);
-   try{mkdirSync(path,{mode:0o700});return path;}
-   catch(error){if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;}
-  }
-  return experimentError("REPRODUCTION_NAME_CONFLICT",409);
- }
- private namedDirectory(value:ReproductionCode){
-  const previous=dirname(value.path),base=this.directoryName(value.name),current=basename(previous);
-  if(!value.imported||dirname(previous)!==this.root(value.project_id)||basename(value.path)!=="code"||!existsSync(previous))return value;
-  if(current===base||current.startsWith(`${base}_`)&&/^\d+$/.test(current.slice(base.length+1)))return value;
-  const next=this.allocateDirectory(value.project_id,value.name);
-  try{renameSync(previous,next);}catch(error){try{rmdirSync(next);}catch{/* Only remove our empty reservation directory. */}throw error;}
-  try{return this.save({...value,path:join(next,"code")});}
-  catch(error){renameSync(next,previous);throw error;}
+ publicRoot(project:string){return join(this.store.root,'projects',project,'code','reproductions');}
+ publicDirectory(project:string,id:string,sourceId?:string){
+  const key=sourceId??'unassigned';
+  if(!/^[A-Za-z0-9_-]+$/.test(key)||!/^repro_[a-f0-9-]+$/.test(id))experimentError('REPRODUCTION_DIRECTORY_INVALID',400);
+  return join(this.publicRoot(project),key,id);
  }
  private record(project:string,id:string){if(!/^repro_[a-f0-9-]+$/.test(id))experimentError("REPRODUCTION_NOT_FOUND",404);return join(this.root(project),`${id}.json`);}
- list(project:string):ReproductionCode[]{const root=this.root(project);return existsSync(root)?readdirSync(root).filter(n=>/^repro_[a-f0-9-]+\.json$/.test(n)).map(n=>JSON.parse(readFileSync(join(root,n),"utf8")) as ReproductionCode).map(code=>this.busy(project)?code:this.namedDirectory(code)):[];}
+ list(project:string):ReproductionCode[]{const root=this.root(project);return existsSync(root)?readdirSync(root).filter(n=>/^repro_[a-f0-9-]+\.json$/.test(n)).map(n=>JSON.parse(readFileSync(join(root,n),"utf8")) as ReproductionCode):[];}
  get(project:string,id:string){const path=this.record(project,id);if(!existsSync(path))experimentError("REPRODUCTION_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionCode;}
  private save(value:ReproductionCode){mkdirSync(this.root(value.project_id),{recursive:true});const path=this.record(value.project_id,value.id),temp=`${path}.${randomUUID()}.tmp`;writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,path);return value;}
  private validateSource(project:string,input:z.infer<typeof reproductionInput>){if(input.source_id&&!this.store.listSources(project).some(s=>s.source_id===input.source_id))experimentError("SOURCE_NOT_FOUND",404);}
 
- update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.namedDirectory(this.save({...old,...input,source_id:input.source_id}));}
+ update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.save({...old,...input,source_id:input.source_id});}
  remove(project:string,id:string){this.get(project,id);rmSync(this.record(project,id));}
- async importZip(project:string,request:IncomingMessage,name:string,filename?:string){
-  const archive_name=this.archiveName(filename??`${this.directoryName(name).slice(6)}.zip`);
-  const id=`repro_${randomUUID()}`,root=this.allocateDirectory(project,name);const zip=join(root,"source.zip"),code=join(root,"code");let bytes=0;
-  try{await pipeline(request,new Transform({transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;callback(bytes>200*1024*1024?new Error("ARCHIVE_LIMIT"):null,chunk);}}),createWriteStream(zip,{flags:"wx",mode:0o600}));await this.python("extract",zip,code);await rm(zip);return this.save({id,project_id:project,name:name.slice(0,200)||"复现代码",archive_name,path:code,source_url:"",notes:"",created_at:new Date().toISOString(),imported:true});}
+ async importZip(project:string,request:IncomingMessage,name:string,filename?:string,sourceId?:string){
+  if(sourceId&&this.store.getSource(sourceId)?.project_id!==project)experimentError('SOURCE_NOT_FOUND',404);
+  const archive_name=this.archiveName(filename??'source.zip');
+  const id=`repro_${randomUUID()}`,root=this.publicDirectory(project,id,sourceId);
+  const physical=await realpath(join(this.store.root,'projects',project));
+  let parent=physical;
+  for(const part of ['code','reproductions',sourceId??'unassigned']){
+    parent=join(parent,part);
+    try{mkdirSync(parent);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+    if(!lstatSync(parent).isDirectory())experimentError('REPRODUCTION_DIRECTORY_INVALID',422);
+  }
+  mkdirSync(root,{mode:0o700});
+  const zip=join(root,"source.zip"),code=join(root,"code");let bytes=0;
+  try{await pipeline(request,new Transform({transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;callback(bytes>200*1024*1024?new Error("ARCHIVE_LIMIT"):null,chunk);}}),createWriteStream(zip,{flags:"wx",mode:0o600}));await this.python("extract",zip,code);await rm(zip);return this.save({id,project_id:project,name:name.slice(0,200)||"复现代码",archive_name,path:code,source_id:sourceId,source_url:"",notes:"",created_at:new Date().toISOString(),imported:true});}
   catch{await rm(root,{recursive:true,force:true});experimentError("REPRODUCTION_IMPORT_FAILED",422);}
+ }
+ async registerGit(project:string,value:unknown){
+  const input=reproductionInput.extend({path:z.string().min(1).max(4096)}).strict().parse(value);
+  this.validateSource(project,input);
+  const path=await realpath(input.path);
+  if(await realpath((await git(path,['rev-parse','--show-toplevel'])).trim())!==path)experimentError('REPOSITORY_ROOT_REQUIRED',422);
+  const upstream_commit=(await git(path,['rev-parse','HEAD'])).trim();
+  const existing=this.list(project).find(repo=>repo.path===path&&repo.source_id===input.source_id);
+  if(existing)return existing;
+  return this.save({...input,path,upstream_commit,id:`repro_${randomUUID()}`,project_id:project,imported:false,created_at:new Date().toISOString()});
+ }
+ async initializeGit(project:string,id:string){
+  const item=this.get(project,id),path=await realpath(item.path),base=await realpath(this.publicRoot(project));
+  if(!item.imported||!path.startsWith(base+sep))experimentError('REPRODUCTION_DIRECTORY_INVALID',422);
+  if(!existsSync(join(path,'.git')))await git(path,['init']);
+  return item;
  }
  private async python(mode:string,source:string,target:string){try{return JSON.parse((await execute("python3",["-c",REPRO_ARCHIVE,mode,source,target],{timeout:120000,maxBuffer:16*1024*1024})).stdout);}catch{experimentError("REPRODUCTION_ARCHIVE_FAILED",422);}}
  private async safe(project:string,id:string,path:string){const root=await realpath(this.get(project,id).path);if(isAbsolute(path)||path.split(/[\\/]/).some(p=>p===".."||p===".git")||path.includes("\0"))experimentError("REPOSITORY_PATH_INVALID");const target=await realpath(resolve(root,path||".")),rel=relative(root,target);if(rel===".."||rel.startsWith(`..${sep}`)||isAbsolute(rel)||rel.split(sep).includes(".git"))experimentError("REPOSITORY_PATH_INVALID");return target;}
  async tree(project:string,id:string,path:string){return (await readdir(await this.safe(project,id,path),{withFileTypes:true})).filter(e=>e.name!==".git").slice(0,1000).map(e=>({name:e.name,path:path?`${path}/${e.name}`:e.name,directory:e.isDirectory(),symlink:e.isSymbolicLink()}));}
  async file(project:string,id:string,path:string){const target=await this.safe(project,id,path),info=await stat(target);if(!info.isFile())experimentError("NOT_A_FILE");if(info.size>1024*1024)return {path,size_bytes:info.size,preview:false,reason:"文件超过 1 MiB"};const data=await readFile(target);try{if(data.includes(0))throw new Error();return {path,size_bytes:data.length,preview:true,text:new TextDecoder("utf8",{fatal:true}).decode(data)};}catch{return {path,size_bytes:info.size,preview:false,reason:"二进制或非 UTF-8 文件"};}}
- async snapshot(project:string,id:string,analysis=false):Promise<ReproductionSnapshot>{const code=this.get(project,id),snapshot_id=`snapshot_${randomUUID()}`,root=join(this.root(project),"snapshots",snapshot_id);const rel=relative(code.path,root);if(rel===""||!rel.startsWith(`..${sep}`)&&rel!==".."&&!isAbsolute(rel))experimentError("REPRODUCTION_DIRECTORY_INVALID");await mkdir(root,{recursive:true});const path=join(root,"code.zip");try{const manifest=await this.python(analysis?"analysis-snapshot":"snapshot",code.path,path);const bytes=await readFile(path);if(bytes.length>200*1024*1024)experimentError("ARCHIVE_LIMIT");const value:ReproductionSnapshot={snapshot_id,reproduction_id:id,name:code.name,archive_name:code.archive_name??`${this.directoryName(code.name).slice(6)}.zip`,source_id:code.source_id,sha256:createHash("sha256").update(bytes).digest("hex"),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,"manifest.json"),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}}
+ async snapshot(project:string,id:string,analysis=false):Promise<ReproductionSnapshot>{const code=this.get(project,id),snapshot_id=`snapshot_${randomUUID()}`,root=join(this.root(project),"snapshots",snapshot_id);const rel=relative(code.path,root);if(rel===""||!rel.startsWith(`..${sep}`)&&rel!==".."&&!isAbsolute(rel))experimentError("REPRODUCTION_DIRECTORY_INVALID");await mkdir(root,{recursive:true});const path=join(root,"code.zip");try{const manifest=await this.python(analysis?"analysis-snapshot":"snapshot",code.path,path);const bytes=await readFile(path);if(bytes.length>200*1024*1024)experimentError("ARCHIVE_LIMIT");const value:ReproductionSnapshot={snapshot_id,reproduction_id:id,name:code.name,archive_name:code.archive_name??'source.zip',source_id:code.source_id,sha256:createHash("sha256").update(bytes).digest("hex"),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,"manifest.json"),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}}
  async sourceSnapshot(project:string,path:string,name:string):Promise<ReproductionSnapshot>{
   const snapshot_id='snapshot_'+randomUUID(),root=join(this.root(project),'snapshots',snapshot_id),rel=relative(path,root);
   if(rel===''||!rel.startsWith(`..${sep}`)&&rel!=='..'&&!isAbsolute(rel))experimentError('REPRODUCTION_DIRECTORY_INVALID');

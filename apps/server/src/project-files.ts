@@ -58,8 +58,8 @@ export class ProjectFiles {
   }
   private structuralWritable(id:string,path:string){
     const physical=this.writable(id,path);
-    const row=this.store.db.prepare('SELECT data FROM experiment_repositories WHERE project_id=?').get(id) as {data:string}|undefined;
-    if(row.some(item=>{
+    const rows=this.store.db.prepare('SELECT data FROM project_code_repositories WHERE project_id=?').all(id) as {data:string}[];
+    if(rows.some(item=>{
       const repository=(JSON.parse(item.data) as {path:string}).path;
       return existsSync(repository)&&inside(physical,realpathSync(repository));
     }))fail('FILES_BOUND_REPOSITORY',403);
@@ -76,29 +76,55 @@ export class ProjectFiles {
     const entries=names.map(name=>this.entry(id,path,name)).sort((a,b)=>Number(b.kind==='directory')-Number(a.kind==='directory')||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
     return {root:this.root(id),path,entries};
   }
-  private manuscript(id:string,paperId:string){
-    const path='manuscript/'+manuscriptId.parse(paperId);
+  private manuscriptInFolder(id:string,folder:string){
+    const path='manuscript/'+folder;
     const marker=this.locate(id,path+'/paper.yaml',true);
-    if(!existsSync(marker))fail('MANUSCRIPT_NOT_FOUND',404);
+    if(!existsSync(marker))return;
     try {
       const bytes=this.bytes(marker,16384);
-      return {id:paperId,path,marker,etag:hash(bytes),...manuscriptManifest.parse(JSON.parse(bytes.toString('utf8')))};
-    } catch {
-      fail('MANUSCRIPT_METADATA_INVALID',422);
-    }
+      const record=manuscriptManifest.parse(JSON.parse(bytes.toString('utf8')));
+      return {id:record.paper_id??folder,path,marker,etag:hash(bytes),...record};
+    } catch(error) {if(error instanceof z.ZodError||error instanceof SyntaxError)return;throw error;}
   }
-  manuscripts(id:string){
+  private manuscriptEntries(id:string){
     const directory=this.locate(id,'manuscript',true);
-    if(!existsSync(directory))return {papers:[],unfiled:0};
-    const entries=this.list(id,'manuscript',false).entries;
-    const papers=entries.flatMap(entry=>{
-      if(entry.kind!=='directory'||!manuscriptId.safeParse(entry.name).success)return [];
-      try {
-        const {marker,etag,format_version,...paper}=this.manuscript(id,entry.name);
-        return [paper];
-      } catch { return []; }
-    });
-    return {papers,unfiled:entries.length-papers.length};
+    return existsSync(directory)?this.list(id,'manuscript',false).entries:[];
+  }
+  private manuscript(id:string,paperId:string){
+    const key=manuscriptId.parse(paperId);
+    const paper=this.manuscriptEntries(id).filter(entry=>entry.kind==='directory')
+      .map(entry=>this.manuscriptInFolder(id,entry.name)).find(item=>item?.id===key);
+    return paper??fail('MANUSCRIPT_NOT_FOUND',404);
+  }
+  manuscriptPath(id:string,paperId:string){return this.manuscript(id,paperId).path;}
+  manuscripts(id:string){
+    const entries=this.manuscriptEntries(id);
+    const papers=[],legacy=[];
+    for(const entry of entries){
+      if(entry.kind!=='directory')continue;
+      const paper=this.manuscriptInFolder(id,entry.name);
+      if(!paper)continue;
+      const {marker,etag,format_version,paper_id,...details}=paper;
+      if(manuscriptId.safeParse(paper.id).success)papers.push(details);
+      else legacy.push({folder:entry.name,title:paper.title});
+    }
+    return {papers,legacy,unfiled:entries.length-papers.length};
+  }
+  adoptManuscript(id:string,value:unknown){
+    const input=z.object({folder:z.string().min(1).max(255).refine(name=>!name.startsWith('.')&&!/[\\/\x00-\x1f]/.test(name)),id:manuscriptId}).strict().parse(value);
+    if(this.manuscripts(id).papers.some(paper=>paper.id===input.id)||existsSync(this.locate(id,'manuscript/'+input.id,true)))fail('FILES_EXISTS');
+    this.writable(id,'manuscript/'+input.folder);
+    const paper=this.manuscriptInFolder(id,input.folder);
+    if(!paper||paper.paper_id) return fail('MANUSCRIPT_NOT_FOUND',404);
+    this.writeManuscript(paper.marker,{format_version:1,paper_id:input.id,title:paper.title,status:paper.status,current:paper.current});
+    return this.manuscriptDetails(id,input.id);
+  }
+  private writeManuscript(marker:string,record:Parameters<typeof manuscriptDocument>[0]){
+    const temp=marker+'.'+randomUUID()+'.tmp';
+    try {
+      writeFileSync(temp,manuscriptDocument(record),{flag:'wx',mode:0o600});
+      renameSync(temp,marker);
+    } finally { if(existsSync(temp))unlinkSync(temp); }
   }
   manuscriptDetails(id:string,paperId:string){
     const {marker,format_version,...paper}=this.manuscript(id,paperId);
@@ -124,6 +150,7 @@ export class ProjectFiles {
   }
   createManuscript(id:string,value:unknown){
     const input=z.object({id:manuscriptId,title:manuscriptTitle}).strict().parse(value);
+    if(this.manuscripts(id).papers.some(paper=>paper.id===input.id))fail('FILES_EXISTS');
     const path='manuscript/'+input.id;
     const target=this.writable(id,path);
     mkdirSync(dirname(target),{recursive:true});
@@ -149,11 +176,7 @@ export class ProjectFiles {
       const draft=this.locate(id,paper.path+'/'+input.current,true);
       if(!existsSync(draft)||!lstatSync(draft).isFile()||!draftExtension.test(draft))fail('MANUSCRIPT_DRAFT_INVALID',422);
     }
-    const temp=paper.marker+'.'+randomUUID()+'.tmp';
-    try {
-      writeFileSync(temp,manuscriptDocument({format_version:1,title:paper.title,status:input.status,current:input.current}),{flag:'wx',mode:0o600});
-      renameSync(temp,paper.marker);
-    } finally { if(existsSync(temp))unlinkSync(temp); }
+    this.writeManuscript(paper.marker,{format_version:1,paper_id:paper.paper_id,title:paper.title,status:input.status,current:input.current});
     return this.manuscriptDetails(id,input.id);
   }
   createManuscriptSection(id:string,value:unknown){

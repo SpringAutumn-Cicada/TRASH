@@ -7,6 +7,7 @@ const errorMessages: Record<string, string> = {
   FILES_SYMLINK: "符号链接不支持直接操作，请在工作区中访问真实文件。",
   FILES_MANAGED_READONLY: "此文件或目录由平台管理，请通过文献、卡片或 Wiki 等对应模块维护。",
   FILES_CHANGED: "文件已被其他程序修改，当前编辑已保留，请先下载或复制内容后刷新核对。",
+  PAPER_REPOSITORY_CONFLICT: "该论文已有主仓库，或该仓库已关联其他论文。",
   FILES_BOUND_REPOSITORY: "此目录包含平台绑定的代码仓库，请先在实验模块调整绑定后再移动或删除。",
   FILES_EXISTS: "目标位置已有同名文件或文件夹，不会覆盖。",
   FILES_INVALID_MOVE: "不能将目录移动到自身或其子目录。",
