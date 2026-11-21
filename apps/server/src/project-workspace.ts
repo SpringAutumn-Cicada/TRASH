@@ -2,8 +2,9 @@ import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, readdirSync, mkdirSync, writeFileSync, renameSync, symlinkSync, rmSync, readlinkSync } from 'node:fs';
 import { mkdir, readdir, lstat, readlink, symlink, copyFile, realpath, statfs } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { TrashStore, KnowledgeStore, libraryLayoutMarker, projectLibraryPath } from '@trash/storage';
+import { TrashStore, KnowledgeStore, libraryLayoutEnabled, libraryLayoutMarker, projectLibraryPath } from '@trash/storage';
 import { z } from 'zod';
+import { libraryMigrationPending } from './library-migration.js';
 
 export function workspaceError(error:unknown):never {
   if(error instanceof z.ZodError)throw error;
@@ -71,7 +72,7 @@ export class ProjectWorkspaces {
   state(id:string){
     const anchor=this.anchor(id),path=existsSync(anchor)?realpathSync(anchor):anchor;
     const backups=readdirSync(this.jobRoot()).filter(name=>name.endsWith('.json')).map(name=>JSON.parse(readFileSync(join(this.jobRoot(),name),'utf8')) as Job).filter(job=>job.projectId===id&&job.status==='completed'&&job.backup).map(job=>({id:job.id,path:job.backup!}));
-    return {path,backups,externalReferences:this.externalReferences(id,path),configured:existsSync(join(path,'project.yaml')),defaultRoot:join(this.store.root,'workspaces'),folder:basename(path),migration:this.jobs.get(id)??null};
+    return {path,backups,externalReferences:this.externalReferences(id,path),configured:existsSync(join(path,'project.yaml')),defaultRoot:join(this.store.root,'workspaces'),folder:basename(path),migration:this.jobs.get(id)??null,library:{migrated:libraryLayoutEnabled(path),pending:libraryMigrationPending(path)}};
   }
   private async destination(value:unknown){
     const input=requestSchema.parse(value),root=await realpath(input.root),target=join(root,input.name);

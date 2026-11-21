@@ -6,12 +6,13 @@ import { ModalLayer } from './modal-layer.js';
 import { DirectoryPicker } from './directory-picker.js';
 import { ErrorNotice } from './error-notice.js';
 import { api, uiError } from './api.js';
+import { LibraryLayoutSettings } from './library-layout-settings.js';
 import { useUnsavedChanges } from './navigation.js';
 
 type Migration={id:string;status:string;files:number;bytes:number;totalFiles:number;totalBytes:number;source:string;target:string;backup?:string;externalLinks:string[];error?:string;stage:string};
-type Workspace={backups:{id:string;path:string}[];externalReferences:string[];path:string;configured:boolean;defaultRoot:string;folder:string;migration:Migration|null};
+type Workspace={backups:{id:string;path:string}[];externalReferences:string[];path:string;configured:boolean;defaultRoot:string;folder:string;migration:Migration|null;library?:{migrated:boolean;pending:boolean}};
 const states:Record<string,string>={copying:'复制工作区',verifying:'校验文件',switching:'切换目录',completed:'迁移完成',failed:'迁移失败',interrupted:'迁移已中断'};
-export function ProjectWorkspaceDialog({projectId,projectTitle,projectQuestion,projectArea,projectInterests,projectStage,projectConstraints,onUpdated,onClose,onBrowse}:{projectId:string;projectTitle:string;projectQuestion:string;projectArea?:string;projectInterests?:string[];projectConstraints?:string;projectStage?:"exploration"|"focused";onUpdated:(project:ResearchProject)=>void;onClose:()=>void;onBrowse:()=>void}){
+export function ProjectWorkspaceDialog({projectId,projectTitle,projectQuestion,projectArea,projectInterests,projectStage,projectConstraints,onUpdated,onClose,onBrowse}:{projectId:string;projectTitle:string;projectQuestion:string;projectArea?:string;projectInterests?:string[];projectConstraints?:string;projectStage?:"exploration"|"focused";onUpdated:(project:ResearchProject)=>void;onClose:()=>void;onBrowse:(directory?:string)=>void}){
   const [workspace,setWorkspace]=useState<Workspace>(),[root,setRoot]=useState(''),[name,setName]=useState(''),[picker,setPicker]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[dirty,setDirty]=useState(false),[confirmCleanup,setConfirmCleanup]=useState<string>();
   const [title,setTitle]=useState(projectTitle),[savedTitle,setSavedTitle]=useState(projectTitle),[saved,setSaved]=useState(false);
   const [question,setQuestion]=useState(projectQuestion),[savedQuestion,setSavedQuestion]=useState(projectQuestion);
@@ -54,8 +55,8 @@ export function ProjectWorkspaceDialog({projectId,projectTitle,projectQuestion,p
     <ResearchQuestions projectId={projectId} onUpdated={updated=>{setQuestion(updated.research_question);setSavedQuestion(updated.research_question);setStage(updated.research_stage??"exploration");setSavedStage(updated.research_stage??"exploration");onUpdated(updated);}}/>
     {workspace?<><section className="project-settings-section"><h3>存储位置</h3><p>当前目录：<code className="workspace-path">{workspace.path}</code></p><p>{workspace.configured?'论文材料、卡片和 Wiki 已保存到项目目录。':'旧项目尚未设置完整工作区，选择根目录后将整理并迁移已有材料。'}</p>
     {workspace.externalReferences.length>0&&<details><summary>工作区外的引用保持原位置（{workspace.externalReferences.length}）</summary>{workspace.externalReferences.map(path=><p key={path}><code className="workspace-path">{path}</code></p>)}</details>}
-    <button type="button" className="secondary-button" disabled={busy||active} onClick={onBrowse}><FolderOpen size={15}/>打开当前目录</button>
-    </section><details className="project-settings-section project-migration" open={active||undefined}><summary>迁移工作区<span>更改存储目录</span></summary><p>仅在需要移动项目文件时设置。</p><label>新根目录<input required value={root} disabled={busy||active} onChange={event=>{setRoot(event.target.value);setDirty(true);}}/></label><button type="button" className="secondary-button" disabled={busy||active} onClick={()=>setPicker(true)}>选择根目录</button>
+    <button type="button" className="secondary-button" disabled={busy||active} onClick={()=>onBrowse()}><FolderOpen size={15}/>打开当前目录</button>
+    </section><LibraryLayoutSettings projectId={projectId} migrated={workspace.library?.migrated??false} pending={workspace.library?.pending??false} disabled={busy||active} onBrowse={()=>onBrowse("library")}/><details className="project-settings-section project-migration" open={active||undefined}><summary>迁移工作区<span>更改存储目录</span></summary><p>仅在需要移动项目文件时设置。</p><label>新根目录<input required value={root} disabled={busy||active} onChange={event=>{setRoot(event.target.value);setDirty(true);}}/></label><button type="button" className="secondary-button" disabled={busy||active} onClick={()=>setPicker(true)}>选择根目录</button>
     <label>项目文件夹名称<input required maxLength={120} value={name} disabled={busy||active} onChange={event=>{setName(event.target.value);setDirty(true);}}/></label>
     <p>目标：<code className="workspace-path">{root.replace(/[\\/]$/,'')}/{name}</code></p><p>迁移全部项目文件并校验，成功后保留旧目录备份。工作区外的数据、仓库和远程文件保持引用。请先结束项目任务并断开 SSH 终端。</p>
     <button type="button" className="primary-button project-migrate-submit" disabled={busy||active||!workspace||!root.trim()||!name.trim()} onClick={()=>void call('migrate',{root,name,confirm:true})}>{busy?'正在提交…':active?'迁移进行中…':'迁移工作区'}</button></details>

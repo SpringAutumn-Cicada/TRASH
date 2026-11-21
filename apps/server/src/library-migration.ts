@@ -153,7 +153,7 @@ function rawLink(root:string,wanted:string|null){
 function patchLinks(root:string,job:Journal,rollback=false){
   for(const item of job.rewrites){
     const path=disk(root,item.to),info=stat(path);
-    if(!info?.isFile())fail('LIBRARY_CONTENT_CHANGED');
+    if(!info?.isFile())return fail('LIBRARY_CONTENT_CHANGED');
     const live=readFileSync(path,'utf8'),wanted=rollback?item.before:item.after;
     if(live===wanted)continue;
     if(live!==(rollback?item.after:item.before))fail('LIBRARY_CONTENT_CHANGED');

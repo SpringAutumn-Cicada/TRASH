@@ -5,7 +5,7 @@ import {paperMembership,groupPath,readPaperGroup,groupPhysical,classifyPaperFile
 import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
 import {paperCompatibility,paperWikiIssues} from './paper-wiki.js';
 import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId,libraryLogicalPath} from '@trash/protocol';
-import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText} from './knowledge-base-migration.js';
+import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText,safeKnowledgeFile} from './knowledge-base-migration.js';
 import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
 import {parseBasicCard,applyBasicCard,applyIdcard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
 import type { KnowledgeVersion } from "@trash/protocol";

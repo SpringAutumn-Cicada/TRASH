@@ -16,6 +16,12 @@ const errorMessages: Record<string, string> = {
   FILES_DIRECTORY_TOO_LARGE: "目录项目过多，请输入更具体的子目录。",
 
   WORKSPACE_MIGRATING: "项目正在迁移，请等待完成后再操作。",
+  LIBRARY_MIGRATION_PENDING: "文献资料库迁移尚未结束，请在项目设置中继续上次操作。",
+  LIBRARY_CONFLICT: "资料库路径有冲突，请重新预览并核对目录。",
+  LIBRARY_RAW_CONFLICT: "原文入口已发生变化，请核对项目目录中的 raw 链接。",
+  LIBRARY_CONTENT_CHANGED: "资料库已有文件或目录发生变化，当前操作已停止。",
+  LIBRARY_ROLLBACK_UNAVAILABLE: "此项目没有可恢复的目录迁移记录。",
+  LIBRARY_UNSUPPORTED_ENTRY: "资料库内有不支持迁移的文件或符号链接。",
   WORKSPACE_TARGET_EXISTS: "目标文件夹已存在或正在被其他迁移使用，请换一个文件夹名称。",
   WORKSPACE_INVALID_TARGET: "请选择平台内部存储之外的目录，或默认 workspaces 根目录。",
   WORKSPACE_NESTED: "目标目录不能位于已有项目工作区内部，也不能包含已有工作区。",

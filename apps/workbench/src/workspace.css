@@ -41,3 +41,11 @@
 .project-migration-history>div[role=status]{padding:12px;border-radius:8px;background:color-mix(in srgb,var(--green-soft) 45%,var(--surface));font-size:12px}.project-migration-history details{margin-top:12px}.project-migration-history details>div{margin:12px 0;padding-top:10px;border-top:1px solid var(--line)}
 .workspace-settings>.modal-actions{padding:14px 26px;margin:0;border-top:1px solid var(--line);flex:none}.project-settings-body>.error-notice{margin:0}
 @media(max-width:520px){.workspace-settings>.modal-heading{padding:18px}.project-settings-body{padding:16px;gap:12px}.project-settings-section{padding:14px}.project-name-actions{align-items:flex-start;flex-direction:column}}
+
+.library-layout-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.library-layout-folders{list-style:none;padding:0;margin:12px 0;border:1px solid var(--line);border-radius:8px}
+.library-layout-folders li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 10px}
+.library-layout-folders li+li{border-top:1px solid var(--line)}
+.library-layout-folders code,.library-layout-links code{overflow-wrap:anywhere}
+.library-layout-folders small{color:var(--muted)}
+.library-layout-links{padding-inline-start:20px}
