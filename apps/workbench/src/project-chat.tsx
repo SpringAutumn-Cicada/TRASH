@@ -2,7 +2,7 @@ import { ChatAttachmentButtons, ChatAttachmentList, useChatAttachments, type Cha
 import { ChatHeightControl, useChatHeight } from "./chat-height-control.js";
 import { ModalLayer } from './modal-layer.js';
 import { ErrorNotice } from './error-notice.js';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowDown, Bot, Check, ChevronDown, Copy, List, LoaderCircle, MessageSquare, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Trash2, Search, Play, Send, Settings2, Square, X } from 'lucide-react';
 import { useUnsavedChanges } from './navigation.js';
 import { copyText } from './clipboard.js';
@@ -14,7 +14,7 @@ type Turn={attachments?:ChatAttachment[];output?:ChatOutput[];task_id:string;con
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>};
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
-const effortLabels:Record<string,string>={none:'无',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'极高',max:'最大',ultra:'超高'};
+const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
 const states:Record<string,string>={running:'正在处理',cancelling:'正在停止',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
 const errors:Record<string,string>={CHAT_SESSION_ACTIVE:'请先完成或处理这段对话中的任务，再删除。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
 const suggestions=[{title:'梳理研究方向',text:'请根据当前项目的研究问题和已有文献，梳理研究方向、已有证据以及需要补充的材料。'},{title:'比较文献方法',text:'请比较当前项目已有文献的方法、实验条件与局限，标明来源和不确定之处。'},{title:'整理研究 Wiki',text:'请基于现有文献卡片整理研究 Wiki，保留来源与版本引用，生成待审内容。'},{title:'讨论论文结构',text:'请结合当前研究问题和已有证据，和我讨论论文结构，区分已有结论与待验证假设。'}];
@@ -82,21 +82,44 @@ export function ProjectChat({projectId}:{projectId:string}){
     if(acting.current)return;acting.current=true;setBusy(true);setError('');
     try{await action();}catch(cause){if(alive.current)setError(cause instanceof Error?cause.message:'操作失败。');}finally{acting.current=false;if(alive.current)setBusy(false);}
   };
-  const toggleOptions=()=>{
-    if(options){setOptions(false);return;}
-    setOptions(true);
-    if(configLoading)return;
+  const configRequest=useRef<AbortController|undefined>(undefined);
+  const settingsId=useId();
+  const readModelConfig=useCallback(()=>{
+    if(configRequest.current)return;
+    const controller=new AbortController();
+    configRequest.current=controller;
     setConfigLoading(true);setConfigError('');
-    void call<ModelConfig>('/chat/model-config').then(next=>{
-      if(alive.current)setConfig(previous=>JSON.stringify(previous)===JSON.stringify(next)?previous:next);
-    }).catch(cause=>{
-      if(alive.current)setConfigError(cause instanceof Error?cause.message:'无法读取本机设置。');
-    }).finally(()=>{if(alive.current)setConfigLoading(false);});
+    void fetch(base+'/chat/model-config',{signal:controller.signal}).then(async response=>{
+      if(!response.ok)throw new Error(errors.CHAT_MODEL_CONFIG_UNAVAILABLE);
+      const next:ModelConfig=await response.json();
+      if(!controller.signal.aborted)setConfig(previous=>JSON.stringify(previous)===JSON.stringify(next)?previous:next);
+    }).catch(()=>{
+      if(!controller.signal.aborted)setConfigError(errors.CHAT_MODEL_CONFIG_UNAVAILABLE);
+    }).finally(()=>{
+      if(configRequest.current===controller){
+        configRequest.current=undefined;
+        setConfigLoading(false);
+      }
+    });
+  },[base]);
+  useEffect(()=>{
+    readModelConfig();
+    return()=>{configRequest.current?.abort();configRequest.current=undefined;};
+  },[readModelConfig]);
+  const toggleOptions=()=>{
+    if(!options){setIndexOpen(false);readModelConfig();}
+    setOptions(!options);
   };
-  const selectedModel=config?.models.find(item=>item.id===(model.trim()||config.model));
+  const inheritedModel=config?.model;
+  const shownModel=model||inheritedModel;
+  const selectedModel=config?.models.find(item=>item.id===shownModel);
   const defaultEffort=config?.reasoning_effort??selectedModel?.default_effort;
   const shownEffort=effort||defaultEffort;
   const supportedEfforts=selectedModel?.efforts.length?selectedModel.efforts:Object.keys(effortLabels);
+  const modelChoices=[...new Set([...(config?.models.map(item=>item.id)??[]),model])]
+    .filter(value=>value&&value!==inheritedModel);
+  const effortChoices=[...new Set([...supportedEfforts,effort])]
+    .filter(value=>value&&value!==defaultEffort);
   const saveSessionAction=()=>{
     const action=sessionAction;
     if(!action||action.type==='rename'&&!action.title.trim())return;
@@ -144,8 +167,31 @@ export function ProjectChat({projectId}:{projectId:string}){
           <button type="button" className="chat-session-delete" aria-label={`删除：${sessionTitle(item)}`} title="删除" disabled={busy||attachments.uploading||['running','cancelling','interrupted'].includes(item.latest.status)} onClick={()=>setSessionAction({id:item.id,type:'delete',title:sessionTitle(item)})}><Trash2 size={13}/></button>
         </div>
       </div>)}{!loading&&!filtered.length&&<p>{query?'没有匹配的对话。':'发送第一条消息，开始项目对话。'}</p>}</div><div className="chat-history-note">切换对话会暂存未发送内容；离开本页前请保存需要保留的草稿。</div></aside>}
-      <div className="chat-main"><header className="chat-thread-heading"><button type="button" className="icon-button" aria-label={history?'收起历史对话':'展开历史对话'} onClick={()=>setHistory(!history)}>{history?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}</button><div><strong>{session?sessionTitle(session):'新对话'}</strong><span><i className={`chat-connection-dot ${connected?'':'offline'}`}/>{connected?'项目会话':'连接暂时中断，正在重试'}{messages.length>0?` · ${messages.length} 轮交流`:''}</span></div><button type="button" className={`icon-button ${indexOpen?'active':''}`} aria-label="消息目录" aria-expanded={indexOpen} disabled={!messages.length} onClick={()=>setIndexOpen(!indexOpen)}><List size={17}/></button></header>
+      <div className="chat-main"><div className="chat-thread-controls"><header className="chat-thread-heading"><button type="button" className="icon-button" aria-label={history?'收起历史对话':'展开历史对话'} onClick={()=>setHistory(!history)}>{history?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}</button><div className="chat-thread-info"><strong>{session?sessionTitle(session):'新对话'}</strong><span><i className={`chat-connection-dot ${connected?'':'offline'}`}/>{connected?'项目会话':'连接暂时中断，正在重试'}{messages.length>0?` · ${messages.length} 轮交流`:''}</span></div><button type="button" className={`chat-options-toggle ${options?'active':''}`} aria-label="模型和权限设置"
+          aria-expanded={options} aria-controls={settingsId} onClick={toggleOptions}>
+          <Settings2 size={14}/>
+          <span className="chat-model-summary">{shownModel??'模型设置'}{shownEffort?`·${effortLabels[shownEffort]??shownEffort}`:''}</span>
+          <span className="chat-permission-label">{sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':'项目读写'}</span>
+          <ChevronDown size={12}/>
+        </button><button type="button" className={`icon-button ${indexOpen?'active':''}`} aria-label="消息目录" aria-expanded={indexOpen} disabled={!messages.length} onClick={()=>{setOptions(false);setIndexOpen(!indexOpen);}}><List size={17}/></button></header>
+        {options&&<div id={settingsId} className="chat-options-panel">
+          {configError?<p role="status">{configError}</p>:configLoading&&!config?<p role="status">正在读取模型设置…</p>:null}
+          <div className="chat-settings">
+            <label>对话模型<select value={model} disabled={busy||Boolean(active)} onChange={event=>{setModel(event.target.value);setEffort('');}}>
+              <option value={model===inheritedModel?model:''}>{inheritedModel??'自动选择'}</option>
+              {modelChoices.map(value=><option key={value} value={value}>{value}</option>)}
+            </select></label>
+            <label>推理强度<select value={effort} disabled={busy||Boolean(active)} onChange={event=>setEffort(event.target.value)}>
+              <option value={effort===defaultEffort?effort:''}>{defaultEffort?effortLabels[defaultEffort]??defaultEffort:'Auto'}</option>
+              {effortChoices.map(value=><option value={value} key={value}>{effortLabels[value]??value}</option>)}
+            </select></label>
+            <label>对话权限<select value={sandbox} disabled={busy||Boolean(active)} onChange={event=>setSandbox(event.target.value)}>
+              <option value="read-only">只读交流</option><option value="workspace-write">项目资料与代码读写</option><option value="danger-full-access">完整本机权限</option>
+            </select></label>
+          </div>
+        </div>}
         {indexOpen&&<nav className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
+      </div>
         <div ref={transcriptRef} className="chat-transcript-wrap"><div ref={messagesRef} className="chat-messages" role="log" aria-label="Agent 对话消息" aria-live="polite" aria-relevant="additions text" onScroll={event=>{const node=event.currentTarget,isAway=node.scrollHeight-node.scrollTop-node.clientHeight>90;follow.current=!isAway;setAway(isAway);if(!isAway)setUnread(false);}}>
           {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+item.text:item.text);input.current?.focus();}}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messages.map((turn,index)=><section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
             <article className="chat-message chat-user"><header><span>你</span><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header><div className="chat-user-body">{turn.instructions}</div><ChatAttachmentList base={base} entries={turn.attachments??[]}/><footer className="chat-user-actions"><button type="button" onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>引用</button><button type="button" aria-label="复制用户消息" onClick={()=>copy(turn.task_id+'-user',turn.instructions)}>{copied===turn.task_id+'-user'?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id+'-user'?'已复制':'复制'}</button></footer></article>
@@ -157,23 +203,7 @@ export function ProjectChat({projectId}:{projectId:string}){
         <ChatHeightControl height={chatHeight} onChange={changeChatHeight} target={transcriptRef}/>
         {error&&<div className="chat-notice"><ErrorNotice>{error}</ErrorNotice><button type="button" className="icon-button" aria-label="关闭对话错误提示" onClick={()=>setError('')}><X size={13}/></button></div>}
         {active&&active.conversation_id!==conversation&&<div className="chat-other-active">另一个对话正在处理消息。<button type="button" className="text-button" onClick={()=>choose(sessions.find(item=>item.id===active.conversation_id))}>前往该对话</button></div>}
-        <form className="chat-composer" onSubmit={event=>void send(event)}><div className={`chat-input-shell ${attachments.dragging?'chat-drop-active':''}`} onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=busy||attachments.uploading?'none':'copy';attachments.setDragging(!busy&&!attachments.uploading);}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))attachments.setDragging(false);}} onDrop={event=>{if(busy||attachments.uploading){event.preventDefault();attachments.setDragging(false);return;}attachments.drop(event);}} onPaste={event=>{if(!busy)attachments.paste(event);}}><ChatAttachmentList base={base} entries={attachments.entries} uploading={attachments.uploading} onRemove={attachments.remove}/>{attachments.dragging&&<div className="chat-drop-label">松开即可上传图片或文件</div>}<textarea ref={input} aria-label="发送给项目 Agent 的消息" value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><ChatAttachmentButtons disabled={busy||attachments.uploading} onUpload={files=>void attachments.upload(files)}/><button type="button" className={`chat-options-toggle ${options?'active':''}`} aria-expanded={options} onClick={toggleOptions}><Settings2 size={14}/>{model||config?.model||'模型设置'}{shownEffort&&` · ${effortLabels[shownEffort]??shownEffort}`}<ChevronDown size={12}/></button><span className="chat-permission-label">{sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':'项目读写'}</span><span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label="停止" title="停止当前对话" disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||attachments.uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.conversation_id!==conversation||active.status==='cancelling'||!active.session_id))}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?'追加指令':'发送'}</span></button></div></div></div>
-          {options&&<div className="chat-options-panel">
-            {configLoading?<p role="status">正在读取本机 Codex 设置…</p>:configError?<p role="status">{configError}</p>:
-              config&&<p>本机默认 {config.model??'自动选择'} · 推理强度 {config.reasoning_effort?effortLabels[config.reasoning_effort]:'自动'}</p>}
-            <div className="chat-settings">
-              <label>对话模型<input list="chat-codex-models" value={model} maxLength={200} disabled={busy||Boolean(active)}
-                placeholder={config?.model??'自动选择'} onChange={event=>{setModel(event.target.value);setEffort('');}}/></label>
-              <datalist id="chat-codex-models">{config?.models.map(item=><option key={item.id} value={item.id}/>)}</datalist>
-              <label>推理强度<select value={effort} disabled={busy||Boolean(active)} onChange={event=>setEffort(event.target.value)}>
-                <option value="">{defaultEffort?`默认 · ${effortLabels[defaultEffort]??defaultEffort}`:'默认'}</option>
-                {[...new Set([...supportedEfforts,...(effort?[effort]:[])])].map(value=><option value={value} key={value}>{effortLabels[value]??value}</option>)}
-              </select></label>
-              <label>对话权限<select value={sandbox} disabled={busy||Boolean(active)} onChange={event=>setSandbox(event.target.value)}>
-                <option value="read-only">只读交流</option><option value="workspace-write">项目资料与代码读写</option><option value="danger-full-access">完整本机权限</option>
-              </select></label>
-            </div>
-          </div>}
+        <form className="chat-composer" onSubmit={event=>void send(event)}><div className={`chat-input-shell ${attachments.dragging?'chat-drop-active':''}`} onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=busy||attachments.uploading?'none':'copy';attachments.setDragging(!busy&&!attachments.uploading);}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))attachments.setDragging(false);}} onDrop={event=>{if(busy||attachments.uploading){event.preventDefault();attachments.setDragging(false);return;}attachments.drop(event);}} onPaste={event=>{if(!busy)attachments.paste(event);}}><ChatAttachmentList base={base} entries={attachments.entries} uploading={attachments.uploading} onRemove={attachments.remove}/>{attachments.dragging&&<div className="chat-drop-label">松开即可上传图片或文件</div>}<textarea ref={input} aria-label="发送给项目 Agent 的消息" value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><ChatAttachmentButtons disabled={busy||attachments.uploading} onUpload={files=>void attachments.upload(files)}/><span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label="停止" title="停止当前对话" disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||attachments.uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.conversation_id!==conversation||active.status==='cancelling'||!active.session_id))}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?'追加指令':'发送'}</span></button></div></div></div>
           <div className="chat-composer-footer"><span>围绕当前论文项目交流 · 按所选权限执行</span><small>Ctrl / ⌘ + Enter 发送</small></div>
         </form>
       </div>
