@@ -4,6 +4,7 @@ import type { ProjectPage } from '@trash/protocol';
 import { api, uiError } from './api.js';
 import { ErrorNotice } from './error-notice.js';
 import './manuscript-page.css';
+import { ManuscriptEvidence } from './manuscript-evidence.js';
 import { ManuscriptRepository } from './manuscript-repository.js';
 
 const statusLabels = {draft:'草稿', revision:'修订中', submitted:'已投稿'} as const;
@@ -116,6 +117,7 @@ export function ManuscriptPage({projectId,focusId,onNavigate}:{
         </form>
       </section>
       <ManuscriptRepository key={paper.id} projectId={projectId} paperId={paper.id}/>
+      <ManuscriptEvidence key={"evidence-"+paper.id} projectId={projectId} paperId={paper.id} onNavigate={onNavigate}/>
       <section className="manuscript-panel">
         <h3>稿件与素材目录</h3>
         <div className="manuscript-sections">

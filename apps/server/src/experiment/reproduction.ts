@@ -50,6 +50,12 @@ export class ReproductionService {
   if(!name||name==="."||name===".."||/[\\/\x00-\x1f\x7f]/.test(name)||!name.toLowerCase().endsWith(".zip")||Buffer.byteLength(name,"utf8")>255)experimentError("REPRODUCTION_ARCHIVE_NAME_INVALID",400);
   return name;
  }
+ private directoryName(name:string){
+  const cleaned=name.normalize("NFC").replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_").trim().replace(/[. ]+$/g,"");
+  let slug="";
+  for(const char of cleaned){if(Buffer.byteLength(slug+char,"utf8")>180)break;slug+=char;}
+  return `repro_${slug||"未命名"}`;
+ }
  publicRoot(project:string){return join(this.store.root,'projects',project,'code','reproductions');}
  publicDirectory(project:string,id:string,sourceId?:string){
   const key=sourceId??'unassigned';

@@ -1,3 +1,4 @@
+import { ManuscriptEvidence } from './manuscript-evidence.js';
 import { chatSkills } from "./project-chat-skills.js";
 import {legacyMaterialTitle} from './research-exploration-format.js';
 import {topicVersions} from './topic-wiki.js';
@@ -301,6 +302,19 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         }
         if(subpath==='workspace/manuscripts/detail'&&method==='GET'){
           sendJson(response,200,files.manuscriptDetails(projectId,url.searchParams.get('id')??''));return;
+        }
+        if(subpath==='workspace/manuscripts/evidence'&&(method==='GET'||method==='POST')){
+          const evidence=new ManuscriptEvidence(store);
+          const paperPath=files.manuscriptPath(projectId,url.searchParams.get('id')??'');
+          if(method==='GET'){
+            const resultId=url.searchParams.get('result_id');
+            sendJson(response,200,resultId?evidence.versions(projectId,resultId):evidence.read(projectId,anchor,paperPath));
+          }else{
+            const input=await readJson(request);
+            if(workspaces.busy(projectId)){sendJson(response,409,{error:'WORKSPACE_MIGRATING'});return;}
+            sendJson(response,200,evidence.update(projectId,anchor,files.manuscriptPath(projectId,url.searchParams.get('id')??''),input));
+          }
+          return;
         }
         if(subpath==='workspace/manuscripts/repository'&&method==='GET'){
           const paperId=url.searchParams.get('id')??'';
