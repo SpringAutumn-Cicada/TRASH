@@ -36,7 +36,7 @@ type DirectionMaterials={
  topics:{id:string;title:string;source_ids:string[];stale:boolean}[];
  sources:{id:string;title:string;status:'available'|'stale'|'missing-wiki'|'missing-source';extra:boolean}[];
  source_ids:string[];invalid_topic_ids:string[];available_sources:{id:string;title:string}[];
- research_area?:string;research_constraints?:string;token?:string;
+ research_constraints?:string;token?:string;
 };
 const materialLabels={'available':'可用','stale':'Wiki 待更新','missing-wiki':'缺少论文 Wiki','missing-source':'论文已移除'};
 export function ResearchExplorationButton({projectId,sources,questionId,onQuestionAdded,initialTopicId,initialQuestion,onOpenSettings,projectUpdatedAt}:{projectId:string;sources:Source[];questionId?:string;initialTopicId?:string;initialQuestion?:string;onOpenSettings?:()=>void;projectUpdatedAt?:string;onQuestionAdded?:(project:ResearchProject)=>void}){
@@ -239,21 +239,19 @@ export function ResearchExplorationButton({projectId,sources,questionId,onQuesti
     </>}
     {mode==='directions'&&scope&&<div className="research-run">
       <strong>研究条件</strong>
-      <p>{scope.research_area?`研究领域 · ${scope.research_area}`:'请先在项目设置填写研究领域。'}</p>
       {scope.research_constraints?<details><summary>查看项目研究约束</summary><p style={{whiteSpace:'pre-wrap'}}>{scope.research_constraints}</p></details>:<small>项目尚未填写代码、数据、算力或时间等研究约束，可在下方补充。</small>}
       {onOpenSettings&&<button type="button" className="text-button" disabled={busy} onClick={onOpenSettings}>打开项目设置</button>}
     </div>}
     {materialError?.key===scopeQuery&&mode==='directions'&&<ErrorNotice>{materialError.message}</ErrorNotice>}
-    <label>{mode==='comparison'?'指定主题或比较问题（必填）':'补充关注点（可选）'}<textarea maxLength={5000} value={instructions} onChange={e=>setInstructions(e.target.value)}/></label>
+    <label>{mode==='comparison'?'指定主题或比较问题（必填）':isDirection?'本次探索侧重点（可选）':'补充关注点（可选）'}<textarea maxLength={5000} value={instructions} placeholder={isDirection?'例如：优先考虑能用现有数据在两周内初步验证的问题。留空则根据所选材料开放探索。':undefined} onChange={e=>setInstructions(e.target.value)}/></label>
     {!questionId&&mode==='topics'&&<TopicStagePicker value={stopAfter} onChange={setStopAfter} disabled={busy||hasActive}/>}
     <div className="research-create-footer">
       <button type="button" className="primary-button" disabled={!ready||busy||hasActive||
-        mode==='directions'&&!currentScope?.research_area||
         (useTopics?!currentScope?.token||!currentScope.source_ids.length||currentScope.source_ids.length>100:!chosen.length)||
         mode==='comparison'&&!instructions.trim()} onClick={()=>void start()}>
         {busy?'正在创建任务…':useTopics?`开始探索方向 · ${topicIds.length} 个主题`:`开始${title} · ${chosen.length} 篇论文`}
       </button>
-      <small>{hasActive?'已有分析任务运行，结束后可新建。':mode==='directions'&&scope&&!scope.research_area?'填写研究领域后即可启动。':
+      <small>{hasActive?'已有分析任务运行，结束后可新建。':
         useTopics?(currentScope&&currentScope.source_ids.length>100?'关联论文超过 100 篇，请分批选择。':!topicIds.length?'请先选择主题。':currentScope&&!currentScope.source_ids.length?'暂无可用论文 Wiki，请补充或更新材料。':'启动后将自动切换到任务进度。'):
         !chosen.length?'请先选择论文。':mode==='comparison'&&!instructions.trim()?'请填写要比较的具体问题。':'启动后将自动切换到任务进度。'}</small>
     </div></section>}

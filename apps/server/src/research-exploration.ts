@@ -88,7 +88,7 @@ export class ResearchExploration {
    .update(JSON.stringify({scope,topics:selected,sources,materials})).digest('hex'):undefined;
   return {directory:directoryRef,topics,source_ids,sources,invalid_topic_ids,scope,token,
    available_sources:[...papers].filter(([id])=>status(id)==='available').map(([id,title])=>({id,title})),
-   research_area:projectMeta?.research_area,research_constraints:projectMeta?.research_constraints};
+   research_constraints:projectMeta?.research_constraints};
  }
  topicDiscoveries(project:string){
   const publishedIds=this.list(project).filter(run=>run.mode==='topics'&&run.discovery_id).map(run=>run.discovery_id!);
@@ -405,7 +405,7 @@ export class ResearchExploration {
  }
  start(project:string,sourceIds:string[],instructions:string,question?:{id:string;question:string},mode:ResearchMode='directions',topicIds:string[]=[],stopAfter?:TopicStopAfter,topicToken?:string){
   const existing=this.list(project).find(active);if(existing)throw Object.assign(new Error('RESEARCH_EXPLORATION_BUSY'),{statusCode:409});
-  const p=this.store.getProject(project);if(mode==='directions'&&!p?.research_area)throw Object.assign(new Error('RESEARCH_AREA_REQUIRED'),{statusCode:422});
+  const p=this.store.getProject(project);
   const preview=topicToken?this.directionMaterials(project,{topic_ids:topicIds,source_ids:sourceIds}):undefined;
   if(topicToken&&(!preview?.scope||preview.token!==topicToken))throw Object.assign(new Error('DIRECTION_SCOPE_CHANGED'),{statusCode:409});
   const md=new MarkdownKnowledge(this.store),all=md.index(project).documents,selected=unique(preview?.source_ids??sourceIds);

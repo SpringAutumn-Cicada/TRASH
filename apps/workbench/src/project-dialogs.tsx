@@ -19,9 +19,9 @@ export function CreateProjectDialog({onClose,onCreated}:{onClose:()=>void;onCrea
     catch(cause){setError(uiError(cause,"创建项目失败，请重试。"));}finally{setBusy(false);}
   };
   return <ModalLayer><div className="modal-backdrop" onKeyDown={e=>{if(!picker&&e.key==="Escape")close();}}><form className="modal" role="dialog" aria-modal="true" aria-labelledby="create-title" onSubmit={event=>{if(event.target===event.currentTarget)void submit(event);}}>
-    <div className="modal-heading"><div><h2 id="create-title">新建研究项目</h2><p>先从研究领域开始，也可以暂不确定研究问题。</p></div><button type="button" className="icon-button" aria-label="关闭对话框" disabled={busy} onClick={close}><X size={17}/></button></div>
+    <div className="modal-heading"><div><h2 id="create-title">新建研究项目</h2><p>研究领域和具体问题可以留空。</p></div><button type="button" className="icon-button" aria-label="关闭对话框" disabled={busy} onClick={close}><X size={17}/></button></div>
     <label>项目名称<input autoFocus required maxLength={120} value={title} onChange={e=>setTitle(e.target.value)} placeholder="例如：基于溯源图的 APT 检测"/></label>
-    <label>研究领域<input required maxLength={500} value={area} onChange={e=>setArea(e.target.value)} placeholder="例如：APT检测与溯源"/></label><label>关注线索（可选，逗号分隔）<input value={interests} onChange={e=>setInterests(e.target.value)}/></label><label>当前研究问题（可选）<textarea maxLength={2000} rows={4} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="尚未确定可留空，后续通过文献探索多个方向。"/></label>
+    <label>研究领域（可选）<input maxLength={500} value={area} onChange={e=>setArea(e.target.value)} placeholder="例如：APT检测与溯源"/></label><label>关注线索（可选，逗号分隔）<input value={interests} onChange={e=>setInterests(e.target.value)}/></label><label>当前研究问题（可选）<textarea maxLength={2000} rows={4} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="尚未确定可留空，后续通过文献探索多个方向。"/></label>
     <label>工作区根目录<input value={root} onChange={event=>setRoot(event.target.value)} placeholder="留空使用平台默认工作区根目录"/></label>
     <button type="button" className="secondary-button" disabled={busy} onClick={()=>setPicker(true)}>选择根目录</button>
     <label>项目文件夹名称<input maxLength={120} value={folder} onChange={event=>setFolder(event.target.value)} placeholder={title.trim().replace(/[\\/:*?"<>|]/g,'_')||'默认使用项目名称'}/></label>
