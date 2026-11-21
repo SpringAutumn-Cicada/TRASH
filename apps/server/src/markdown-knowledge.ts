@@ -25,6 +25,7 @@ function fail(code:string,statusCode=409,detail?:string):never{throw Object.assi
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
 const skillReferences = {
+  'trash-experiment-method': [],
   'trash-literature-wiki': ['references/paper-wiki.md'],
   'trash-literature-synthesis': ['references/wiki.md', 'references/synthesis.md'],
   'trash-research-exploration': ['references/research-exploration.md'],

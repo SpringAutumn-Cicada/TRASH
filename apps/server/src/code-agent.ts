@@ -40,7 +40,7 @@ export interface CodeTask {
   created_at: string; finished_at?: string; version?: string; exit_code?: number | null; error?: string;
   reasoning_effort?:Input["reasoning_effort"];
   attachments?:ChatAttachment[];
-  skill_id?:ChatSkillId | typeof methodSkillId;
+  skill_id?:ChatSkillId;
   skill_origin?:"auto";
   output?: ChatOutput[];
   logs: string; response: string; before?: string; after?: string; truncated?: boolean;
@@ -95,7 +95,7 @@ export class CodeAgent {
       if(!conversations.has(id))conversations.set(id,this.conversationMeta(project,id));
       return !conversations.get(id)?.deleted;
     });
-    return {tasks:tasks.map(task=>({...task,logs:''})),titles:Object.fromEntries([...conversations]
+    return {tasks:tasks.map(({method_draft: _draft, ...task})=>({...task,logs:''})),titles:Object.fromEntries([...conversations]
       .flatMap(([id,meta])=>meta.title&&!meta.deleted?[[id,meta.title]]:[]))};
   }
   changeConversation(project:string,id:string,change:{title:string}|{deleted:true}){
@@ -149,6 +149,33 @@ export class CodeAgent {
       this.save(task);
     }
     return { skill_id, path: join(item.scholarSkill.folder, "SKILL.md"), instruction: chatSkillInstruction(skill_id, item.scholarSkill, true) };
+  }
+  methodChatTool(project: string, token: string, body: Record<string, unknown>) {
+    const item = this.activeTool(project, token);
+    if (body.operation === "method-experiments") {
+      return { experiments: listExperiments(join(this.store.root, "projects", project))
+        .map(({ direction_id, scheme_id, title }) => ({ direction_id, scheme_id, title })) };
+    }
+    const { operation: _operation, ...payload } = body;
+    if (body.operation === "method-context") {
+      const input = methodDraftInput.omit({expected:true}).parse(payload);
+      const context = readMethodContext(this.store, this.experiments, project, input);
+      item.methodContext = context;
+      // A candidate belongs to the context that produced it, even if the turn reads a second experiment.
+      return { experiment: context.experiment, markdown: context.document.content, repository: context.repository?.path, source: context.source };
+    }
+    const context = item.methodContext ?? experimentError("METHOD_CONTEXT_REQUIRED", 409);
+    const draft = methodDraftOutput.parse(payload);
+    if (draft.markdown === null) experimentError("INVALID_REQUEST", 400);
+    const { direction_id, scheme_id } = context.experiment;
+    item.task.experiment = { direction_id, scheme_id };
+    item.task.method_draft = { ...draft, expected:context.expected };
+    if (!item.task.skill_id) {
+      item.task.skill_id = methodSkillId;
+      item.task.skill_origin = "auto";
+    }
+    this.save(item.task);
+    return { candidate_saved: true, direction_id, scheme_id };
   }
   recordTool(project: string, token: string, result: unknown) {
     const item = [...this.active.values()].find(item => item.task.project_id === project && item.toolToken === token);

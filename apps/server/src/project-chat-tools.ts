@@ -72,7 +72,9 @@ except urllib.error.HTTPError as error:
   const oldDraft=join(path,'knowledge-draft');if(existsSync(oldDraft)){const preserved=projectRuntime(store.root,projectId,'tasks',`preserved-chat-draft-${Date.now()}`);mkdirSync(join(preserved,'..'),{recursive:true});renameSync(oldDraft,preserved);};
   // Do not stage project-wide bodies. get creates only the requested working copy.
   writeFileSync(join(path, "PROJECT_TOOLS.md"), `# 当前论文项目工具
-研究地图读取 map-skill/SKILL.md，大背景读取 background-skill/SKILL.md，多主题发现、主题比较及关系维护读取 synthesis-skill/SKILL.md；候选方向筛选读取 research-skill/SKILL.md，单篇生成读取 literature-skill/SKILL.md。简单问答无需发布，不自动串行执行全部技能，不创建实验设计技能。
+研究地图读取 map-skill/SKILL.md，大背景读取 background-skill/SKILL.md，多主题发现、主题比较及关系维护读取 synthesis-skill/SKILL.md；候选方向筛选读取 research-skill/SKILL.md，单篇生成读取 literature-skill/SKILL.md。简单问答无需发布，不自动串行执行全部技能。
+用户明确要求起草或修订某个自研实验的方法设计时，读取 method-skill/SKILL.md。调用 {"operation":"method-experiments"} 确认当前项目中的目标，不凭实验名猜测目录 ID。匹配多个或无法定位时向用户确认。
+使用 {"operation":"method-context","direction_id":"方向ID","scheme_id":"方案ID"} 获取方法正文和对应仓库。可选 source 为用户选定的 research/ 直属 Markdown 相对路径。按需阅读仓库。使用 {"operation":"method-draft","markdown":"完整候选正文","summary":"修改摘要","questions":[]} 将草稿送到该实验的方法设计页。该操作只保存候选正文，正式正文由用户审阅采用。需要先问关键问题时，直接在本轮回复中提出。普通方法讨论直接回复。
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
