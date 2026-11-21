@@ -114,8 +114,8 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
   const crumbs=directory.split('/').filter(Boolean);
   const manuscriptView=!results&&directory==='manuscript';
   const fileGroups=manuscriptView?[
-    {label:'文档与稿件',entries:entries.filter(manuscriptDocuments).sort((a,b)=>orderByName.compare(b.name,a.name))},
     {label:'工作目录',entries:entries.filter(entry=>entry.kind==='directory')},
+    {label:'文档与稿件',entries:entries.filter(manuscriptDocuments).sort((a,b)=>orderByName.compare(b.name,a.name))},
     {label:'其他文件',entries:entries.filter(entry=>entry.kind!=='directory'&&!manuscriptDocuments(entry))}
   ]:[{label:'',entries}];
   const contentUrl=preview?`/api/v1${base}/content?path=${encodeURIComponent(preview.path)}`:'';
