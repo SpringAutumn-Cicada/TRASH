@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { type ExperimentStore, experimentError } from "@trash/storage";
-import { repositoryInputSchema, type ExperimentCatalogEntry, type ProjectRepository } from "@trash/protocol";
+import { repositoryInputSchema, type DiscoveredExperiment, type ExperimentCatalogEntry, type ProjectRepository } from "@trash/protocol";
 import { git } from "./repository.js";
 import { manuscriptId } from "../manuscript-layout.js";
 import { assertExperimentScheme, experimentSchemes } from "./run-archive.js";
@@ -45,6 +45,41 @@ export function listExperiments(root: string): ExperimentCatalogEntry[] {
       ? heading : heading?.replace(/ · 实验方案$/, "");
     return { ...scheme, title: title || scheme.scheme_id, ...code };
   });
+}
+
+export function discoverExperiments(
+  root: string, repositories: ProjectRepository[], experiments: ExperimentCatalogEntry[],
+  recycled: {id: string; path: string; kind: string}[],
+): DiscoveredExperiment[] {
+  const workspace = realpathSync(root);
+  const code = join(workspace, "code");
+  const papers = join(code, "papers");
+  if (!info(code)?.isDirectory() || !info(papers)?.isDirectory()) return [];
+
+  const excludedIds = new Set(experiments.map(entry => entry.repository_id));
+  for (const entry of recycled) {
+    if (entry.kind !== "directory" || !/^experiments\/[^/]+\/[^/]+$/.test(entry.path)) continue;
+    const settings = join(workspace, ".trash", "recycle", entry.id, "content", ".experiment-code.json");
+    if (!info(settings)?.isFile()) continue;
+    try {
+      const parsed = experimentCodeSettings.safeParse(JSON.parse(readFileSync(settings, "utf8")));
+      if (parsed.success && parsed.data.repository_id) excludedIds.add(parsed.data.repository_id);
+    } catch (error) {
+      if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  const excludedPaths = new Set(repositories
+    .filter(repo => repo.paper_id || excludedIds.has(repo.repository_id))
+    .map(repo => repo.path));
+  return readdirSync(papers, { withFileTypes: true }).flatMap(entry => {
+    if (!entry.isDirectory() || entry.name.startsWith(".") || /[\x00-\x1f\x7f\\]/.test(entry.name)) return [];
+    const path = join(papers, entry.name);
+    if (excludedPaths.has(path) || !info(path)?.isDirectory()) return [];
+    const git = info(join(path, ".git"));
+    const has_git = Boolean(git?.isDirectory() || git?.isFile());
+    if (!has_git && !info(join(path, "README.md"))?.isFile()) return [];
+    return [{ name: entry.name, path, has_git }];
+  }).sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
 }
 
 export async function createExperiment(root: string, projectId: string, store: ExperimentStore, input: unknown) {

@@ -268,9 +268,9 @@ export class ProjectFiles {
     return hash(Buffer.from([stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(':')));
   }
   inspect(id:string,path:string){const target=this.locate(id,path);return {fingerprint:this.fingerprint(target)};}
-  private recycleRoot(id:string){
+  private recycleRoot(id:string,create=true){
     const root=this.root(id),internal=join(root,'.trash');
-    for(const path of [internal,join(internal,'recycle')]){if(existsSync(path)&&lstatSync(path).isSymbolicLink())fail('FILES_SYMLINK',403);mkdirSync(path,{recursive:true});}
+    for(const path of [internal,join(internal,'recycle')]){if(existsSync(path)&&lstatSync(path).isSymbolicLink())fail('FILES_SYMLINK',403);if(create)mkdirSync(path,{recursive:true});}
     return join(internal,'recycle');
   }
   recycle(id:string,value:unknown){
@@ -280,7 +280,8 @@ export class ProjectFiles {
     const directory=join(root,entry.id);mkdirSync(directory);writeFileSync(join(directory,'entry.json'),JSON.stringify(entry),{flag:'wx',mode:0o600});renameSync(source,join(directory,'content'));return {entry};
   }
   recycled(id:string){
-    const root=this.recycleRoot(id);return {entries:readdirSync(root).filter(name=>z.string().uuid().safeParse(name).success).flatMap(name=>{
+    const root=this.recycleRoot(id,false);if(!existsSync(root))return {entries:[]};
+    return {entries:readdirSync(root).filter(name=>z.string().uuid().safeParse(name).success).flatMap(name=>{
       const directory=join(root,name);if(lstatSync(directory).isSymbolicLink()||!existsSync(join(directory,'content')))return [];
       return [JSON.parse(readFileSync(join(directory,'entry.json'),'utf8')) as Recycled];
     }).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt))};

@@ -1,4 +1,5 @@
-import { createExperiment, experimentCatalogUpdate, listExperiments, setExperimentCode } from "./catalog.js";
+import type { ProjectFiles } from "../project-files.js";
+import { createExperiment, discoverExperiments, experimentCatalogUpdate, listExperiments, setExperimentCode } from "./catalog.js";
 import { experimentSchemes } from './run-archive.js';
 import { startDirectoryRepair, directoryRepair, applyDirectoryRepair, stopDirectoryRepair, resumeDirectoryRepair } from './directory-repair.js';
 import { discoverComputeResources } from './compute-resources.js';
@@ -20,7 +21,7 @@ import { browseDirectories, createDirectory, selectDirectory } from "./directori
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
 import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
-export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void,validatePaper:(id:string)=>void):Promise<boolean>{
+export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void,files:ProjectFiles):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
   if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='model-candidates'&&method==='GET'){send(response,200,{models:modelFileCandidates(service,projectId,parts[1],z.string().min(1).parse(url.searchParams.get('profile_id')))});return true;}
   if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='experiment-bindings'){
@@ -313,7 +314,9 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     const root = join(service.store.root, "projects", projectId);
     if (!service.store.getProject(projectId)) experimentError("PROJECT_NOT_FOUND", 404);
     if (method === "GET") {
-      send(response, 200, { experiments: listExperiments(root) });
+      const experiments = listExperiments(root);
+      const discovered = discoverExperiments(root, service.data.repositories(projectId), experiments, files.recycled(projectId).entries);
+      send(response, 200, { experiments, discovered });
       return true;
     }
     if (method === "POST") {
@@ -323,7 +326,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     }
     if (method === "PUT") {
       const input = experimentCatalogUpdate.parse(await readJson(request));
-      if (input.code.paper_id) validatePaper(input.code.paper_id);
+      if (input.code.paper_id) files.manuscriptPath(projectId, input.code.paper_id);
       if (input.code.repository_id) service.repository.bound(projectId, input.code.repository_id);
       setExperimentCode(root, input);
       send(response, 200, { experiments: listExperiments(root) });

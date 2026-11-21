@@ -69,3 +69,9 @@ export interface ExperimentCatalogEntry {
   entrypoint?: string;
   paper_id?: string;
 }
+
+export interface DiscoveredExperiment {
+  name: string;
+  path: string;
+  has_git: boolean;
+}
