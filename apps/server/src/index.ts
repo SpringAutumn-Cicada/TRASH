@@ -1,3 +1,4 @@
+import { chatSkills } from "./project-chat-skills.js";
 import {legacyMaterialTitle} from './research-exploration-format.js';
 import {topicVersions} from './topic-wiki.js';
 import {PaperWikiVersions} from './paper-wiki-versions.js';
@@ -407,6 +408,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
     if (subpath === "chat/tasks" && method === "GET") { sendJson(response,200,codeAgent.chatHistory(projectId)); return; }
+    if (subpath === "chat/skills" && method === "GET") { sendJson(response,200,{skills:chatSkills}); return; }
     if (subpath === "chat/model-config" && method === "GET") {
       sendJson(response,200,await codeAgent.chatModelConfig(projectId));return;
     }

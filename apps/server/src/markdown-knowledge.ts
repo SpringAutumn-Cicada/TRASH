@@ -24,8 +24,17 @@ const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function fail(code:string,statusCode=409,detail?:string):never{throw Object.assign(new Error(code),{statusCode,detail});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
-export type KnowledgeSkill='trash-literature-wiki'|'trash-literature-synthesis'|'trash-research-exploration'|'trash-research-map'|'trash-research-background';
-const skillFiles=(skill:KnowledgeSkill)=>skill==='trash-literature-wiki'?['SKILL.md','references/paper-wiki.md']:skill==='trash-literature-synthesis'?['SKILL.md','references/wiki.md','references/synthesis.md']:skill==='trash-research-exploration'?['SKILL.md','references/research-exploration.md']:['SKILL.md'];
+const skillReferences = {
+  'trash-literature-wiki': ['references/paper-wiki.md'],
+  'trash-literature-synthesis': ['references/wiki.md', 'references/synthesis.md'],
+  'trash-research-exploration': ['references/research-exploration.md'],
+  'trash-research-map': [],
+  'trash-research-background': [],
+  'trash-abstract-wiki': [],
+  'trash_analyze_code_environment': ['references/report-format.md']
+} as const;
+export type KnowledgeSkill = keyof typeof skillReferences;
+const skillFiles = (skill:KnowledgeSkill) => ['SKILL.md', ...skillReferences[skill]];
 const skillFile=(skill:KnowledgeSkill,name:string)=>join(skillRoot,'..',skill,name);
 export function skillText(skill:KnowledgeSkill='trash-literature-wiki'){return skillFiles(skill).map(name=>readFileSync(skillFile(skill,name),'utf8')).join('\n\n');}
 export function stageKnowledgeSkill(directory:string,skill:KnowledgeSkill='trash-literature-wiki',folder='literature-skill'){

@@ -1,7 +1,8 @@
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
 import { projectRuntime } from "./project-layout.js";
-import { MarkdownKnowledge, stageKnowledgeSkill } from "./markdown-knowledge.js";
+import { MarkdownKnowledge } from "./markdown-knowledge.js";
+import { stageChatSkills, type ChatSkillId } from "./project-chat-skills.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -18,7 +19,7 @@ function rememberRead(ledger:string,path:string,hash:string,start:number,end:num
  receipt.ranges=merged;receipt.total=total;writeFileSync(ledger,JSON.stringify(reads),{mode:0o600});
 }
 
-export function prepareChatWorkspace(store: TrashStore, projectId: string) {
+export function prepareChatWorkspace(store: TrashStore, projectId: string, selectedSkill?: ChatSkillId) {
   const path = projectRuntime(store.root,projectId,'agent-workspace'); mkdirSync(path, { recursive: true });
   const projectRoot=join(store.root,'projects',projectId);
   if(existsSync(join(projectRoot,'project.yaml'))){
@@ -36,11 +37,7 @@ try:
 except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
 `);
-  stageKnowledgeSkill(path);
-  stageKnowledgeSkill(path,'trash-literature-synthesis','synthesis-skill');
-  stageKnowledgeSkill(path,'trash-research-exploration','research-skill');
-  stageKnowledgeSkill(path,'trash-research-map','map-skill');
-  stageKnowledgeSkill(path,'trash-research-background','background-skill');
+  stageChatSkills(path, selectedSkill);
   const oldDraft=join(path,'knowledge-draft');if(existsSync(oldDraft)){const preserved=projectRuntime(store.root,projectId,'tasks',`preserved-chat-draft-${Date.now()}`);mkdirSync(join(preserved,'..'),{recursive:true});renameSync(oldDraft,preserved);};
   // Do not stage project-wide bodies. get creates only the requested working copy.
   writeFileSync(join(path, "PROJECT_TOOLS.md"), `# 当前论文项目工具
