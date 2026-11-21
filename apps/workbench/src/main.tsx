@@ -1,6 +1,7 @@
 import {themes,savedTheme,applyTheme,resolveTheme} from './theme.js';
 import {KnowledgeBaseWorkspace} from './knowledge-base.js';
 import {AbstractLibrary} from './abstract-library.js';
+import { ProjectTasksButton } from './project-tasks-button.js';
 import { TaskWorkspace } from './task-workspace.js';
 import { PdfReader } from "./pdf-reader.js";
 import { MarkdownKnowledgePanel } from "./markdown-knowledge.js";
@@ -184,8 +185,8 @@ function App() {
     <div className="workspace-main">
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
         <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{(project?.research_question||project?.research_area)??"整理文献、记录思路，逐步推进研究。"}</p></div>
-        {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>{setAutoDlProfile(undefined);setAutoDlOpen(true);}}><Server size={16}/><span>AutoDL 连接</span></button></div>}
-        {project&&<button type="button" className="secondary-button" onClick={()=>goPage("tasks")}>任务</button>}
+        {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" aria-label="AutoDL 连接" title="AutoDL 连接" onClick={()=>{setAutoDlProfile(undefined);setAutoDlOpen(true);}}><Server size={16}/><span>AutoDL 连接</span></button></div>}
+        {project&&<ProjectTasksButton key={project.project_id} projectId={project.project_id} active={page==="tasks"} onOpen={()=>goPage("tasks")}/>}
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>{if(canLeave(()=>{setWorkspaceOpen(true);setProjectMenu(false);})){setWorkspaceOpen(true);setProjectMenu(false);}}}><FolderOpen size={15}/>项目配置</button><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
       <main className="workspace-content">

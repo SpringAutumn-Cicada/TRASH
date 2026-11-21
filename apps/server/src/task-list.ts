@@ -15,6 +15,15 @@ function taskType(task:Header){
   task.input.wiki_level==='discovery'?'主题发现':task.input.wiki_level==='overview'?'项目总览':'Wiki 综合';
 }
 
+export function activeTaskCounts(store:TrashStore,projectId:string){
+ const rows=store.db.prepare(`SELECT status,COUNT(*) AS count FROM knowledge_task_summaries
+  WHERE project_id=? AND archived_duplicate=0 AND deleted_at IS NULL AND status IN ('queued','running')
+  GROUP BY status`).all(projectId) as {status:'queued'|'running';count:number}[];
+ const counts={queued:0,running:0};
+ for(const row of rows)counts[row.status]=row.count;
+ return counts;
+}
+
 export function listTasks(store:TrashStore,projectId:string,url:URL){
  const {filter,q,page,limit,focus}=z.object({
   filter:z.enum(filters).default('all'),q:z.string().trim().default(''),

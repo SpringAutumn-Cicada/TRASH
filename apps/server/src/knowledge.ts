@@ -1,6 +1,6 @@
 import {publishProjectChange} from './project-updates.js';
 import {taskEventPage,eventOptions,streamTaskEvents} from './task-events.js';
-import {listTasks} from './task-list.js';
+import {activeTaskCounts,listTasks} from './task-list.js';
 import {bibliographyState,saveBibliographyState} from './source-bibliography.js';
 import { createReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -151,6 +151,9 @@ export async function knowledgeRoute(
     }
   }
   if (parts[0] === "knowledge-tasks") {
+    if(parts.length===2&&parts[1]==="counts"&&method==="GET"){
+      send(response,200,activeTaskCounts(store,projectId));return true;
+    }
     if (!parts[1] && method === "GET") {
       send(response,200,url.searchParams.get('summary')==='true'?listTasks(store,projectId,url):{
         tasks:knowledge.tasks(projectId).filter(task=>!(task as {archived_duplicate?:boolean}).archived_duplicate&&!(task as {deleted_at?:string}).deleted_at)

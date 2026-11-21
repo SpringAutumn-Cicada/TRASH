@@ -49,3 +49,16 @@
 .library-layout-folders code,.library-layout-links code{overflow-wrap:anywhere}
 .library-layout-folders small{color:var(--muted)}
 .library-layout-links{padding-inline-start:20px}
+
+.workspace-tasks-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;white-space:nowrap;font-size:12px}
+.workspace-tasks-button[aria-current="page"]{border-color:var(--accent);color:var(--accent);background:var(--green-soft)}
+.workspace-task-breakdown{font-size:11px;color:var(--muted)}
+.workspace-task-count{display:none;place-items:center;min-width:18px;padding:0 4px;border-radius:8px;background:var(--accent);color:var(--surface);font-size:10px;font-weight:700;line-height:18px}
+@media(max-width:640px){
+ .workspace-header{gap:7px}
+ .workspace-autodl-control{gap:5px}
+ .workspace-tasks-button,.workspace-autodl-connect{gap:4px;padding:7px}
+ .workspace-task-count{display:inline-grid}
+ .workspace-task-breakdown,.workspace-tasks-label,.workspace-autodl-connect>span,.workspace-autodl-status>span{display:none}
+ .workspace-title{min-width:0}
+}

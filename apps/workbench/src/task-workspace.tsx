@@ -6,6 +6,7 @@ import {ErrorNotice} from './error-notice.js';
 import {ModalLayer} from './modal-layer.js';
 import {LiteratureDocumentDialog} from './literature-document-dialog.js';
 import {useTaskFeed,type TaskItem,type TaskEvent} from './task-feed.js';
+import {subscribeTaskChanges} from './task-changes.js';
 import './task-workspace.css';
 const active=(status:string)=>['queued','running'].includes(status);
 const statuses:Record<string,string>={queued:'排队中',running:'运行中',completed:'已完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'};
@@ -63,14 +64,9 @@ export function TaskWorkspace({projectId,focusId}:{projectId:string;focusId?:str
   void refresh();
   return()=>listRequest.current?.abort();
  },[base,filter,query,page,selected]);
- useEffect(()=>{
-  const stream=new EventSource(`/api/v1${base}/changes`);
-  const refreshList=()=>void refreshCurrent.current();
-  stream.addEventListener('ready',refreshList);
-  stream.addEventListener('change',refreshList);
-  stream.onerror=()=>setListConnected(false);
-  return()=>stream.close();
- },[base]);
+ useEffect(()=>subscribeTaskChanges(projectId,{
+  update:()=>void refreshCurrent.current(),disconnect:()=>setListConnected(false)
+ }),[projectId]);
  useEffect(()=>{if(focusId){setSelected(focusId);setMobileDetail(true);}},[focusId]);
  useEffect(()=>{if(!selected&&list?.filter===filter&&list.tasks.length)setSelected(list.tasks[0].task_id);},[selected,list,filter]);
  useEffect(()=>{setTab('logs');setFollowing(true);setNewLogs(0);setCopied(false);setRaw(false);lastSeq.current=0;setDocuments([]);setResultError('');},[selected]);

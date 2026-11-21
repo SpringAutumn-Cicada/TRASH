@@ -88,7 +88,10 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
   useEffect(()=>{if(reproductionOnly)setReproductionVisited(true);},[reproductionOnly]);
   useEffect(()=>{
     if(!runFocus)return;
-    setRunId(runFocus);setKind("all");setRunDetail("logs");setLogs("");setLogOffset(0);setDetails("");
+    setRunId(runFocus);
+    const focused=runs.find(item=>item.run_id===runFocus);
+    if(focused&&kind!=="all"&&(kind==="reproduction")!==Boolean(focused.plan.reproduction))setKind("all");
+    setRunDetail("logs");setLogs("");setLogOffset(0);setDetails("");
   },[runFocus]);
   useEffect(()=>{if(!showPlans){setPlanJson("");setEditingPlan(undefined);}},[showPlans]);
   const matchesKind=(plan:ExperimentPlanVersion)=>kind==="all"||(kind==="reproduction")===Boolean(plan.reproduction);
@@ -143,7 +146,16 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
     {instanceDialog&&<AutoDlInstanceDialog projectId={projectId} mode={instanceDialog} profiles={profiles} initialId={profileId} onDelete={profile=>{setInstanceDialog(undefined);setDeleteInstance(profile);}} onClose={()=>setInstanceDialog(undefined)} onSaved={profile=>{setInstanceDialog(undefined);setProfileId(profile.profile_id);void run(async()=>{await load();setNotice("实例已保存。连接信息变化后，请重新核对主机指纹。");});}}/>}
     {directoryPicker&&<DirectoryPicker base={base} initialPath={repoPath} onClose={()=>setDirectoryPicker(false)} onSelect={path=>{setRepoPath(path);setDirectoryPicker(false);}}/>}
     <div className="section-heading"><h2>实验</h2><button className="icon-button" disabled={busy} title="刷新实验配置" aria-label="刷新实验配置" onClick={()=>void run(load)}><RefreshCw size={16}/></button></div>
-    <nav className="experiment-tabs" aria-label="实验子页">{experimentTabs.map(item=>
+    <nav className="experiment-tabs" aria-label="实验子页" onKeyDown={event=>{
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+      const buttons=Array.from(event.currentTarget.querySelectorAll("button"));
+      const index=buttons.findIndex(button=>button===event.target);
+      if(index<0)return;
+      event.preventDefault();
+      const target=event.key==="Home"?0:event.key==="End"?buttons.length-1:
+        (index+(event.key==="ArrowRight"?1:buttons.length-1))%buttons.length;
+      buttons[target]?.focus();
+    }}>{experimentTabs.map(item=>
       <button type="button" key={item.id} className={section===item.id?"active":""} aria-current={section===item.id?"page":undefined}
         onClick={()=>{if(section!==item.id)onNavigate("experiments",{tab:item.id});}}>{item.label}</button>
     )}</nav>
