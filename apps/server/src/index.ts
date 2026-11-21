@@ -196,6 +196,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const topicStopAfter=z.enum(['materials','discovery','synthesis']).optional();
     const candidatesRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/candidates$/);
     if(candidatesRoute&&method==='GET'){sendJson(response,200,{project,candidates:exploration.candidates(projectId,candidatesRoute[1])});return;}
+    if(subpath==='research-exploration/exploration-documents'&&method==='POST'){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      sendJson(response,200,exploration.refreshExplorationDocuments(projectId));return;
+    }
     if(subpath==='research-exploration/direction-materials'&&method==='GET'){
       const selection=z.object({topic_ids:z.array(z.string().min(1)).max(1000),source_ids:z.array(z.string().min(1)).max(100)}).parse({
         topic_ids:url.searchParams.getAll('topic_id'),source_ids:url.searchParams.getAll('source_id'),
@@ -363,6 +367,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge/log'&&method==='GET'){const page=z.coerce.number().int().positive().default(1).parse(url.searchParams.get('page')??undefined);sendJson(response,200,markdown.operations(projectId,page));return;}
       if(subpath==='markdown-knowledge/document'&&method==='GET'){
         const document=markdown.read(projectId,url.searchParams.get('id')??'');
+        if(document.page_role==='exploration-topic'){
+          const candidate=exploration.explorationOrigin(projectId,document);
+          sendJson(response,200,{document:{...document,exploration_candidate:candidate}});return;
+        }
         if(document.level==='summary'){
           const title=legacyMaterialTitle(document.title,document.modified,exploration.summaryTitles(projectId).get(document.id));
           sendJson(response,200,{document:{...document,title}});return;

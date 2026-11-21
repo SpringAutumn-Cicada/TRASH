@@ -20,11 +20,12 @@ export function resolveBasePath(root:string,path:string){
  const candidates=[knowledgePath(path),...['summary','hypothesis','discovery'].map(level=>knowledgePath(path,level))];
  return candidates.find(candidate=>candidate!==path&&existsSync(safeKnowledgeFile(root,candidate)))??path;
 }
-export function rewriteKnowledgeText(text:string,from:string,to:string,paths:Record<string,string>){
+export function rewriteKnowledgeText(text:string,from:string,to:string,paths:Record<string,string>,preserveSourceAnchors=false){
  let fence='';
  return text.split('\n').map(line=>{
   const marker=line.match(/^\s*([`~]{3,})/);if(marker){if(!fence)fence=marker[1][0];else if(fence===marker[1][0])fence='';return line;}if(fence)return line;
   return line.replace(/(!?\[[^\]\n]+\]\()([^\s)]+)([^)]*\))/g,(all,prefix:string,href:string,suffix:string)=>{
+   if(preserveSourceAnchors&&href.startsWith('#'))return prefix+posix.relative(posix.dirname(to),from)+href+suffix;
    if(href.startsWith('/api/')||/^(?:[a-z]+:|\/\/|#)/i.test(href))return all;
    const [raw,fragment='']=href.split(/(?=[?#])/s);let target:string;try{target=decodeURIComponent(raw);}catch{return all;}
    const old=posix.normalize(target.startsWith('/')?target.slice(1):posix.join(posix.dirname(from),target));

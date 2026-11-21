@@ -74,7 +74,14 @@ export class MarkdownKnowledge {
     if(kind==='literature-card'||(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1]?.split('/').slice(1).join('/')??'')))fail('LEGACY_CARD_REMOVED',410,'仅接受新版 wiki-page 元数据及允许的知识页路径');
     if(meta.kind!==kind)fail('KNOWLEDGE_FILE_INVALID',422,'kind 必须为 wiki-page');
     if(!meta.id||meta.id.length>180||knowledgeDocumentId(path)!==meta.id)fail('KNOWLEDGE_FILE_INVALID',422,`id 与路径不匹配：实际 ${meta.id??'缺失'}，期望 ${knowledgeDocumentId(path)}`);
-    if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
+    if(path.startsWith('knowledge_base/explorations/')){
+    const index=path.endsWith('/index.md');
+    if(meta.level!=='exploration'||meta.page_role!==(index?'exploration-index':'exploration-topic')||meta.source_id||
+      (!index&&(!/^exploration_[a-f0-9-]+$/.test(meta.exploration_run_id??'')||
+        path!==`knowledge_base/explorations/wiki-exploration-${meta.exploration_candidate_id}.md`)))
+      fail('INVALID_EXPLORATION_METADATA',422,'探索文档的路径与来源标识不一致');
+  }
+  if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
     if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422,`论文元数据要求 level: single、source_id 与路径一致；实际 level=${meta.level??'缺失'}、source_id=${meta.source_id??'缺失'}`);
     if(meta.topic_id&&(!/^wiki-[A-Za-z0-9_-]+$/.test(meta.topic_id)||!topicPaths(meta.topic_id).includes(path)||meta.level!=='topic'||meta.source_id||meta.page_role!==(meta.id===meta.topic_id?'topic-synthesis':'topic-page')))fail('INVALID_TOPIC_METADATA',422,'主题身份、页面角色或路径不一致');
     if(meta.source_id&&this.store.getSource(meta.source_id)?.project_id!==project)fail('SOURCE_NOT_FOUND',404);
@@ -103,8 +110,8 @@ export class MarkdownKnowledge {
     let old:Record<string,Entry>={};try{old=JSON.parse(readFileSync(this.internal(project,'.trash/knowledge-index-v2.json'),'utf8')).entries??{};}catch{/* Rebuildable index. */}
     const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
     const migrated=migrationManifest(this.root(project));
-    const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
-    for(const path of scan.filter(path=>!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-topic-group-11:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki','knowledge_base/explorations'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
+    for(const path of scan.filter(path=>(!path.startsWith('knowledge_base/')||knowledgeBasePath.test(path))&&!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-topic-group-11:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
       if(!force&&old[path]?.signature===signature)entries[path]=old[path];
       else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
       if(entries[path].error)errors.push({path,error:entries[path].error!});
@@ -355,7 +362,12 @@ export class MarkdownKnowledge {
     this.recover(project);
     if(!files.length||files.length>128||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const manifest=migrationManifest(this.root(project));const nextPath=manifest?.paths[original.path]??knowledgePath(original.path,text.match(/^level:\s*(\S+)/m)?.[1]);const file={...original,path:manifest?nextPath:original.path,text:manifest&&nextPath!==original.path?rewriteKnowledgeText(text,original.path,nextPath,manifest.paths):text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
-    for(const target of targets)if(target.before){const priorTopic=target.before.match(/^topic_id:\s*(wiki-[A-Za-z0-9_-]+)\s*$/m)?.[1];if(priorTopic&&priorTopic!==target.doc.topic_id)fail('TOPIC_ID_IMMUTABLE',422,'已有主题页不可更改或移除 topic_id');}
+    for(const target of targets)if(target.before){
+      if(target.doc.page_role==='exploration-topic'){
+        const origin=/^exploration_run_id:[ \t]*(exploration_[a-f0-9-]+)[ \t]*$/m;
+        if(target.before.match(origin)?.[1]!==target.text.match(origin)?.[1])fail('RESEARCH_ORIGIN_IMMUTABLE',422);
+      }
+      const priorTopic=target.before.match(/^topic_id:\s*(wiki-[A-Za-z0-9_-]+)\s*$/m)?.[1];if(priorTopic&&priorTopic!==target.doc.topic_id)fail('TOPIC_ID_IMMUTABLE',422,'已有主题页不可更改或移除 topic_id');}
     for(const target of targets.filter(t=>t.doc.card_type==='basic' || t.doc.path.endsWith('/idcard.md') || t.doc.path.includes('/idcard-')))if(target.doc.path.endsWith('/idcard.md')===false)parseBasicCard(target.text);
     if(targets.length>1&&!targets.some(t=>t.doc.path.includes('/idcard'))&&!targets.every(t=>t.doc.kind==='wiki-page')&&!targets.some(t=>t.doc.source_id&&['index.md','whoami.md'].some(name=>t.doc.path===`knowledge_base/papers/${t.doc.source_id}/${name}`))){
       const cards=targets.filter(t=>t.doc.kind==='literature-card'),wiki=targets.filter(t=>t.doc.kind==='wiki-page');
@@ -446,7 +458,7 @@ export class MarkdownKnowledge {
       return {hash:n.slice(0,-3),text:readFileSync(file,'utf8'),at:lstatSync(file).mtime.toISOString()};
     }):[];
   }
-  recycleDocument(project:string,id:string,expected:string){const doc=this.read(project,id);if(doc.hash!==expected)fail('VERSION_CONFLICT');if(doc.level==='overview'||doc.source_id||doc.path.endsWith('/index.md'))fail('KNOWLEDGE_DOCUMENT_DELETE_BLOCKED',409);const target=this.locate(project,doc.path);rejectSymlink(target);const backup=this.internal(project,`.trash/knowledge-recycle/${id}/${doc.hash}.md`);mkdirSync(dirname(backup),{recursive:true});renameSync(target,backup);for(const file of [this.internal(project,`.trash/markdown-dependencies/${id}.json`),this.internal(project,`.trash/knowledge-sources/${id}.json`)])if(existsSync(file))unlinkSync(file);this.invalidate(project);this.recordOperation(project,'回收知识条目',[{id,path:doc.path,hash:doc.hash}],'条目从知识库目录移入回收站，可通过维护记录追溯。');return {deleted:true,id,path:doc.path};}
+  recycleDocument(project:string,id:string,expected:string){const doc=this.read(project,id);if(doc.hash!==expected)fail('VERSION_CONFLICT');if(doc.level==='overview'||doc.source_id||doc.path.endsWith('/index.md')||doc.page_role==='exploration-topic')fail('KNOWLEDGE_DOCUMENT_DELETE_BLOCKED',409);const target=this.locate(project,doc.path);rejectSymlink(target);const backup=this.internal(project,`.trash/knowledge-recycle/${id}/${doc.hash}.md`);mkdirSync(dirname(backup),{recursive:true});renameSync(target,backup);for(const file of [this.internal(project,`.trash/markdown-dependencies/${id}.json`),this.internal(project,`.trash/knowledge-sources/${id}.json`)])if(existsSync(file))unlinkSync(file);this.invalidate(project);this.recordOperation(project,'回收知识条目',[{id,path:doc.path,hash:doc.hash}],'条目从知识库目录移入回收站，可通过维护记录追溯。');return {deleted:true,id,path:doc.path};}
 }
 
 /** Adapter for workflow counters and dependency selection; Markdown remains the source. */
