@@ -319,8 +319,13 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
+      codeAgent.authorizeTool(projectId, token);
+      const body = await readJson(request);
+      if (body && typeof body === "object" && "operation" in body && body.operation === "load-chat-skill") {
+        sendJson(response, 200, codeAgent.loadChatSkill(projectId, token, body)); return;
+      }
       const permission = codeAgent.authorizeTool(projectId, token);
-      const result = await projectChatTool(store, projectId, await readJson(request), permission.writable);
+      const result = await projectChatTool(store, projectId, body, permission.writable);
       codeAgent.recordTool(projectId, token, result); sendJson(response, 200, result); return;
     }
     if(subpath==='chat/attachments'&&method==='POST'){
