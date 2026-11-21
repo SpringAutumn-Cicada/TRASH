@@ -14,6 +14,7 @@ type Turn={attachments?:ChatAttachment[];skill_id?:string;output?:ChatOutput[];t
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>};
 type ChatSkill={id:string;title:string};
+type SkillsStatus='loading'|'ready'|'failed';
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
 const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
 const states:Record<string,string>={running:'正在处理',cancelling:'正在停止',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
@@ -21,6 +22,59 @@ const errors:Record<string,string>={CHAT_SESSION_ACTIVE:'请先完成或处理�
 const suggestions=[{title:'梳理研究方向',text:'请根据当前项目的研究问题和已有文献，梳理研究方向、已有证据以及需要补充的材料。'},{title:'比较文献方法',text:'请比较当前项目已有文献的方法、实验条件与局限，标明来源和不确定之处。'},{title:'整理研究 Wiki',text:'请基于现有文献卡片整理研究 Wiki，保留来源与版本引用，生成待审内容。'},{title:'讨论论文结构',text:'请结合当前研究问题和已有证据，和我讨论论文结构，区分已有结论与待验证假设。'}];
 const time=(value:string)=>new Date(value).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
 const date=(value:string)=>new Date(value).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
+
+function ChatSkillPicker({skills,status,value,disabled,onChange}:{
+  skills:ChatSkill[];status:SkillsStatus;value:string;disabled:boolean;onChange:(value:string)=>void;
+}){
+  const id=useId();
+  const trigger=useRef<HTMLButtonElement>(null);
+  const panel=useRef<HTMLDivElement>(null);
+  const position=useCallback(()=>{
+    const menu=panel.current,button=trigger.current;
+    if(!menu||!button)return;
+    const rect=button.getBoundingClientRect();
+    const gap=8, edge=12, width=Math.min(216,window.innerWidth-edge*2);
+    const above=rect.top-gap-edge,below=window.innerHeight-rect.bottom-gap-edge;
+    const openAbove=above>=320||above>=below;
+    menu.style.width=`${width}px`;
+    menu.style.left=`${Math.max(edge,Math.min(rect.left,window.innerWidth-width-edge))}px`;
+    menu.style.top=openAbove?'auto':`${rect.bottom+gap}px`;
+    menu.style.bottom=openAbove?`${window.innerHeight-rect.top+gap}px`:'auto';
+    menu.style.maxHeight=`${Math.max(0,openAbove?above:below)}px`;
+  },[]);
+  useEffect(()=>{
+    const reposition=()=>{if(panel.current?.matches(':popover-open'))position();};
+    window.addEventListener('resize',reposition);
+    window.addEventListener('scroll',reposition,true);
+    return()=>{
+      window.removeEventListener('resize',reposition);
+      window.removeEventListener('scroll',reposition,true);
+    };
+  },[position]);
+  const selected=skills.find(skill=>skill.id===value);
+  const label=selected?`选择 Skill，当前为${selected.title}`:'选择 Skill';
+  return <>
+    <button ref={trigger} type="button" className={`chat-attachment-icon chat-skill-trigger${selected?' selected':''}`}
+      aria-label={label} title={label} disabled={disabled} popoverTarget={id} onClick={position}>
+      <Puzzle size={16} aria-hidden="true"/>
+    </button>
+    <div ref={panel} id={id} popover="auto" className="chat-skill-popover" role="group" aria-label="TRASH Skill">
+      <strong className="chat-skill-heading">TRASH Skill</strong>
+      {status==='ready'?
+        [{id:'',title:'自动选择'},...skills].map(skill=>
+          <button type="button" key={skill.id} disabled={disabled} aria-pressed={value===skill.id} onClick={()=>{
+            onChange(skill.id);
+            panel.current?.hidePopover();
+            trigger.current?.focus();
+          }}>
+            <span>{skill.title}</span>
+            {value===skill.id&&<Check size={15} aria-hidden="true"/>}
+          </button>
+        ):<p role="status">{status==='loading'?'正在读取 Skill…':'暂时无法读取 Skill，请重新打开对话页面。'}</p>}
+    </div>
+  </>;
+}
+
 export function ProjectChat({projectId}:{projectId:string}){
   const {height:chatHeight,change:changeChatHeight}=useChatHeight(projectId);
   const transcriptRef=useRef<HTMLDivElement>(null);
@@ -28,7 +82,7 @@ export function ProjectChat({projectId}:{projectId:string}){
   const [turns,setTurns]=useState<Turn[]>([]),[conversation,setConversation]=useState(''),[draft,setDraft]=useState('');
   const [titles,setTitles]=useState<Record<string,string>>({});
   const [skills,setSkills]=useState<ChatSkill[]>([]),[skillDrafts,setSkillDrafts]=useState<Record<string,string>>({});
-  const [skillsStatus,setSkillsStatus]=useState<'loading'|'ready'|'failed'>('loading');
+  const [skillsStatus,setSkillsStatus]=useState<SkillsStatus>('loading');
   const selectedSkill=skillDrafts[conversation]??'';
   const [config,setConfig]=useState<ModelConfig>(),[configLoading,setConfigLoading]=useState(false),[configError,setConfigError]=useState('');
   const [sessionAction,setSessionAction]=useState<{id:string;type:'rename'|'delete';title:string}>();
@@ -220,13 +274,8 @@ export function ProjectChat({projectId}:{projectId:string}){
         {error&&<div className="chat-notice"><ErrorNotice>{error}</ErrorNotice><button type="button" className="icon-button" aria-label="关闭对话错误提示" onClick={()=>setError('')}><X size={13}/></button></div>}
         {active&&active.conversation_id!==conversation&&<div className="chat-other-active">另一个对话正在处理消息。<button type="button" className="text-button" onClick={()=>choose(sessions.find(item=>item.id===active.conversation_id))}>前往该对话</button></div>}
         <form className="chat-composer" onSubmit={event=>void send(event)}><div className={`chat-input-shell ${attachments.dragging?'chat-drop-active':''}`} onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=busy||attachments.uploading?'none':'copy';attachments.setDragging(!busy&&!attachments.uploading);}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))attachments.setDragging(false);}} onDrop={event=>{if(busy||attachments.uploading){event.preventDefault();attachments.setDragging(false);return;}attachments.drop(event);}} onPaste={event=>{if(!busy)attachments.paste(event);}}><ChatAttachmentList base={base} entries={attachments.entries} uploading={attachments.uploading} onRemove={attachments.remove}/>{attachments.dragging&&<div className="chat-drop-label">松开即可上传图片或文件</div>}<textarea ref={input} aria-label="发送给项目 Agent 的消息" value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><ChatAttachmentButtons disabled={busy||attachments.uploading} onUpload={files=>void attachments.upload(files)}/>
-          <label className={`chat-skill-picker ${selectedSkill?'selected':''}`} title={skillsStatus==='failed'?'无法读取 TRASH Skill，请重新打开对话页面。':skills.find(skill=>skill.id===selectedSkill)?.title??'选择 TRASH Skill'}>
-            <Puzzle size={15} aria-hidden="true"/>
-            <select aria-label="选择 TRASH Skill" value={selectedSkill} disabled={busy||skillsStatus!=='ready'} onChange={event=>{const value=event.target.value;setSkillDrafts(previous=>({...previous,[conversation]:value}));}}>
-              <option value="">{skillsStatus==='failed'?'Skill 未加载':skillsStatus==='loading'?'读取 Skill…':selectedSkill?'自动选择':'Skill'}</option>
-              {skills.map(skill=><option key={skill.id} value={skill.id}>{skill.title}</option>)}
-            </select>
-          </label>
+          <ChatSkillPicker key={conversation} skills={skills} status={skillsStatus} value={selectedSkill} disabled={busy}
+            onChange={value=>setSkillDrafts(previous=>({...previous,[conversation]:value}))}/>
           <span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label="停止" title="停止当前对话" disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||attachments.uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.conversation_id!==conversation||active.status==='cancelling'||!active.session_id))}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?'追加指令':'发送'}</span></button></div></div></div>
           <div className="chat-composer-footer"><span>围绕当前论文项目交流 · 按所选权限执行</span><small>Ctrl / ⌘ + Enter 发送</small></div>
         </form>
