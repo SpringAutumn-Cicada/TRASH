@@ -1,11 +1,12 @@
 import { visibleEntry } from "./project-layout.js";
-import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync } from 'node:fs';
+import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync, rmdirSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { KnowledgeStore, type TrashStore, parseKnowledgeMarkdown } from '@trash/storage';
+import { manuscriptDocument, manuscriptDraftPath, manuscriptId, manuscriptManifest, manuscriptSection, manuscriptStatus, manuscriptTitle } from './manuscript-layout.js';
 
 const textLimit=2*1024*1024,uploadLimit=50*1024*1024;
 const hash=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
@@ -15,6 +16,7 @@ const inside=(root:string,path:string)=>path===root||path.startsWith(root+sep);
 const textExtensions=new Set(['.md','.markdown','.txt','.json','.jsonl','.yaml','.yml','.csv','.tsv','.log','.py','.ts','.tsx','.js','.jsx','.mjs','.cjs','.html','.css','.scss','.sh','.bash','.toml','.ini','.cfg','.xml','.bib','.ris','.tex','.rst','.sql','.r','.c','.cpp','.h','.gitignore','.svg']);
 const mimeTypes:Record<string,string>={'.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp'};
 const internal=new Set(['.trash','.git','project.yaml','raw','files','tasks','code-agent','literature-analysis','agent-workspace','environment-analysis','environment-deployments','dataset-hashes','dataset-upload-sessions','directory-repairs','experiment-bindings','experiment-runs','remote-workspaces','reproductions','reproduction-queues']);
+const draftExtension=/\.(docx?|odt|rtf|tex|md|markdown)$/i;
 type FileEntry={name:string;path:string;kind:'directory'|'file'|'symlink';size:number;modified:string;protected:boolean};
 type Recycled={id:string;path:string;deletedAt:string;fingerprint:string;kind:'file'|'directory'};
 export class ProjectFiles {
@@ -32,7 +34,8 @@ export class ProjectFiles {
     return path;
   }
   private isProtected(path:string){
-    const parts=path.split('/');
+    const parts=path.split('/').filter(Boolean);
+    if(parts[0]==='manuscript'&&(parts.length===1||parts.length===3&&parts[2]==='paper.yaml'))return true;
     return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
@@ -65,6 +68,95 @@ export class ProjectFiles {
     if(names.length>5000)fail('FILES_DIRECTORY_TOO_LARGE',422);
     const entries=names.map(name=>this.entry(id,path,name)).sort((a,b)=>Number(b.kind==='directory')-Number(a.kind==='directory')||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
     return {root:this.root(id),path,entries};
+  }
+  private manuscript(id:string,paperId:string){
+    const path='manuscript/'+manuscriptId.parse(paperId);
+    const marker=this.locate(id,path+'/paper.yaml',true);
+    if(!existsSync(marker))fail('MANUSCRIPT_NOT_FOUND',404);
+    try {
+      const bytes=this.bytes(marker,16384);
+      return {id:paperId,path,marker,etag:hash(bytes),...manuscriptManifest.parse(JSON.parse(bytes.toString('utf8')))};
+    } catch {
+      fail('MANUSCRIPT_METADATA_INVALID',422);
+    }
+  }
+  manuscripts(id:string){
+    const directory=this.locate(id,'manuscript',true);
+    if(!existsSync(directory))return {papers:[],unfiled:0};
+    const entries=this.list(id,'manuscript',false).entries;
+    const papers=entries.flatMap(entry=>{
+      if(entry.kind!=='directory'||!manuscriptId.safeParse(entry.name).success)return [];
+      try {
+        const {marker,etag,format_version,...paper}=this.manuscript(id,entry.name);
+        return [paper];
+      } catch { return []; }
+    });
+    return {papers,unfiled:entries.length-papers.length};
+  }
+  manuscriptDetails(id:string,paperId:string){
+    const {marker,format_version,...paper}=this.manuscript(id,paperId);
+    const sections=manuscriptSection.options.map(key=>{
+      const path=paper.path+'/'+key;
+      const entry=this.entryIfPresent(id,paper.path,key);
+      return {key,path,exists:entry?.kind==='directory',blocked:Boolean(entry&&entry.kind!=='directory')};
+    });
+    const drafts:FileEntry[]=[];
+    const queue=sections.find(section=>section.key==='drafts')?.exists?[paper.path+'/drafts']:[];
+    for(let index=0;index<queue.length&&index<200;index++){
+      for(const entry of this.list(id,queue[index],false).entries){
+        if(entry.kind==='directory')queue.push(entry.path);
+        if(entry.kind==='file'&&draftExtension.test(entry.name))drafts.push(entry);
+      }
+    }
+    drafts.sort((a,b)=>b.modified.localeCompare(a.modified)||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
+    return {...paper,sections,drafts,currentAvailable:Boolean(paper.current&&drafts.some(entry=>entry.path===paper.path+'/'+paper.current))};
+  }
+  private entryIfPresent(id:string,parent:string,name:string){
+    try { return this.entry(id,parent,name); }
+    catch(error){ if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error; }
+  }
+  createManuscript(id:string,value:unknown){
+    const input=z.object({id:manuscriptId,title:manuscriptTitle}).strict().parse(value);
+    const path='manuscript/'+input.id;
+    const target=this.writable(id,path);
+    mkdirSync(dirname(target),{recursive:true});
+    mkdirSync(target);
+    const drafts=join(target,'drafts');
+    const marker=join(target,'paper.yaml');
+    let draftCreated=false;
+    try {
+      mkdirSync(drafts);draftCreated=true;
+      writeFileSync(marker,manuscriptDocument({format_version:1,title:input.title,status:'draft',current:null}),{flag:'wx',mode:0o600});
+    } catch(error) {
+      try { if(draftCreated)rmdirSync(drafts);rmdirSync(target); } catch { /* Preserve anything added concurrently. */ }
+      throw error;
+    }
+    return this.manuscriptDetails(id,input.id);
+  }
+  updateManuscript(id:string,value:unknown){
+    const input=z.object({id:manuscriptId,current:manuscriptDraftPath.nullable(),status:manuscriptStatus,etag:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(value);
+    const paper=this.manuscript(id,input.id);
+    this.writable(id,paper.path);
+    if(paper.etag!==input.etag)fail('FILES_CHANGED');
+    if(input.current){
+      const draft=this.locate(id,paper.path+'/'+input.current,true);
+      if(!existsSync(draft)||!lstatSync(draft).isFile()||!draftExtension.test(draft))fail('MANUSCRIPT_DRAFT_INVALID',422);
+    }
+    const temp=paper.marker+'.'+randomUUID()+'.tmp';
+    try {
+      writeFileSync(temp,manuscriptDocument({format_version:1,title:paper.title,status:input.status,current:input.current}),{flag:'wx',mode:0o600});
+      renameSync(temp,paper.marker);
+    } finally { if(existsSync(temp))unlinkSync(temp); }
+    return this.manuscriptDetails(id,input.id);
+  }
+  createManuscriptSection(id:string,value:unknown){
+    const input=z.object({id:manuscriptId,section:manuscriptSection}).strict().parse(value);
+    const {path}=this.manuscript(id,input.id);
+    const relative=path+'/'+input.section;
+    const target=this.writable(id,relative);
+    if(!existsSync(target))mkdirSync(target);
+    if(!lstatSync(target).isDirectory())fail('FILES_NOT_DIRECTORY',422);
+    return {path:relative};
   }
   search(id:string,query:string,hidden:boolean){
     if(!query.trim()||query.length>200)fail('INVALID_REQUEST',400);

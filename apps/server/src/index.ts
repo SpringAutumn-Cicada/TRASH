@@ -264,6 +264,28 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
       sendJson(response,201,createResearchFolder(store,projectId,await readJson(request)));return;
     }
+    if(subpath==='workspace/manuscripts'||subpath.startsWith('workspace/manuscripts/')){
+      try{
+        if(subpath==='workspace/manuscripts'&&method==='GET'){
+          sendJson(response,200,files.manuscripts(projectId));return;
+        }
+        if(subpath==='workspace/manuscripts/detail'&&method==='GET'){
+          sendJson(response,200,files.manuscriptDetails(projectId,url.searchParams.get('id')??''));return;
+        }
+        if(method==='POST'){
+          const actions={
+            'workspace/manuscripts':files.createManuscript.bind(files),
+            'workspace/manuscripts/update':files.updateManuscript.bind(files),
+            'workspace/manuscripts/section':files.createManuscriptSection.bind(files)
+          };
+          if(Object.hasOwn(actions,subpath)){
+            const input=await readJson(request);
+            sendJson(response,subpath.endsWith('/update')?200:201,actions[subpath as keyof typeof actions](projectId,input));return;
+          }
+        }
+      }catch(error){workspaceError(error);}
+      sendJson(response,404,{error:'NOT_FOUND'});return;
+    }
     if(subpath==="files"||subpath.startsWith("files/")){
       const path=url.searchParams.get("path")??"",hidden=url.searchParams.get("hidden")==="true";
       try{
