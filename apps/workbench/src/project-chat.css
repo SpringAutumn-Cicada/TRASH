@@ -12,13 +12,6 @@
 .chat-history-search{display:flex;align-items:center;gap:7px;margin:0 3px 13px;padding:0 9px;background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--muted)}
 .chat-history-search input{width:100%;min-width:0;background:none;border:0;padding:9px 0;color:var(--ink);font:inherit;font-size:11px;outline:none}
 .chat-session-list{flex:1;overflow:auto;min-height:0}
-.chat-session-card{display:block;width:100%;padding:13px 10px;margin:0 0 5px;border:1px solid transparent;border-radius:9px;background:none;text-align:left;cursor:pointer;color:var(--ink)}
-.chat-session-card:hover{background:color-mix(in srgb,var(--surface) 70%,transparent)}
-.chat-session-card.selected{background:var(--surface);border-color:var(--line);box-shadow:0 2px 6px #00000004}
-.chat-session-title{display:flex;gap:8px;align-items:flex-start}
-.chat-session-title>svg{flex:none;margin-top:2px;color:var(--muted)}
-.chat-session-title strong{font-size:12px;font-weight:500;line-height:1.7;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.chat-session-meta{display:flex;align-items:center;gap:8px;padding-left:22px;font-size:10px;color:var(--muted);margin-top:8px}
 .chat-session-list>p{font-size:12px;color:var(--muted);padding:12px;line-height:1.8}
 .chat-history-note{padding:12px 5px 0;border-top:1px solid var(--line);font-size:10px;line-height:1.8;color:var(--muted)}
 .chat-main{min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
@@ -174,10 +167,6 @@
 .chat-history-heading{font-size:13px;padding:0 8px 15px}
 .chat-history-search{margin-bottom:15px;border-color:var(--chat-line);border-radius:11px;background:var(--chat-canvas)}
 .chat-history-search input{font-size:12px;padding:11px 0}
-.chat-session-card{border-radius:12px;padding:14px 11px;margin-bottom:7px}
-.chat-session-card.selected{background:var(--chat-canvas);border-color:var(--chat-line);box-shadow:none}
-.chat-session-title strong{font-size:13px;line-height:1.75}
-.chat-session-meta{font-size:11px;margin-top:9px}
 .chat-history-note{font-size:11px;padding-top:14px;border-color:var(--chat-line)}
 .chat-thread-heading{background:var(--chat-paper);border-color:var(--chat-line);padding:17px 22px;min-height:40px}
 .chat-thread-heading strong{font-size:14px;font-weight:600;line-height:1.6}
@@ -323,27 +312,110 @@
 .chat-markdown p.wiki-paper-name{font-weight:700;overflow-wrap:anywhere}
 
 .chat-session-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px;
+  --session-action-size: 26px;
+  --session-action-gap: 2px;
+  --session-padding: 10px;
+  position: relative;
+  width: 100%;
+  min-width: 0;
   box-sizing: border-box;
-  align-items: start;
+  margin-bottom: 5px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+}
+.chat-session-card:not(.selected):hover {
+  background: color-mix(in srgb, var(--chat-canvas) 65%, var(--chat-paper));
+}
+.chat-session-card.selected {
+  background: var(--chat-canvas);
+  border-color: color-mix(in srgb, var(--green) 23%, var(--chat-line));
+  box-shadow: inset 3px 0 var(--green);
 }
 .chat-session-open {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-rows: minmax(var(--session-action-size), auto) auto;
+  column-gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
   border: 0;
+  border-radius: inherit;
   background: transparent;
-  color: inherit;
-  min-width: 0;
-  padding: 0;
+  color: var(--ink);
+  padding: var(--session-padding);
   text-align: left;
   cursor: pointer;
 }
-.chat-session-actions { display: flex; gap: 2px; }
+.chat-session-open:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+.chat-session-open:disabled { cursor: default; }
+.chat-session-icon {
+  display: grid;
+  place-items: center;
+  grid-row: 1 / span 2;
+  align-self: start;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--chat-canvas);
+  color: var(--muted);
+}
+.chat-session-card.selected .chat-session-icon {
+  background: var(--chat-paper);
+  color: var(--green);
+}
+.chat-session-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding-inline-end: calc(var(--session-action-size) * 2 + var(--session-action-gap) + 5px);
+}
+.chat-session-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+.chat-session-card.selected .chat-session-title strong { font-weight: 700; }
+.chat-session-title .chat-live-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent);
+}
+.chat-session-title .chat-live-dot.stopping {
+  background: #b45337;
+  box-shadow: 0 0 0 3px #b4533724;
+}
+.chat-session-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 7px;
+  min-width: 0;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.chat-session-meta > span { white-space: nowrap; }
+.chat-session-warning { color: #b45337; }
+.chat-session-actions {
+  position: absolute;
+  inset-block-start: var(--session-padding);
+  inset-inline-end: var(--session-padding);
+  display: flex;
+  gap: var(--session-action-gap);
+}
 .chat-session-actions button {
   display: grid;
   place-items: center;
-  width: 23px;
-  height: 25px;
+  width: var(--session-action-size);
+  height: var(--session-action-size);
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -352,9 +424,14 @@
   cursor: pointer;
 }
 .chat-session-actions button:hover:not(:disabled),
-.chat-session-actions button:focus-visible { background: var(--chat-canvas); color: var(--ink); }
+.chat-session-actions button:focus-visible { background: var(--chat-paper); color: var(--ink); }
 .chat-session-actions .chat-session-delete:hover:not(:disabled) { color: var(--danger, #b42318); }
 .chat-session-actions button:disabled { opacity: .45; cursor: default; }
+
+@media(max-width:800px) {
+  .chat-session-card { margin-bottom: 0; }
+}
+
 .chat-session-dialog.modal { width: min(420px, 100%); }
 
 @container (max-width: 540px) {

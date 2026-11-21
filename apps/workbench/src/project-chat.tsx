@@ -248,19 +248,30 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       if(alive.current)onBrowseResearch(result.path);
     })}><FolderOpen size={15}/>研究笔记</button><button type="button" className="secondary-button" disabled={busy||attachments.uploading} onClick={()=>choose()}><MessageSquarePlus size={15}/>新建对话</button></header>
     <div className={`chat-layout ${history?'':'chat-history-hidden'} ${chatHeight!==null?'chat-custom-height':''}`} style={chatHeight!==null?{'--chat-message-height':`${chatHeight}px`} as React.CSSProperties:undefined}>
-      {history&&<aside className="chat-conversations" aria-label="项目对话记录"><div className="chat-history-heading"><strong>历史对话 <small>{sessions.length}</small></strong></div><label className="chat-history-search"><Search size={14}/><input aria-label="搜索对话" placeholder="搜索对话…" value={query} onChange={event=>setQuery(event.target.value)}/></label><div className="chat-session-list">{loading?<p>正在读取对话…</p>:filtered.map(item=><div key={item.id} className={`chat-session-card ${conversation===item.id?'selected':''}`}>
-        <button type="button" className="chat-session-open" aria-current={conversation===item.id?'true':undefined} disabled={busy||attachments.uploading} onClick={()=>choose(item)}>
-          <span className="chat-session-title"><MessageSquare size={14}/><strong>{sessionTitle(item)}</strong></span>
-          <span className="chat-session-meta"><span>{date(item.latest.created_at)} · {item.count} 轮</span>
-            {['running','cancelling'].includes(item.latest.status)&&<i className="chat-live-dot"/>}
-            {['failed','interrupted'].includes(item.latest.status)&&<span>{states[item.latest.status]}</span>}
-          </span>
-        </button>
-        <div className="chat-session-actions">
-          <button type="button" aria-label={`重命名：${sessionTitle(item)}`} title="重命名" disabled={busy||attachments.uploading} onClick={()=>setSessionAction({id:item.id,type:'rename',title:sessionTitle(item)})}><Pencil size={13}/></button>
-          <button type="button" className="chat-session-delete" aria-label={`删除：${sessionTitle(item)}`} title="删除" disabled={busy||attachments.uploading||['running','cancelling','interrupted'].includes(item.latest.status)} onClick={()=>setSessionAction({id:item.id,type:'delete',title:sessionTitle(item)})}><Trash2 size={13}/></button>
-        </div>
-      </div>)}{!loading&&!filtered.length&&<p>{query?'没有匹配的对话。':'发送第一条消息，开始项目对话。'}</p>}</div><div className="chat-history-note">切换对话会暂存未发送内容；离开本页前请保存需要保留的草稿。</div></aside>}
+      {history&&<aside className="chat-conversations" aria-label="项目对话记录"><div className="chat-history-heading"><strong>历史对话 <small>{sessions.length}</small></strong></div><label className="chat-history-search"><Search size={14}/><input aria-label="搜索对话" placeholder="搜索对话…" value={query} onChange={event=>setQuery(event.target.value)}/></label><div className="chat-session-list">{loading?<p>正在读取对话…</p>:filtered.map(item=>{
+        const title = sessionTitle(item);
+        const selected = conversation === item.id;
+        const status = active?.conversation_id === item.id ? active.status : item.latest.status;
+        const inProgress = status === 'running' || status === 'cancelling';
+        return <div key={item.id} className={`chat-session-card ${selected?'selected':''}`}>
+          <button type="button" className="chat-session-open" aria-current={selected?'true':undefined} disabled={busy||attachments.uploading} onClick={()=>choose(item)}>
+            <span className="chat-session-icon"><MessageSquare size={15} aria-hidden="true"/></span>
+            <span className="chat-session-title">
+              <strong title={title}>{title}</strong>
+              {inProgress&&<span className={`chat-live-dot ${status==='cancelling'?'stopping':''}`}
+                role="img" aria-label={states[status]} title={states[status]}/>}
+            </span>
+            <span className="chat-session-meta">
+              <span>{date(item.latest.created_at)} · {item.count} 轮</span>
+              {['failed','interrupted'].includes(status)&&<span className="chat-session-warning">{states[status]}</span>}
+            </span>
+          </button>
+          <div className="chat-session-actions">
+            <button type="button" aria-label={`重命名：${title}`} title="重命名" disabled={busy||attachments.uploading} onClick={()=>setSessionAction({id:item.id,type:'rename',title})}><Pencil size={13}/></button>
+            <button type="button" className="chat-session-delete" aria-label={`删除：${title}`} title="删除" disabled={busy||attachments.uploading||inProgress||status==='interrupted'} onClick={()=>setSessionAction({id:item.id,type:'delete',title})}><Trash2 size={13}/></button>
+          </div>
+        </div>;
+      })}{!loading&&!filtered.length&&<p>{query?'没有匹配的对话。':'发送第一条消息，开始项目对话。'}</p>}</div><div className="chat-history-note">切换对话会暂存未发送内容；离开本页前请保存需要保留的草稿。</div></aside>}
       <div className="chat-main"><div className="chat-thread-controls"><header className="chat-thread-heading"><button type="button" className="icon-button" aria-label={history?'收起历史对话':'展开历史对话'} onClick={()=>setHistory(!history)}>{history?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}</button><div className="chat-thread-info"><strong>{session?sessionTitle(session):'新对话'}</strong><span><i className={`chat-connection-dot ${connected?'':'offline'}`}/>{connected?'项目会话':'连接暂时中断，正在重试'}{messages.length>0?` · ${messages.length} 轮交流`:''}</span></div><button type="button" className={`chat-options-toggle ${options?'active':''}`} aria-label="模型和权限设置"
           aria-expanded={options} aria-controls={settingsId} onClick={toggleOptions}>
           <Settings2 size={14}/>
