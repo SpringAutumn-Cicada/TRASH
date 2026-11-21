@@ -299,6 +299,9 @@
 .chat-skill-trigger:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .chat-skill-popover{position:fixed;inset:auto;box-sizing:border-box;margin:0;padding:6px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--chat-line);border-radius:13px;background:var(--chat-paper);color:var(--ink);box-shadow:0 10px 30px color-mix(in srgb,var(--ink) 16%,transparent);font-size:13px}
 .chat-skill-group{border-top:1px solid var(--chat-line);margin-top:4px;padding-top:3px}
+.chat-skill-search{position:sticky;top:-6px;display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--chat-paper);color:var(--muted)}
+.chat-skill-search>svg{flex:none}
+.chat-skill-search>input{width:100%;min-width:0;padding:5px 6px;border:1px solid var(--chat-line);border-radius:6px;background:var(--chat-canvas);color:var(--ink);font:inherit}
 .chat-skill-heading{display:block;padding:7px 9px;color:var(--muted);font-size:11px;font-weight:600}
 .chat-skill-popover button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:32px;padding:5px 9px;border:0;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .chat-skill-popover button:disabled{opacity:.5;cursor:not-allowed}

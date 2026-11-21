@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stageKnowledgeSkill } from "./markdown-knowledge.js";
 
@@ -14,13 +14,68 @@ const trashSkills = {
   "trash_analyze_code_environment": { title: "复现代码环境分析", folder: "code-environment-skill" }
 } as const;
 
-const scholarSkills = {
-  "claude-scholar-paper-self-review": { title: "论文自审", folder: "paper-self-review" },
-  "claude-scholar-citation-verification": { title: "引文核验", folder: "citation-verification" },
-  "claude-scholar-review-response": { title: "审稿回复", folder: "review-response" }
+const scholarTitles = {
+  "agent-identifier": "Agent 设计",
+  "architecture-design": "架构设计",
+  "bug-detective": "缺陷排查",
+  "citation-verification": "引文核验",
+  "code-review-excellence": "代码审查",
+  "codex-hook-emulation": "Codex 会话检查",
+  "daily-coding": "日常开发",
+  "daily-paper-generator": "每日论文简报",
+  "defuddle": "网页正文提取",
+  "doc-coauthoring": "文档协作",
+  "expression-skill": "结论先行表达",
+  "frontend-design": "前端设计",
+  "git-commit": "Git 提交",
+  "git-push": "Git 推送",
+  "git-workflow": "Git 工作流",
+  "kaggle-learner": "Kaggle 经验提炼",
+  "latex-conference-template-organizer": "LaTeX 会议模板整理",
+  "ml-paper-writing": "机器学习论文写作",
+  "nature-data": "Nature 数据可用性",
+  "nature-polishing": "Nature 论文润色",
+  "nature-response": "Nature 审稿回复",
+  "nature-writing": "Nature 论文写作",
+  "obsidian-kb-artifacts": "Obsidian 知识产物",
+  "obsidian-literature-workflow": "Obsidian 文献工作流",
+  "obsidian-project-kb-core": "Obsidian 项目知识库",
+  "obsidian-source-ingestion": "Obsidian 来源导入",
+  "paper-self-review": "论文自审",
+  "planning-with-files": "文件化任务规划",
+  "post-acceptance": "论文录用后准备",
+  "publication-chart-skill": "论文图表制作",
+  "research-ideation": "研究构思",
+  "results-analysis": "实验结果分析",
+  "results-report": "实验结果报告",
+  "review-response": "审稿回复",
+  "session-wrap-up": "会话收尾",
+  "skill-development": "技能开发",
+  "skill-improver": "技能改进",
+  "skill-quality-reviewer": "技能质量审查",
+  "ui-ux-pro-max": "UI 与 UX 设计",
+  "uv-package-manager": "uv 包管理",
+  "verification-loop": "开发验证流程",
+  "web-design-reviewer": "网页设计审查",
+  "webapp-testing": "网页应用测试",
+  "writing-anti-ai": "学术文字润色",
+  "zotero-obsidian-bridge": "Zotero 与 Obsidian 文献同步"
 } as const;
+type ScholarSlug = keyof typeof scholarTitles;
+type ScholarSkillId = `claude-scholar-${ScholarSlug}`;
+const scholarSkills = Object.fromEntries(
+  Object.entries(scholarTitles).map(([folder, title]) => [`claude-scholar-${folder}`, { folder, title }])
+) as Record<ScholarSkillId, { folder: ScholarSlug; title: string }>;
 const skills = { ...trashSkills, ...scholarSkills };
-const scholarRoot = fileURLToPath(new URL("../../../vendor/claude-scholar/skills/", import.meta.url));
+const scholarRoot = fileURLToPath(new URL("../../../vendor/claude-scholar/", import.meta.url));
+const researchContract = "skills/research-ideation/references/research-contract.md";
+const hookHelper = "scripts/codex_hook_emulation.py";
+const scholarResources: Partial<Record<ScholarSlug, string>> = {
+  "results-analysis": researchContract,
+  "zotero-obsidian-bridge": researchContract,
+  "codex-hook-emulation": hookHelper,
+  "session-wrap-up": hookHelper
+};
 
 export const chatSkillId = z.custom<keyof typeof skills>(value =>
   typeof value === "string" && Object.hasOwn(skills, value)
@@ -43,18 +98,26 @@ export function stageScholarChatSkill(directory: string, selected?: ChatSkillId)
   const staged = mkdtempSync(join(directory, ".scholar-skill-"));
   const dispose = () => rmSync(staged, { recursive: true, force: true });
   try {
-    cpSync(join(scholarRoot, folder), staged, { recursive: true });
-    return { folder: staged, dispose };
+    const skillPath = join("skills", folder);
+    const resource = scholarResources[folder];
+    mkdirSync(join(staged, "skills"));
+    cpSync(join(scholarRoot, skillPath), join(staged, skillPath), { recursive: true });
+    if (resource) {
+      const target = join(staged, resource);
+      mkdirSync(dirname(target), { recursive: true });
+      cpSync(join(scholarRoot, resource), target);
+    }
+    return { folder: join(staged, skillPath), bundle: staged, dispose };
   } catch (error) {
     dispose();
     throw error;
   }
 }
 
-export function chatSkillInstruction(id: ChatSkillId, stagedFolder?: string) {
+export function chatSkillInstruction(id: ChatSkillId, staged?: ReturnType<typeof stageScholarChatSkill>) {
   const { title, folder } = skills[id];
-  const scholarNote = stagedFolder
-    ? "Claude Scholar 技能仅在本轮生效。把其临时目录当作只读资料。使用当前项目材料和可用工具，写入成果时沿用 TRASH 的工作区规则。外部工具或原始证据不可用时，说明缺失内容，并将未确认的引文或论断标为未核实。"
+  const scholarNote = staged
+    ? `Claude Scholar 技能仅在本轮生效。按上方技能路径解析资源，将 <skill-directory> 替换为技能目录，将 <staged-bundle> 替换为 ${staged.bundle}。临时目录只存放随附资源，成果写入当前 TRASH 项目。使用当前项目材料和可用工具，禁止访问或写入用户级技能、全局设置或认证文件，勿根据技能自动安装依赖、启用钩子、执行破坏性操作、推送或对外发布。执行命令仍须符合本轮授权。外部工具或原始证据不可用时，说明缺失内容，并将未确认的引文或论断标为未核实。`
     : "";
-  return `用户为本轮指定「${title}」。使用 ${stagedFolder ?? folder}/SKILL.md 作为本轮技能入口，按需读取同目录下的引用文件。维持本轮权限与项目边界。若技能需要当前对话未提供的专用任务输入或发布入口，说明缺少的内容，勿虚构输入或声称已发布。${scholarNote}`;
+  return `用户为本轮指定「${title}」。使用 ${staged?.folder ?? folder}/SKILL.md 作为本轮技能入口，按需读取同目录下的引用文件。维持本轮权限与项目边界。若技能需要当前对话未提供的专用任务输入或发布入口，说明缺少的内容，勿虚构输入或声称已发布。${scholarNote}`;
 }

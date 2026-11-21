@@ -29,11 +29,12 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
   const id=useId();
   const trigger=useRef<HTMLButtonElement>(null);
   const panel=useRef<HTMLDivElement>(null);
+  const [query,setQuery]=useState('');
   const position=useCallback(()=>{
     const menu=panel.current,button=trigger.current;
     if(!menu||!button)return;
     const rect=button.getBoundingClientRect();
-    const gap=8, edge=12, width=Math.min(216,window.innerWidth-edge*2);
+    const gap=8, edge=12, width=Math.min(242,window.innerWidth-edge*2);
     const above=rect.top-gap-edge,below=window.innerHeight-rect.bottom-gap-edge;
     const openAbove=above>=420||above>=below;
     menu.style.width=`${width}px`;
@@ -53,13 +54,16 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
   },[position]);
   const selected=skills.find(skill=>skill.id===value);
   const label=selected?`选择 Skill，当前为${selected.title}`:'选择 Skill';
+  const search=query.trim().toLowerCase();
+  const visibleSkills=skills.filter(skill=>`${skill.title} ${skill.id}`.toLowerCase().includes(search));
   const groups=[
-    {title:'TRASH Skill',items:skills.filter(skill=>skill.group!=='claude-scholar')},
-    {title:'Claude Scholar',items:skills.filter(skill=>skill.group==='claude-scholar')}
+    {title:'TRASH Skill',items:visibleSkills.filter(skill=>skill.group!=='claude-scholar')},
+    {title:'Claude Scholar',items:visibleSkills.filter(skill=>skill.group==='claude-scholar')}
   ];
   const option=(skill:ChatSkill)=>
     <button type="button" key={skill.id} disabled={disabled} aria-pressed={value===skill.id} onClick={()=>{
       onChange(skill.id);
+      setQuery('');
       panel.current?.hidePopover();
       trigger.current?.focus();
     }}>
@@ -73,7 +77,13 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
     </button>
     <div ref={panel} id={id} popover="auto" className="chat-skill-popover" role="group" aria-label="选择 Skill">
       {status==='ready'?<>
-        {option({id:'',title:'自动选择'})}
+        <label className="chat-skill-search">
+          <Search size={14} aria-hidden="true"/>
+          <input type="search" aria-label="搜索 Skill" placeholder="搜索 Skill…" value={query}
+            onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}}/>
+        </label>
+        {!search&&option({id:'',title:'自动选择'})}
+        {search&&!visibleSkills.length&&<p role="status">没有匹配的技能</p>}
         {groups.filter(group=>group.items.length).map(group=>
           <div key={group.title} className="chat-skill-group" role="group" aria-label={group.title}>
             <strong className="chat-skill-heading">{group.title}</strong>
