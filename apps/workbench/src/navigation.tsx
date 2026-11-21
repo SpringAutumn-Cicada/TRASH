@@ -8,11 +8,11 @@ export const projectPages: { id: ProjectPage; label: string }[] = [
 ];
 export const projectSidebarPages = ["overview","literature","experiments","paper","chat","files"] as const;
 export const experimentTabs = [
-  {id:"compute",label:"AutoDL"},{id:"runs",label:"计划与运行"},{id:"code",label:"实验代码"},
+  {id:"compute",label:"AutoDL"},{id:"catalog",label:"实验列表"},{id:"runs",label:"计划与运行"},
   {id:"reproductions",label:"文献复现"},{id:"datasets",label:"数据集"},{id:"results",label:"实验结果"}
 ] as const;
-export type ExperimentTab=typeof experimentTabs[number]["id"];
-export type NavigateOptions={tab?:ExperimentTab;action?:string;focus?:string;status?:string};
+export type ExperimentTab=typeof experimentTabs[number]["id"] | "code";
+export type NavigateOptions={tab?:ExperimentTab;action?:string;focus?:string;status?:string;experiment?:string};
 export function projectSidebarPage(page:ProjectPage){
   return page==="wiki"||page==="cards"?"literature":page;
 }
@@ -46,18 +46,19 @@ export function parseProjectRoute(value: string) {
     if (!match) return undefined;
     const page=match[2]==="results"?"results":projectPages.find(p => p.id === match[2])?.id;
     if (match[2] && !page) return undefined;
-    const tab=experimentTabs.find(item=>item.id===url.searchParams.get("tab"))?.id;
+    const tabParam=url.searchParams.get("tab");
+    const tab=tabParam==="code"?"code":experimentTabs.find(item=>item.id===tabParam)?.id;
     const {page:normalized,options}=experimentLocation(page,{
       tab,action:url.searchParams.get("action")??undefined,focus:url.searchParams.get("focus")??undefined,
-      status:url.searchParams.get("status")??undefined
+      status:url.searchParams.get("status")??undefined,experiment:url.searchParams.get("experiment")??undefined
     });
-    return {projectId:decodeURIComponent(match[1]),page:normalized,tab:options.tab,action:options.action,focusId:options.focus,status:options.status};
+    return {projectId:decodeURIComponent(match[1]),page:normalized,tab:options.tab,action:options.action,focusId:options.focus,status:options.status,experiment:options.experiment};
   } catch { return undefined; }
 }
 export function projectPath(id: string, page: ProjectPage, options:NavigateOptions={}) {
   const location=experimentLocation(page,options);
   const params = new URLSearchParams();
-  for(const key of ["tab","action","focus","status"] as const){
+  for(const key of ["tab","action","focus","status","experiment"] as const){
     const value=location.options[key];
     if(value)params.set(key,value);
   }

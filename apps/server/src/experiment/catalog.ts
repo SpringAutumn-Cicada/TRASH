@@ -13,6 +13,7 @@ const relativeFile = z.string().trim().max(1024).refine(value =>
 export const experimentCodeSettings = z.object({
   repository_id: z.string().min(1).max(128).optional(),
   entrypoint: relativeFile.optional(),
+  paper_id: directoryId.optional(),
 }).strict();
 const selection = z.object({ direction_id: directoryId, scheme_id: directoryId });
 export const experimentCatalogUpdate = selection.extend({ code: experimentCodeSettings }).strict();

@@ -559,7 +559,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response, 200, { accepted: true }); return;
     }
     if (codeAgent.busy(projectId) && ((subpath.startsWith("repository") && method !== "GET") || ((subpath === "experiment-runs" || /^experiment-runs\/[^/]+\/retry$/.test(subpath)) && method === "POST"))) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
-    if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson)) return;
+    if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson,id=>{files.manuscriptPath(projectId,id);})) return;
     if (subpath === "overview" && method === "GET") {
       sendJson(response, 200, projectOverview(store, projectId));
       return;

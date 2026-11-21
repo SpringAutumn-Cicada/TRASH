@@ -67,4 +67,5 @@ export interface ExperimentCatalogEntry {
   title: string;
   repository_id?: string;
   entrypoint?: string;
+  paper_id?: string;
 }

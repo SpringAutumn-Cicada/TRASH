@@ -1,3 +1,4 @@
+import { ExperimentCatalog, experimentKeyOf } from "./experiment-catalog.js";
 import { sshConnectionErrors } from './ssh-errors.js';
 import { ExperimentCodeUpload } from "./experiment-code-upload.js";
 import { RemoteWorkspaceSettings } from "./remote-workspace.js";
@@ -6,7 +7,7 @@ import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ChartColumn, ClipboardList, Code2, Columns2, Database, Download, FlaskConical, FolderOpen, GitBranch, Pencil, Play, Plus, RefreshCw, Server } from "lucide-react";
-import type { ProjectPage, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
+import type { ProjectPage, ExperimentCatalogEntry, ReproductionCode, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { DatasetsPanel } from "./data.js";
 import { ExperimentalDataPanel } from "./experimental-data.js";
 import { experimentTabs, type ExperimentTab, type NavigateOptions, useUnsavedChanges } from "./navigation.js";
@@ -27,13 +28,13 @@ async function request<T>(base:string,path:string,body?:unknown,method=body===un
 }
 const stateNames:Record<string,string>={queued:"排队",preflight:"预检查",syncing:"同步代码",running:"运行中",collecting:"收集产物",completed:"已完成",failed:"失败",cancel_requested:"取消请求中",cancelled:"已取消",disconnected:"连接中断",unknown_remote_state:"远端状态待确认"};
 const terminal=["completed","failed","cancelled"];
-const experimentTabIcons = {compute:Server,runs:ClipboardList,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
+const experimentTabIcons = {compute:Server,runs:ClipboardList,catalog:Code2,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
 const codeTabs=[{id:"overview",label:"仓库与 Git"},{id:"code",label:"文件浏览"}] as const;
 const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"settings",label:"工作区设置"},{id:"workspace",label:"AutoDL 工作区"}] as const;
 type Navigate=(page:ProjectPage,options?:NavigateOptions)=>void;
 
-export function ExperimentsPage({projectId,section,action,focusId,status,onNavigate,onBrowseArchive}:{
-  projectId:string;section:ExperimentTab;action?:string;focusId?:string;status?:string;onNavigate:Navigate;onBrowseArchive?:(path:string)=>void;
+export function ExperimentsPage({projectId,section,experimentKey,action,focusId,status,onNavigate,onBrowseArchive}:{
+  projectId:string;section:ExperimentTab;experimentKey?:string;action?:string;focusId?:string;status?:string;onNavigate:Navigate;onBrowseArchive?:(path:string)=>void;
 }) {
   const autoDlOnly=section==="compute",reproductionOnly=section==="reproductions";
   const snapshotId=section==="runs"&&action==="reproduction-plan"?focusId:undefined;
@@ -43,7 +44,8 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
   const [reproductionVisited,setReproductionVisited]=useState(reproductionOnly);
   const [runDetail,setRunDetail]=useState<"logs"|"artifacts">("logs");
   const [kind,setKind]=useState<"all"|"git"|"reproduction">("all");
-  const tab=autoDlOnly?computeTab:section==="code"?codeTab:section==="runs"
+  const showScopedResults = section==="runs" && Boolean(experimentKey) && action==="experiment-results";
+  const tab=showScopedResults ? undefined : autoDlOnly?computeTab:section==="code"?codeTab:section==="runs"
     ?runFocus||action==="runs"?"runs":"plans":undefined;
   const showRuns=tab==="runs",showPlans=tab==="plans";
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
@@ -56,7 +58,35 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
   const [instanceDialog,setInstanceDialog]=useState<"add"|"edit">();
   const [error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
   const alive=useRef(true);const [repositoryList,setRepositoryList]=useState<ProjectRepository[]>([]),[defaultRepositoryId,setDefaultRepositoryId]=useState<string|null>(null),[selectedRepositoryId,setSelectedRepositoryId]=useState("");
-  const repo=repositoryList.find(item=>item.repository_id===(selectedRepositoryId||defaultRepositoryId));
+  const [catalog, setCatalog] = useState<ExperimentCatalogEntry[]>([]);
+  const [papers, setPapers] = useState<{ id: string; title: string }[]>([]);
+  const [reproductions, setReproductions] = useState<ReproductionCode[]>([]);
+  const reproductionScope = experimentKey?.startsWith("reproduction:") ? experimentKey.slice(13) : undefined;
+  const experiment = catalog.find(item => experimentKeyOf(item) === experimentKey);
+  const scopedReproduction = reproductions.find(item => item.id === reproductionScope);
+  const repositoryId = experimentKey
+    ? experiment?.repository_id ?? repositoryList.find(item => experiment?.paper_id && item.paper_id === experiment.paper_id)?.repository_id
+    : selectedRepositoryId || defaultRepositoryId;
+  const repo = repositoryList.find(item => item.repository_id === repositoryId);
+  const editExperimentCode = async (entry: ExperimentCatalogEntry, code: { repository_id?: string; entrypoint?: string; paper_id?: string }) => {
+    const value = await request<{experiments: ExperimentCatalogEntry[]}>(base, "/experiment-catalog",
+      { direction_id: entry.direction_id, scheme_id: entry.scheme_id, code }, "PUT");
+    setCatalog(value.experiments);
+    setRepoInfo(undefined);
+    setHistory([]);
+    setHistoryPage(1);
+    setCommitMessage("");
+  };
+  const createCatalogExperiment = async (title: string, id: string) => {
+    let created = false;
+    await run(async () => {
+      const { experiment } = await request<{experiment: ExperimentCatalogEntry}>(base, "/experiment-catalog", { title, id });
+      setCatalog(items => [...items.filter(item => experimentKeyOf(item) !== experimentKeyOf(experiment)), experiment]);
+      created = true;
+      onNavigate("experiments", { tab: "code", experiment: experimentKeyOf(experiment) });
+    });
+    return created;
+  };
   const repositoryQuery=(path:string)=>path+(path.includes("?")?"&":"?")+"repository_id="+encodeURIComponent(repo?.repository_id??"");
   const [repoPath,setRepoPath]=useState(""),[editor,setEditor]=useState(""),[repoInfo,setRepoInfo]=useState<{head:string;clean:boolean;status:string;diff:string;staged_diff:string}>();
   const [history,setHistory]=useState<{sha:string;at:string;title:string}[]>([]),[historyPage,setHistoryPage]=useState(1),[commitMessage,setCommitMessage]=useState("");
@@ -70,8 +100,36 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   const run=async(action:()=>Promise<void>)=>{if(busy)return;setBusy(true);setError("");setNotice("");try{await action();}catch(cause){if(alive.current)setError(cause instanceof Error?cause.message:"操作失败");}finally{if(alive.current)setBusy(false);}};
   const load=async()=>{
-    const data=await Promise.all([request<{repositories:ProjectRepository[];default_id:string|null}>(base,"/repositories"),request<{profiles:typeof profiles}>(base,"/ssh-profiles"),request<{datasets:DatasetRef[]}>(base,"/datasets"),request<{plans:ExperimentPlanVersion[]}>(base,"/experiment-plans"),request<{runs:ExperimentRun[]}>(base,"/experiment-runs"),request<{schemes:typeof schemes}>(base,"/experiment-schemes")]);
-    if(!alive.current)return;setRepositoryList(data[0].repositories);setDefaultRepositoryId(data[0].default_id);setSelectedRepositoryId(old=>data[0].repositories.some(item=>item.repository_id===old)?old:"");setProfiles(data[1].profiles);setProfileId(old=>data[1].profiles.some(item=>item.profile_id===old)?old:data[1].profiles[0]?.profile_id||"");setDatasets(data[2].datasets);setPlans(data[3].plans);setRuns(data[4].runs);setSchemes(data[5].schemes);
+    const [repositories, hosts, datasetData, planData, runData, schemeData] = await Promise.all([
+      request<{repositories: ProjectRepository[]; default_id: string | null}>(base, "/repositories"),
+      request<{profiles: typeof profiles}>(base, "/ssh-profiles"),
+      request<{datasets: DatasetRef[]}>(base, "/datasets"),
+      request<{plans: ExperimentPlanVersion[]}>(base, "/experiment-plans"),
+      request<{runs: ExperimentRun[]}>(base, "/experiment-runs"),
+      request<{schemes: typeof schemes}>(base, "/experiment-schemes"),
+    ]);
+    if (!alive.current) return;
+    setRepositoryList(repositories.repositories);
+    setDefaultRepositoryId(repositories.default_id);
+    setSelectedRepositoryId(old => repositories.repositories.some(item => item.repository_id === old) ? old : "");
+    setProfiles(hosts.profiles);
+    setProfileId(old => hosts.profiles.some(item => item.profile_id === old) ? old : hosts.profiles[0]?.profile_id ?? "");
+    setDatasets(datasetData.datasets);
+    setPlans(planData.plans);
+    setRuns(runData.runs);
+    setSchemes(schemeData.schemes);
+    const [experimentData, reproductionData, paperData] = await Promise.allSettled([
+      request<{experiments: ExperimentCatalogEntry[]}>(base, "/experiment-catalog"),
+      request<{codes: ReproductionCode[]}>(base, "/reproductions"),
+      request<{papers: typeof papers}>(base, "/workspace/manuscripts"),
+    ]);
+    if (!alive.current) return;
+    if (experimentData.status === "fulfilled") setCatalog(experimentData.value.experiments);
+    if (reproductionData.status === "fulfilled") setReproductions(reproductionData.value.codes);
+    if (paperData.status === "fulfilled") setPapers(paperData.value.papers);
+    if (experimentData.status === "rejected" || reproductionData.status === "rejected") {
+      setError("部分实验列表读取失败，请刷新后重试。");
+    }
   };
   useEffect(()=>{void run(load).finally(()=>{if(alive.current)setLoadingContext(false);});},[projectId]);
   useEffect(()=>{
@@ -96,8 +154,17 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
     setRunDetail("logs");setLogs("");setLogOffset(0);setDetails("");
   },[runFocus]);
   useEffect(()=>{if(!showPlans){setPlanJson("");setEditingPlan(undefined);}},[showPlans]);
-  const matchesKind=(plan:ExperimentPlanVersion)=>kind==="all"||(kind==="reproduction")===Boolean(plan.reproduction);
-  const showRun=(id?:string)=>onNavigate("experiments",{tab:"runs",action:"runs",focus:id});
+  useEffect(() => {
+    setKind("all");setPlanJson("");setEditingPlan(undefined);setRepoInfo(undefined);setHistory([]);
+    setCommitMessage("");setDiagnostic("");setScript("");setPlanId("");setRunId(runFocus??"");
+  }, [experimentKey]);
+  const matchesScope = (plan: ExperimentPlanVersion) => {
+    if (!experimentKey) return true;
+    if (reproductionScope) return plan.reproduction?.reproduction_id === reproductionScope;
+    return Boolean(experiment && !plan.reproduction && plan.content.direction_id === experiment.direction_id && plan.content.scheme_id === experiment.scheme_id);
+  };
+  const matchesKind=(plan:ExperimentPlanVersion)=>matchesScope(plan)&&(kind==="all"||(kind==="reproduction")===Boolean(plan.reproduction));
+  const showRun=(id?:string)=>onNavigate("experiments",{tab:"runs",action:"runs",focus:id,experiment:experimentKey});
   const selectedPlan=plans.find(p=>p.plan_id===planId&&p.version===planVersion),selectedRun=runs.find(r=>r.run_id===runId);
   const repositoryDetails=async()=>{const data=await request<NonNullable<typeof repoInfo>>(base,repositoryQuery("/repository/status"));if(alive.current)setRepoInfo(data);};
   const connectTerminal=async(sourceProfile=profileId,source?:TerminalSession,stayOnPage=false)=>{
@@ -123,9 +190,9 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
     }
     setNotice("SSH 连接已断开。");
   };
-  const newPlan=(snapshot?:ReproductionSnapshot)=>{
+  const newPlan=(snapshot?:ReproductionSnapshot, head?:string)=>{
     if(!snapshot&&planJson&&!window.confirm("放弃当前未保存计划吗？"))return;
-    setEditingPlan(undefined);setPlanJson(JSON.stringify({title:snapshot?`${snapshot.name} 复现实验`:"新实验",purpose:"",method:snapshot?.name??"",code_source:snapshot?"reproduction":"git",...(snapshot?{reproduction_id:snapshot.reproduction_id,snapshot_id:snapshot.snapshot_id}:repo?{repository_id:repo.repository_id}:{}),baseline:"",evaluation_protocol:"",commit_sha:snapshot?"":repoInfo?.head??"",profile_id:profileId,dataset_ids:datasets.filter(d=>d.profile_id===profileId&&(!d.transfer_status||d.transfer_status==="ready")).map(d=>d.dataset_id),python:"/root/miniconda3/bin/python",command:["python","train.py"],env:{},config:{},seed:42,gpu:"0",timeout_seconds:7200,metrics_path:"outputs/metrics.json",expected_metrics:[{name:"f1",unit:"ratio"}],artifact_paths:[]},null,2));
+    setEditingPlan(undefined);setPlanJson(JSON.stringify({title:snapshot?`${snapshot.name} 复现实验`:experiment?.title??"新实验",...(experiment?{direction_id:experiment.direction_id,scheme_id:experiment.scheme_id}:{}),purpose:"",method:snapshot?.name??"",code_source:snapshot?"reproduction":"git",...(snapshot?{reproduction_id:snapshot.reproduction_id,snapshot_id:snapshot.snapshot_id}:repo?{repository_id:repo.repository_id}:{}),baseline:"",evaluation_protocol:"",commit_sha:snapshot?"":head??repoInfo?.head??"",profile_id:profileId,dataset_ids:datasets.filter(d=>d.profile_id===profileId&&(!d.transfer_status||d.transfer_status==="ready")).map(d=>d.dataset_id),python:"/root/miniconda3/bin/python",command:["python",experiment?.entrypoint?"./"+experiment.entrypoint:"train.py"],env:{},config:{},seed:42,gpu:"0",timeout_seconds:7200,metrics_path:"outputs/metrics.json",expected_metrics:[{name:"f1",unit:"ratio"}],artifact_paths:[]},null,2));
   };
   const changePlan=async(patch:Record<string,string|undefined>)=>{
     const value=JSON.parse(planJson) as Record<string,unknown>;
@@ -160,7 +227,7 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
         buttons[target]?.focus();
       }}>{experimentTabs.map(item=>{
         const Icon=experimentTabIcons[item.id];
-        return <button type="button" key={item.id} aria-current={section===item.id?"page":undefined}
+        return <button type="button" key={item.id} aria-current={(experimentKey || section==="code" ? item.id==="catalog" : section===item.id)?"page":undefined}
           onClick={()=>{if(section!==item.id)onNavigate("experiments",{tab:item.id});}}>
           <Icon size={16} aria-hidden="true"/><span>{item.label}</span>
         </button>;
@@ -169,18 +236,66 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
         <RefreshCw size={16} aria-hidden="true"/>
       </button>
     </header>
+    {section==="catalog" && <ExperimentCatalog experiments={catalog} reproductions={reproductions} busy={busy}
+      loading={loadingContext} create={createCatalogExperiment}
+      open={item => onNavigate("experiments", {tab:"code", experiment:experimentKeyOf(item)})}
+      openReproduction={id => onNavigate("experiments", {tab:"reproductions", focus:id, experiment:"reproduction:"+id})}/>}
+    {experimentKey && <div className="experiment-detail-toolbar">
+      <button type="button" className="text-button" onClick={() => onNavigate("experiments", {tab:"catalog"})}>返回实验列表</button>
+      <h3>{experiment?.title ?? scopedReproduction?.name ?? (loadingContext ? "正在读取实验…" : "未找到实验")}</h3>
+      {(experiment || scopedReproduction) && <div className="experiment-subnav">
+        <button type="button" className="secondary-button" aria-pressed={section!=="runs"}
+          onClick={() => onNavigate("experiments", {tab:experiment?"code":"reproductions", experiment:experimentKey, focus:reproductionScope})}>代码</button>
+        <button type="button" className="secondary-button" aria-pressed={section==="runs"&&!showScopedResults}
+          onClick={() => onNavigate("experiments", {tab:"runs", experiment:experimentKey})}>计划与运行</button>
+        <button type="button" className="secondary-button" aria-pressed={showScopedResults}
+          onClick={() => onNavigate("experiments", {tab:"runs", action:"experiment-results", experiment:experimentKey})}>结果</button>
+      </div>}
+    </div>}
+    {showScopedResults && <div className="experiment-runs">
+      {runs.filter(item => matchesScope(item.plan) && item.result_id).map(item =>
+        <button type="button" className="experiment-run" key={item.run_id}
+          onClick={() => onNavigate("results", {focus:item.result_id})}>
+          <strong>{item.plan.content.title}</strong><small>{item.created_at}</small>
+        </button>)}
+      {!runs.some(item => matchesScope(item.plan) && item.result_id) && <p className="quiet">此实验暂无已登记的运行结果。</p>}
+    </div>}
+    {section==="code" && experiment && <form className="experiment-form" key={experimentKey+"|"+experiment.repository_id+"|"+experiment.entrypoint+"|"+experiment.paper_id}
+      onSubmit={event => {
+        event.preventDefault();
+        const values = new FormData(event.currentTarget);
+        void run(() => editExperimentCode(experiment, {
+          paper_id: String(values.get("paper") ?? "") || undefined,
+          repository_id: String(values.get("repository") ?? "") || undefined,
+          entrypoint: String(values.get("entrypoint") ?? "").trim() || undefined,
+        }));
+      }}>
+      <label>关联论文<select name="paper" defaultValue={experiment.paper_id ?? ""} disabled={busy}>
+        <option value="">暂不关联</option>
+        {experiment.paper_id && !papers.some(item => item.id === experiment.paper_id) &&
+          <option value={experiment.paper_id}>原关联论文 · {experiment.paper_id}</option>}
+        {papers.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+      </select></label>
+      <label>实验代码仓库<select name="repository" defaultValue={experiment.repository_id ?? ""} disabled={busy}>
+        <option value="">使用关联论文的仓库（如有）</option>
+        {experiment.repository_id && !repo && <option value={experiment.repository_id} disabled>仓库已解除绑定</option>}
+        {repositoryList.map(item => <option key={item.repository_id} value={item.repository_id}>{item.name ?? item.path}</option>)}
+      </select></label>
+      <label>入口脚本<input name="entrypoint" maxLength={1024} defaultValue={experiment.entrypoint ?? ""} placeholder="例如 scripts/train.py" disabled={busy}/></label>
+      <button className="primary-button" disabled={busy}>保存代码设置</button>
+    </form>}
     {section==="code"&&<nav className="experiment-subnav" aria-label="代码视图">{codeTabs.map(item=>
       <button type="button" className="secondary-button" key={item.id} aria-pressed={codeTab===item.id} onClick={()=>setCodeTab(item.id)}>{item.label}</button>
     )}</nav>}
     {autoDlOnly&&<nav className="experiment-subnav" aria-label="AutoDL 视图">{autoDlTabs.map(item=>
       <button type="button" className="secondary-button" key={item.id} aria-pressed={computeTab===item.id} onClick={()=>setComputeTab(item.id)}>{item.label}</button>
     )}</nav>}
-    {section==="runs"&&<div className="experiment-subnav">
-      <button type="button" className="secondary-button" aria-pressed={showPlans} onClick={()=>{if(!showPlans)onNavigate("experiments",{tab:"runs"});}}>计划</button>
+    {section==="runs"&&!showScopedResults&&<div className="experiment-subnav">
+      <button type="button" className="secondary-button" aria-pressed={showPlans} onClick={()=>{if(!showPlans)onNavigate("experiments",{tab:"runs",experiment:experimentKey});}}>计划</button>
       <button type="button" className="secondary-button" aria-pressed={showRuns} onClick={()=>{if(!showRuns)showRun(runId||undefined);}}>运行</button>
-      <select aria-label="实验类型" value={kind} onChange={event=>setKind(event.target.value as typeof kind)}>
+      {!experimentKey&&<select aria-label="实验类型" value={kind} onChange={event=>setKind(event.target.value as typeof kind)}>
         <option value="all">全部</option><option value="git">自研</option><option value="reproduction">复现</option>
-      </select>
+      </select>}
     </div>}
     {reproductionOnly&&action==="source"&&focusId&&<button type="button" className="text-button" onClick={()=>onNavigate("experiments",{tab:"reproductions"})}>查看全部复现</button>}
     {(reproductionOnly||reproductionVisited)&&<div hidden={!reproductionOnly}>
@@ -188,17 +303,17 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
         visible={reproductionOnly} focusId={reproductionOnly?focusId:undefined} bySource={action==="source"}
         connectedProfiles={terminalSessions.filter(session=>!session.ended).map(session=>session.profile_id)}
         connecting={connecting} onConnect={host=>connectTerminal(host,undefined,true)}
-        onPlan={snapshot=>onNavigate("experiments",{tab:"runs",action:"reproduction-plan",focus:snapshot.snapshot_id})}/>
+        onPlan={snapshot=>onNavigate("experiments",{tab:"runs",action:"reproduction-plan",focus:snapshot.snapshot_id,experiment:experimentKey?"reproduction:"+snapshot.reproduction_id:undefined})}/>
     </div>}
     {section==="datasets"&&<div className="data-page"><DatasetsPanel projectId={projectId}/></div>}
     {section==="results"&&<div className="data-page"><ExperimentalDataPanel projectId={projectId} active onNavigate={onNavigate} action={action} focusId={focusId} status={status}/></div>}
     {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}{notice&&<div role="status" className="notice">{notice}</div>}
-    {section==="code"&&repositoryList.length>0&&<div className="knowledge-toolbar">
+    {section==="code"&&!experimentKey&&repositoryList.length>0&&<div className="knowledge-toolbar">
       <label>代码仓库 <select aria-label="选择代码仓库" value={repo?.repository_id??""} disabled={busy} onChange={event=>{if(commitMessage&&!window.confirm("放弃未提交的说明并切换仓库吗？"))return;setSelectedRepositoryId(event.target.value);setRepoInfo(undefined);setHistory([]);setHistoryPage(1);setCommitMessage("");}}>{repositoryList.map(item=><option key={item.repository_id} value={item.repository_id}>{item.name??item.path}{item.repository_id===defaultRepositoryId?" · 默认":""}</option>)}</select></label>
       {repo&&repo.repository_id!==defaultRepositoryId&&<button type="button" className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,"/repositories",{repository_id:repo.repository_id},"PUT");setDefaultRepositoryId(repo.repository_id);})}>设为默认仓库</button>}
     </div>}
-    {section==="code"&&<div hidden={tab!=="overview"} className="experiment-overview">
-      <form className="experiment-form" onSubmit={event=>{event.preventDefault();void run(async()=>{const value=await request<{repository:ProjectRepository}>(base,"/repositories",{path:repoPath,...(editor?{editor:{executable:editor,args:[]}}:{})},"POST");await load();setSelectedRepositoryId(value.repository.repository_id);setRepoPath("");setRepoInfo(undefined);setHistory([]);setNotice("仓库已绑定。");});}}><h3>添加本地 Git 仓库</h3><label htmlFor="experiment-repository-path">本地 Git 仓库根目录</label><div className="repository-path-control"><input id="experiment-repository-path" required value={repoPath} onChange={e=>setRepoPath(e.target.value)} placeholder="/home/user/research-code"/><button type="button" className="secondary-button" disabled={busy} onClick={()=>setDirectoryPicker(true)}><FolderOpen size={15}/>浏览目录</button></div><label>本地编辑器可执行文件（可选）<input value={editor} onChange={e=>setEditor(e.target.value)} placeholder="code"/></label><button className="primary-button" disabled={busy}>绑定仓库</button></form>
+    {section==="code"&&(!experimentKey||experiment)&&<div hidden={tab!=="overview"} className="experiment-overview">
+      <form className="experiment-form" onSubmit={event=>{event.preventDefault();void run(async()=>{const value=await request<{repository:ProjectRepository}>(base,"/repositories",{path:repoPath,...(editor?{editor:{executable:editor,args:[]}}:{})},"POST");if(experiment)await editExperimentCode(experiment,{repository_id:value.repository.repository_id,entrypoint:experiment.entrypoint,paper_id:experiment.paper_id});await load();setSelectedRepositoryId(value.repository.repository_id);setRepoPath("");setRepoInfo(undefined);setHistory([]);setNotice("仓库已绑定。");});}}><h3>添加本地 Git 仓库</h3><label htmlFor="experiment-repository-path">本地 Git 仓库根目录</label><div className="repository-path-control"><input id="experiment-repository-path" required value={repoPath} onChange={e=>setRepoPath(e.target.value)} placeholder="/home/user/research-code"/><button type="button" className="secondary-button" disabled={busy} onClick={()=>setDirectoryPicker(true)}><FolderOpen size={15}/>浏览目录</button></div><label>本地编辑器可执行文件（可选）<input value={editor} onChange={e=>setEditor(e.target.value)} placeholder="code"/></label><button className="primary-button" disabled={busy}>绑定仓库</button></form>
       {repo&&<CodeAgentPanel key={projectId+repo.path} projectId={projectId} repositoryPath={repo.path} repositoryId={repo.repository_id}/>}
       {repo&&<><div className="knowledge-toolbar"><span>{repo.path}</span><button className="secondary-button" disabled={busy} onClick={()=>void run(repositoryDetails)}>Git 状态与差异</button><button className="secondary-button" onClick={()=>void navigator.clipboard.writeText(repo.path).then(()=>setNotice("已复制仓库路径")).catch(()=>setError("浏览器不允许复制，请手动选择路径。"))}>复制路径</button><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,repositoryQuery("/repository/editor"),{});setNotice("已请求打开配置的编辑器。");})}>打开本地编辑器</button></div>
       {repoInfo&&<><p>提交：<code>{repoInfo.head||"尚无提交"}</code> · {repoInfo.clean?"工作树干净":"存在未提交或未跟踪文件"}</p><details open><summary>工作树状态</summary><pre>{repoInfo.status||"无改动"}</pre></details><details><summary>未暂存差异</summary><pre>{repoInfo.diff||"无差异"}</pre></details><details><summary>已暂存差异</summary><pre>{repoInfo.staged_diff||"无差异"}</pre></details></>}
@@ -220,7 +335,7 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
 
     </div>
     {!autoDlOnly&&tab==="plans"&&<>
-      <div className="knowledge-toolbar"><button className="primary-button" disabled={!repo||!profileId} onClick={()=>newPlan()}>新建计划</button><select aria-label="选择实验主机" value={profileId} onChange={e=>setProfileId(e.target.value)}><option value="">选择主机</option>{profiles.map(p=><option key={p.profile_id} value={p.profile_id}>{p.name}</option>)}</select><span>实验代码计划请先读取当前提交；复现计划可从「文献复现」发起。</span></div>
+      <div className="knowledge-toolbar"><button className="primary-button" disabled={busy||!repo||!profileId} onClick={()=>void run(async()=>{const status=await request<{head:string}>(base,repositoryQuery("/repository/status"));newPlan(undefined,status.head);})}>新建计划</button><select aria-label="选择实验主机" value={profileId} onChange={e=>setProfileId(e.target.value)}><option value="">选择主机</option>{profiles.map(p=><option key={p.profile_id} value={p.profile_id}>{p.name}</option>)}</select><span>{reproductionScope?"从此复现的代码工作区发起新计划。":experimentKey&&!repo?"先在此实验的「代码」中关联仓库。":"选择仓库和主机后可创建计划。"}</span></div>
       {planJson&&<div className="experiment-form"><h3>{editingPlan?`修订 ${editingPlan.content.title} v${editingPlan.version}`:"新计划"}</h3>
       {edited.code_source!=="reproduction"&&<label>实验代码仓库<select value={String(edited.repository_id??editingPlan?.repository.repository_id??"")} onChange={event=>{
         const id=event.target.value;void run(async()=>{
@@ -229,9 +344,10 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
           await changePlan({repository_id:id,commit_sha:result.head});
         });
       }}><option value="">选择项目仓库</option>{repositoryList.map(item=><option key={item.repository_id} value={item.repository_id}>{item.name??item.path}</option>)}</select></label>}
-      <label>实验档案目录<select value={edited.direction_id&&edited.scheme_id?`${edited.direction_id}/${edited.scheme_id}`:""} onChange={event=>{const [direction_id,scheme_id]=event.target.value.split("/");void run(()=>changePlan({direction_id:direction_id||undefined,scheme_id}));}}>
+      {!experimentKey&&<label>实验档案目录<select value={edited.direction_id&&edited.scheme_id?`${edited.direction_id}/${edited.scheme_id}`:""} onChange={event=>{const [direction_id,scheme_id]=event.target.value.split("/");void run(()=>changePlan({direction_id:direction_id||undefined,scheme_id:scheme_id||undefined}));}}>
         <option value="">暂不关联方案目录</option>{schemes.map(item=><option key={item.direction_id+"/"+item.scheme_id} value={item.direction_id+"/"+item.scheme_id}>{item.direction_id}/{item.scheme_id}</option>)}
-      </select></label><textarea className="experiment-json" aria-label="实验计划 JSON" value={planJson} onChange={e=>setPlanJson(e.target.value)}/><p>命令以数组保存，使用 TRASH_OUTPUT_DIR 写产物。准备脚本使用 preparation_script 相对路径单独授权。</p><button className="primary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,"/experiment-plans",{...(editingPlan?{plan_id:editingPlan.plan_id,base_version:editingPlan.version}:{base_version:0}),content:JSON.parse(planJson)});setPlanJson("");setEditingPlan(undefined);await load();setNotice("计划草稿已保存。");})}>保存新版本</button><button className="secondary-button" onClick={()=>{if(window.confirm("放弃未保存的计划吗？"))setPlanJson("");}}>放弃编辑</button></div>}
+      </select></label>}<textarea className="experiment-json" aria-label="实验计划 JSON" value={planJson} onChange={e=>setPlanJson(e.target.value)}/><p>命令以数组保存，使用 TRASH_OUTPUT_DIR 写产物。准备脚本使用 preparation_script 相对路径单独授权。</p><button className="primary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,"/experiment-plans",{...(editingPlan?{plan_id:editingPlan.plan_id,base_version:editingPlan.version}:{base_version:0}),content:{...JSON.parse(planJson),...(experiment?{direction_id:experiment.direction_id,scheme_id:experiment.scheme_id}:{})}});setPlanJson("");setEditingPlan(undefined);await load();setNotice("计划草稿已保存。");})}>保存新版本</button><button className="secondary-button" onClick={()=>{if(window.confirm("放弃未保存的计划吗？"))setPlanJson("");}}>放弃编辑</button></div>}
+      {!plans.some(matchesKind)&&!planJson&&<p className="quiet">此范围暂无计划。</p>}
       {plans.filter(matchesKind).map(plan=><article className="experiment-card" key={`${plan.plan_id}:${plan.version}`}><h3>{plan.content.title} · v{plan.version} · {{draft:"草稿",confirmed:"已确认",superseded:"已替代"}[plan.status]}</h3><p>{plan.content.method} · {plan.profile.host}:{plan.profile.port}</p><code>{plan.content.commit_sha}</code><pre>{JSON.stringify(plan.content.command)}</pre><div className="knowledge-toolbar"><button className="secondary-button" onClick={()=>{if(planJson&&!window.confirm("放弃当前编辑？"))return;setEditingPlan(plan);setPlanJson(JSON.stringify({...plan.content,...(!plan.reproduction?{repository_id:plan.repository.repository_id}:{})},null,2));}}>修订</button><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{setDiagnostic(JSON.stringify(await request(base,`/experiment-plans/${plan.plan_id}/preflight`,{version:plan.version}),null,2));setPlanId(plan.plan_id);setPlanVersion(plan.version);})}>环境预检查</button><button className="secondary-button" disabled={busy||plan.status!=="draft"} onClick={()=>void run(async()=>{await request(base,`/experiment-plans/${plan.plan_id}/confirm`,{version:plan.version,confirm:true});await load();setNotice("计划已确认，提交运行前仍会展示完整执行清单。");})}>确认此计划版本</button>{plan.content.preparation_script&&<button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{setScript(JSON.stringify(await request(base,`/experiment-plans/${plan.plan_id}/preparation`,{version:plan.version}),null,2));setPlanId(plan.plan_id);setPlanVersion(plan.version);})}>查看准备脚本</button>}<button className="primary-button" disabled={plan.status!=="confirmed"} onClick={()=>{setSubmission({plan,preparation:false,key:crypto.randomUUID()});setAck(false);}}>提交实验</button>{plan.content.preparation_script&&<button className="secondary-button" disabled={plan.status!=="confirmed"||!script||planId!==plan.plan_id||planVersion!==plan.version} onClick={()=>{setSubmission({plan,preparation:true,key:crypto.randomUUID()});setAck(false);}}>单独授权环境准备</button>}</div></article>)}{diagnostic&&<pre>{diagnostic}</pre>}{script&&<details open><summary>准备脚本原文与提交版本</summary><pre>{script}</pre></details>}{selectedPlan&&<p>当前查看：{selectedPlan.content.title} v{selectedPlan.version}</p>}
     </>}
     {!autoDlOnly&&showRuns&&<>
