@@ -327,6 +327,26 @@
   list-style: none;
 }
 
+.paper-file-group + .paper-file-group { margin-top: 16px; }
+
+.paper-file-group > h4 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 2px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--surface-soft);
+  font-size: 12px;
+}
+
+.paper-file-group > h4 small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
 .paper-file-list > li {
   display: flex;
   align-items: center;
