@@ -1,3 +1,4 @@
+import { manuscriptDirectory } from './manuscript-layout.js';
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
 import { ensureResearchDirectory, projectRuntime } from "./project-layout.js";
@@ -5,7 +6,7 @@ import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { stageChatSkills, type ChatSkillId } from "./project-chat-skills.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, renameSync, readlinkSync, realpathSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { KnowledgeStore, experimentError, type TrashStore } from "@trash/storage";
 import { knowledgeKindSchema, knowledgeWriteSchema } from "@trash/protocol";
@@ -23,7 +24,7 @@ function rememberRead(ledger:string,path:string,hash:string,start:number,end:num
 function manuscriptPath(projectRoot:string,workspace:string){
   if(!existsSync(join(projectRoot,'project.yaml')))return;
   const root=realpathSync(projectRoot);
-  const target=join(root,'manuscript');
+  const target=join(root,manuscriptDirectory(root));
   mkdirSync(target,{recursive:true});
   if(!lstatSync(target).isDirectory())return;
   const alias=join(workspace,'manuscripts');
@@ -32,14 +33,16 @@ function manuscriptPath(projectRoot:string,workspace:string){
     const linked=resolve(dirname(alias),readlinkSync(alias));
     const physical=existsSync(alias)?realpathSync(alias):linked;
     if(physical===target)return 'manuscripts/';
-    if(physical!==join(target,'drafts')&&linked!==join(projectRoot,'manuscript','drafts'))return target;
+    const oldTargets=[root,projectRoot].flatMap(base=>['manuscript','manuscripts']
+      .flatMap(folder=>[join(base,folder),join(base,folder,'drafts')]));
+    if(!oldTargets.includes(linked)&&!oldTargets.includes(physical))return target;
   } catch(error) {
     if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;
-    symlinkSync(target,alias,'dir');
+    symlinkSync(relative(workspace,target),alias,'dir');
     return 'manuscripts/';
   }
   const temporary=alias+'.'+randomUUID()+'.tmp';
-  symlinkSync(target,temporary,'dir');
+  symlinkSync(relative(workspace,target),temporary,'dir');
   try { renameSync(temporary,alias); }
   finally { if(existsSync(temporary))unlinkSync(temporary); }
   return 'manuscripts/';

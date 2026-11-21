@@ -1,3 +1,4 @@
+import { manuscriptDirectory } from './manuscript-layout.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, readdirSync, mkdirSync, writeFileSync, renameSync, symlinkSync, rmSync, readlinkSync } from 'node:fs';
 import { mkdir, readdir, lstat, readlink, symlink, copyFile, realpath, statfs } from 'node:fs/promises';
@@ -20,7 +21,7 @@ export function workspaceError(error:unknown):never {
 function fail(message:string,statusCode=409):never {
   throw Object.assign(new Error(message),{statusCode});
 }
-const directories=['literature/originals','literature/parsed','code','data','experiments','manuscript','research','.trash'];
+const directories=['literature/originals','literature/parsed','code','data','experiments','research','.trash'];
 const requestSchema=z.object({root:z.string().min(1).max(4096).refine(value=>isAbsolute(value)&&!value.includes('\0')),name:z.string().trim().min(1).max(120).refine(value=>value!=='.'&&value!=='..'&&!/[\\/]/.test(value)&&!Array.from(value).some(character=>character.charCodeAt(0)<32))}).strict();
 type Job={id:string;projectId:string;status:'copying'|'verifying'|'switching'|'completed'|'failed'|'interrupted';source:string;target:string;stage:string;backup?:string;files:number;bytes:number;totalFiles:number;totalBytes:number;externalLinks:string[];error?:string;createdAt:string};
 type Entry={path:string;size:number;link?:string;hash?:string};
@@ -104,7 +105,8 @@ export class ProjectWorkspaces {
     }finally{this.active.delete(id);if(target)this.reservations.delete(target);}
   }
   private layout(id:string,root:string){
-    for(const dir of [...directories,'abstract-library','knowledge_base'].map(dir=>projectLibraryPath(root,dir))){
+    const paperDirectory=manuscriptDirectory(root);
+    for(const dir of [...directories,paperDirectory,'abstract-library','knowledge_base'].map(dir=>projectLibraryPath(root,dir))){
       let path=root;
       for(const part of dir.split('/')){
         path=join(path,part);
@@ -120,7 +122,7 @@ export class ProjectWorkspaces {
     const readme=join(root,'README.md');
     if(!existsSync(readme))writeFileSync(readme,`# 论文工作区
 
-文献资料库 library/ 收纳原文、摘要和项目知识。代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
+文献资料库 library/ 收纳原文、摘要和项目知识。代码 code/、共享数据 data/、实验 experiments/、稿件 ${paperDirectory}/。
 
 对话中明确要求保存的研究想法、方案和讨论笔记直接放在 research/。
 
@@ -139,10 +141,10 @@ export class ProjectWorkspaces {
       rmSync(originals,{recursive:true});renameSync(raw,originals);
     }
     if(!existsSync(raw))symlinkSync(originalsPath,raw,'dir');
-    const drafts=join(root,'agent-workspace','manuscripts'),manuscript=join(root,'manuscript');
+    const drafts=join(root,'agent-workspace','manuscripts'),manuscript=join(root,paperDirectory);
     if(existsSync(drafts)&&!lstatSync(drafts).isSymbolicLink()&&readdirSync(manuscript).length===0){
       if(lstatSync(join(root,'agent-workspace')).isSymbolicLink())fail('WORKSPACE_RESERVED_SYMLINK');
-      rmSync(manuscript,{recursive:true});renameSync(drafts,manuscript);symlinkSync('../manuscript',drafts,'dir');
+      rmSync(manuscript,{recursive:true});renameSync(drafts,manuscript);symlinkSync('../'+paperDirectory,drafts,'dir');
     }
   }
   private materialize(id:string){

@@ -1,4 +1,28 @@
+import { lstatSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
+
+export const manuscriptsDirectory = 'manuscripts';
+const legacyManuscriptDirectory = 'manuscript';
+export const isManuscriptDirectory = (name:string) =>
+  name===manuscriptsDirectory||name===legacyManuscriptDirectory;
+
+function directoryEntry(root:string,name:string){
+  try{return lstatSync(join(root,name));}
+  catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+}
+
+export function manuscriptDirectory(root:string){
+  return !directoryEntry(root,manuscriptsDirectory)&&directoryEntry(root,legacyManuscriptDirectory)
+    ?legacyManuscriptDirectory:manuscriptsDirectory;
+}
+
+export function projectManuscriptPath(root:string,path:string){
+  const first=path.split('/',1)[0];
+  if(!isManuscriptDirectory(first)||directoryEntry(root,first))return path;
+  const directory=manuscriptDirectory(root);
+  return directory+path.slice(first.length);
+}
 
 export const manuscriptId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/);
 export const manuscriptTitle = z.string().trim().min(1).max(160);

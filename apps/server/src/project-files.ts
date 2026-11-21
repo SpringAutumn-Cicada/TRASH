@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { KnowledgeStore, type TrashStore, parseKnowledgeMarkdown, projectLibraryPath } from '@trash/storage';
 import { libraryLogicalPath } from '@trash/protocol';
-import { manuscriptDocument, manuscriptDraftPath, manuscriptId, manuscriptManifest, manuscriptSection, manuscriptStatus, manuscriptTitle } from './manuscript-layout.js';
+import { isManuscriptDirectory, manuscriptDirectory, projectManuscriptPath, manuscriptDocument, manuscriptDraftPath, manuscriptId, manuscriptManifest, manuscriptSection, manuscriptStatus, manuscriptTitle } from './manuscript-layout.js';
 
 const textLimit=2*1024*1024,uploadLimit=50*1024*1024;
 const hash=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
@@ -25,7 +25,8 @@ export class ProjectFiles {
   constructor(private store:TrashStore,private blocked:(id:string)=>boolean){this.knowledge=new KnowledgeStore(store.db);}
   private root(id:string){const root=join(this.store.root,'projects',id);if(!existsSync(root))fail('FILES_WORKSPACE_MISSING',404);return realpathSync(root);}
   private locate(id:string,value:string,allowMissing=false){
-    inputPath.parse(value);const root=this.root(id),path=resolve(root,projectLibraryPath(root,value.split('/').filter(Boolean).join('/'))||'.');if(!inside(root,path))fail('FILES_OUTSIDE_WORKSPACE',403);
+    inputPath.parse(value);const root=this.root(id),normalized=value.split('/').filter(Boolean).join('/');
+    const path=resolve(root,projectLibraryPath(root,projectManuscriptPath(root,normalized))||'.');if(!inside(root,path))fail('FILES_OUTSIDE_WORKSPACE',403);
     let current=root;
     for(const part of relative(root,path).split(sep).filter(Boolean)){
       current=join(current,part);
@@ -41,7 +42,7 @@ export class ProjectFiles {
     if(path==='abstract-library')return true;
     const parts=path.split('/').filter(Boolean);
     if(parts[0]==='experiments'&&parts[3]==='runs'&&(/^run_[a-f0-9-]+$/.test(parts[4]??''))&&[5,6,7].includes(parts.length))return parts.length===5||['run.json','run-config.json','index.json'].includes(parts.at(-1)??'');
-    if(parts[0]==='manuscript'&&(parts.length===1||parts.length===3&&['paper.yaml','experiment-evidence.json'].includes(parts[2])))return true;
+    if(isManuscriptDirectory(parts[0])&&(parts.length===1||parts.length===3&&['paper.yaml','experiment-evidence.json'].includes(parts[2])))return true;
     return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
@@ -71,14 +72,16 @@ export class ProjectFiles {
     return {name,path,kind:stat.isSymbolicLink()?'symlink':stat.isDirectory()?'directory':'file',size:stat.size,modified:stat.mtime.toISOString(),protected:this.isProtected(path)};
   }
   list(id:string,path:string,hidden:boolean){
-    const directory=this.locate(id,path);if(!statSync(directory).isDirectory())fail('FILES_NOT_DIRECTORY',422);
+    const directory=this.locate(id,path);
+    path=projectManuscriptPath(this.root(id),path);
+    if(!statSync(directory).isDirectory())fail('FILES_NOT_DIRECTORY',422);
     const names=readdirSync(directory).filter(name=>visibleEntry(path,name,hidden));
     if(names.length>5000)fail('FILES_DIRECTORY_TOO_LARGE',422);
     const entries=names.map(name=>this.entry(id,path,name)).sort((a,b)=>Number(b.kind==='directory')-Number(a.kind==='directory')||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
     return {root:this.root(id),path,entries};
   }
   private manuscriptInFolder(id:string,folder:string){
-    const path='manuscript/'+folder;
+    const path=manuscriptDirectory(this.root(id))+'/'+folder;
     const marker=this.locate(id,path+'/paper.yaml',true);
     if(!existsSync(marker))return;
     try {
@@ -88,8 +91,8 @@ export class ProjectFiles {
     } catch(error) {if(error instanceof z.ZodError||error instanceof SyntaxError)return;throw error;}
   }
   private manuscriptEntries(id:string){
-    const directory=this.locate(id,'manuscript',true);
-    return existsSync(directory)?this.list(id,'manuscript',false).entries:[];
+    const folder=manuscriptDirectory(this.root(id));
+    return existsSync(this.locate(id,folder,true))?this.list(id,folder,false).entries:[];
   }
   private manuscript(id:string,paperId:string){
     const key=manuscriptId.parse(paperId);
@@ -113,8 +116,9 @@ export class ProjectFiles {
   }
   adoptManuscript(id:string,value:unknown){
     const input=z.object({folder:z.string().min(1).max(255).refine(name=>!name.startsWith('.')&&!/[\\/\x00-\x1f]/.test(name)),id:manuscriptId}).strict().parse(value);
-    if(this.manuscripts(id).papers.some(paper=>paper.id===input.id)||existsSync(this.locate(id,'manuscript/'+input.id,true)))fail('FILES_EXISTS');
-    this.writable(id,'manuscript/'+input.folder);
+    const folder=manuscriptDirectory(this.root(id));
+    if(this.manuscripts(id).papers.some(paper=>paper.id===input.id)||existsSync(this.locate(id,folder+'/'+input.id,true)))fail('FILES_EXISTS');
+    this.writable(id,folder+'/'+input.folder);
     const paper=this.manuscriptInFolder(id,input.folder);
     if(!paper||paper.paper_id) return fail('MANUSCRIPT_NOT_FOUND',404);
     this.writeManuscript(paper.marker,{format_version:1,paper_id:input.id,title:paper.title,status:paper.status,current:paper.current});
@@ -152,7 +156,7 @@ export class ProjectFiles {
   createManuscript(id:string,value:unknown){
     const input=z.object({id:manuscriptId,title:manuscriptTitle}).strict().parse(value);
     if(this.manuscripts(id).papers.some(paper=>paper.id===input.id))fail('FILES_EXISTS');
-    const path='manuscript/'+input.id;
+    const path=manuscriptDirectory(this.root(id))+'/'+input.id;
     const target=this.writable(id,path);
     mkdirSync(dirname(target),{recursive:true});
     mkdirSync(target);
@@ -212,6 +216,7 @@ export class ProjectFiles {
   }
   preview(id:string,path:string){
     const target=this.locate(id,path);if(!statSync(target).isFile())fail('FILES_NOT_FILE',422);
+    path=projectManuscriptPath(this.root(id),path);
     const managed=this.managed(path),record=managed&&existsSync(join(this.root(id),'project.yaml'))?this.knowledge.get(id,managed.kind,managed.id):undefined;
     const stat=statSync(target),extension=extname(path).toLowerCase(),mime=mimeTypes[extension];
     const kind=mime==='application/pdf'?'pdf':mime?'image':textExtensions.has(extension)||basename(path)==='Dockerfile'||basename(path)==='Makefile'||basename(path)==='.gitignore'?'text':'binary';

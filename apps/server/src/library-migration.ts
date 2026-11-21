@@ -101,7 +101,7 @@ function planned(root:string){
   if((rawInfo&&raw!==rawBefore)||!stat(disk(root,rawBefore))?.isDirectory())conflicts.push('raw（未指向项目原文目录）');
   const rewrites:Rewrite[]=[];
   const candidates=files.filter(file=>file.path.endsWith('.md')&&file.size<=2*1024*1024);
-  for(const area of ['wiki','research','manuscript']){
+  for(const area of ['wiki','research','manuscripts','manuscript']){
     // Keep the scan limited to project Markdown; unrelated links and assets are untouched.
     const visit=(path:string)=>{
       const info=stat(disk(root,path));

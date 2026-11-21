@@ -88,7 +88,7 @@ export function ManuscriptPage({projectId,focusId,onNavigate}:{
       <div>
         {focusId&&<button type="button" className="text-button" onClick={()=>onNavigate('paper')}>所有论文</button>}
         <h2>{focusId?paper?.title??'论文详情':'论文'}</h2>
-        <code>{paper?.path??'manuscript/'}</code>
+        <code>{paper?.path??'manuscripts/'}</code>
       </div>
       <button type="button" className="secondary-button" disabled={busy||loading} onClick={()=>setRevision(value=>value+1)}><RefreshCw size={14}/>刷新</button>
       {!focusId&&<button type="button" className="primary-button" disabled={busy||loading} onClick={()=>setCreating(value=>!value)}><Plus size={16}/>新建论文</button>}
@@ -158,7 +158,7 @@ export function ManuscriptPage({projectId,focusId,onNavigate}:{
         <button className="secondary-button" disabled={busy||!legacyFolder}>登记旧稿件</button>
       </form>}
       {!shelf.papers.length&&<p className="manuscript-panel">暂无已登记的论文。</p>}
-      {shelf.unfiled>0&&<button type="button" className="secondary-button manuscript-legacy" onClick={()=>browse('manuscript')}><Folder size={15}/>查看未归档文件 · {shelf.unfiled} 项</button>}
+      {shelf.unfiled>0&&<button type="button" className="secondary-button manuscript-legacy" onClick={()=>browse('manuscripts')}><Folder size={15}/>查看未归档文件 · {shelf.unfiled} 项</button>}
     </>}
   </section>;
 }

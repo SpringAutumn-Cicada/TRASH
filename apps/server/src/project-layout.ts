@@ -3,7 +3,7 @@ import {join,resolve,sep} from 'node:path';
 import {z} from 'zod';
 import type {TrashStore} from '@trash/storage';
 
-export const publicDirectories=['literature','knowledge_base','code','data','experiments','manuscript','research'];
+export const publicDirectories=['literature','knowledge_base','code','data','experiments','manuscripts','research'];
 export const runtimeNames=new Set(['research-exploration','agent-workspace','code-agent','tasks','literature-analysis','dataset-hashes','directory-repairs','environment-analysis','environment-deployments','experiment-bindings','remote-workspaces','dataset-upload-sessions','reproduction-queues','experiment-runs']);
 // Existing absolute references and imported code remain valid. No implicit data migration.
 export function projectRuntime(root:string,project:string,name:string,...parts:string[]){

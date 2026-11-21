@@ -22,7 +22,7 @@
 ├── code/
 ├── data/
 ├── experiments/
-├── manuscript/
+├── manuscripts/
 ├── exports/
 └── .trash/
     ├── knowledge-history/
@@ -33,7 +33,7 @@
 
 原有 raw 目录在迁移副本中整理为 literature/originals，并保留 raw 相对符号链接；其他既有运行、复现、任务目录保留，保证原代码路径兼容。平台 projects/<项目ID> 是指向实际工作区的稳定符号链接，数据库 managed_files 中的既有相对路径无需重写。没有将用户选定路径塞入科研项目协议，避免知识包恢复时绑定到别人的磁盘。
 
-原有 agent-workspace/manuscripts 在 manuscript 为空且无路径冲突时移入 manuscript，原位置保留相对链接；两边都有内容时保留两边，不自动覆盖。新项目 Agent 目录中的 manuscripts 指向 manuscript。
+新项目的稿件目录为 `manuscripts/`。旧项目仍可读取现有 `manuscript/`，改名后，项目文件入口也接受旧路径。Agent 工作区内的 `manuscripts` 链接指向项目实际使用的稿件目录。旧的 Agent 草稿目录可随整体工作区迁移整理，已有的两份内容均保留。
 
 literature/parsed 保存原文解析片段及页码/段落 JSON；本次只规划图片存放位置，未增加 PDF 图片提取、页面渲染或 OCR。
 

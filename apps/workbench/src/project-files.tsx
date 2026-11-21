@@ -59,14 +59,18 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
     let active=true;
     setListingLoading(true);
     void api<Listing>(`${base}?path=${encodeURIComponent(directory)}&hidden=${hidden}`)
-      .then(value=>{if(active)setListing(value);})
+      .then(value=>{
+        if(!active)return;
+        setListing(value);
+        if(value.path!==directory)setDirectory(value.path);
+      })
       .catch(cause=>{if(active)setError(uiError(cause,'无法读取工作区，请先在本地工作区设置中配置目录。'));})
       .finally(()=>{if(active)setListingLoading(false);});
     return()=>{active=false;};
   },[base,directory,hidden,revision]);
   const openFile=async(path:string)=>{
     const id=++requestId.current;setError('');setLoading(true);
-    try{const value=await api<Preview>(`${base}/preview?path=${encodeURIComponent(path)}`);if(alive.current&&id===requestId.current){setPreview(value);setDraft(value.content??'');setEditing(false);setDirectory(parent(path));clearDirty();}}
+    try{const value=await api<Preview>(`${base}/preview?path=${encodeURIComponent(path)}`);if(alive.current&&id===requestId.current){setPreview(value);setDraft(value.content??'');setEditing(false);setDirectory(parent(value.path));clearDirty();}}
     catch(cause){if(alive.current&&id===requestId.current)setError(uiError(cause,'文件预览失败。'));}
     finally{if(alive.current&&id===requestId.current)setLoading(false);}
   };
@@ -112,7 +116,8 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
   const currentListing=listing?.path===directory?listing:undefined;
   const entries=results??currentListing?.entries??[];
   const crumbs=directory.split('/').filter(Boolean);
-  const manuscriptView=!results&&directory==='manuscript';
+  const manuscriptRoot=/^manuscripts?$/.test(directory);
+  const manuscriptView=!results&&manuscriptRoot;
   const fileGroups=manuscriptView?[
     {label:'工作目录',entries:entries.filter(entry=>entry.kind==='directory')},
     {label:'文档与稿件',entries:entries.filter(manuscriptDocuments).sort((a,b)=>orderByName.compare(b.name,a.name))},
@@ -125,7 +130,7 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
       <div className="paper-files-title">
         <span className="paper-files-symbol"><FolderOpen size={24} aria-hidden="true"/></span>
         <div>
-          <h2>{directory==='manuscript'||directory.startsWith('manuscript/')?'论文稿件':'项目文件'}</h2>
+          <h2>{/^manuscripts?(?:\/|$)/.test(directory)?'论文稿件':'项目文件'}</h2>
           <code className="paper-files-root" title={listing?.root}>{listing?.root??'正在读取工作区路径…'}</code>
         </div>
       </div>
