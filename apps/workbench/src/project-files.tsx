@@ -19,7 +19,6 @@ const parent=(path:string)=>path.split('/').slice(0,-1).join('/');
 const size=(bytes:number)=>bytes<1024?`${bytes} B`:bytes<1048576?`${(bytes/1024).toFixed(1)} KiB`:`${(bytes/1048576).toFixed(1)} MiB`;
 const childPath=(directory:string,name:string)=>directory?directory+'/'+name:name;
 const manuscriptDocuments=(entry:Entry)=>entry.kind==='file'&&/\.(docx?|odt|pdf|tex|md|markdown|rtf)$/i.test(entry.name);
-const fileLabel=(path:string,name:string)=>path==='library'&&name==='library'?'文献资料库':name;
 const orderByName=new Intl.Collator('zh-CN',{numeric:true});
 function FileGlyph({name,kind,expanded=false,size=16}:{name:string;kind:Entry['kind'];expanded?:boolean;size?:number}){
   if(kind==='directory')return expanded?<FolderOpen size={size} aria-hidden="true"/>:<Folder size={size} aria-hidden="true"/>;
@@ -42,7 +41,7 @@ function FolderNode({path,label,depth=0,base,revision,hidden,directory,selected,
   return <div className="paper-file-node"><div className={`paper-file-tree-row ${directory===path&&!selected?'active':''}`} style={{paddingInlineStart:Math.min(depth,8)*12+4}}>
     <button type="button" className="icon-button" aria-label={`${expanded?'折叠':'展开'} ${label}`} aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button>
     <button type="button" title={label} aria-current={directory===path&&!selected?true:undefined} onClick={()=>onDirectory(path)}><FileGlyph name={label} kind="directory" expanded={expanded}/><span>{label}</span></button>
-  </div>{expanded&&<div>{loading?<p className="quiet">正在读取…</p>:listing?.entries.map(entry=>entry.kind==='directory'?<FolderNode key={entry.path} path={entry.path} label={fileLabel(entry.path,entry.name)} depth={depth+1} base={base} revision={revision} hidden={hidden} directory={directory} selected={selected} onDirectory={onDirectory} onFile={onFile} onError={onError}/>:<button type="button" key={entry.path} style={{paddingInlineStart:Math.min(depth+1,8)*12+28}} className={`paper-file-leaf ${selected===entry.path?'active':''}`} aria-current={selected===entry.path?true:undefined} disabled={entry.kind==='symlink'} title={entry.kind==='symlink'?'符号链接：不跟随访问外部内容':entry.path} onClick={()=>onFile(entry.path)}><FileGlyph name={entry.name} kind={entry.kind} size={14}/><span>{entry.name}</span>{entry.kind==='symlink'&&<small>链接</small>}</button>)}</div>}</div>;
+  </div>{expanded&&<div>{loading?<p className="quiet">正在读取…</p>:listing?.entries.map(entry=>entry.kind==='directory'?<FolderNode key={entry.path} path={entry.path} label={entry.name} depth={depth+1} base={base} revision={revision} hidden={hidden} directory={directory} selected={selected} onDirectory={onDirectory} onFile={onFile} onError={onError}/>:<button type="button" key={entry.path} style={{paddingInlineStart:Math.min(depth+1,8)*12+28}} className={`paper-file-leaf ${selected===entry.path?'active':''}`} aria-current={selected===entry.path?true:undefined} disabled={entry.kind==='symlink'} title={entry.kind==='symlink'?'符号链接：不跟随访问外部内容':entry.path} onClick={()=>onFile(entry.path)}><FileGlyph name={entry.name} kind={entry.kind} size={14}/><span>{entry.name}</span>{entry.kind==='symlink'&&<small>链接</small>}</button>)}</div>}</div>;
 }
 export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNavigate}:{
   projectId:string;focusId?:string;initialDirectory?:string;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void;
@@ -169,7 +168,7 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
             <button type="button" aria-current={crumbs.length===0?'location':undefined} onClick={()=>openDirectory('')}>工作区</button>
             {crumbs.map((part,index)=><React.Fragment key={index}>
               <ChevronRight size={12} aria-hidden="true"/>
-              <button type="button" aria-current={index===crumbs.length-1?'location':undefined} onClick={()=>openDirectory(crumbs.slice(0,index+1).join('/'))}>{fileLabel(crumbs.slice(0,index+1).join('/'),part)}</button>
+              <button type="button" aria-current={index===crumbs.length-1?'location':undefined} onClick={()=>openDirectory(crumbs.slice(0,index+1).join('/'))}>{part}</button>
             </React.Fragment>)}
           </nav>
         </div>
@@ -220,7 +219,7 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
             {preview.kind==='pdf'?<iframe key={contentUrl} className="paper-pdf-preview" title={`PDF：${preview.name}`} src={contentUrl}/>:preview.kind==='image'?<img className="paper-image-preview" src={contentUrl} alt={preview.name}/>:preview.content!==undefined?editing?<textarea className="paper-file-editor" aria-label="文件源码" spellCheck={false} value={draft} onChange={event=>setDraft(event.target.value)}/>: /\.(md|markdown)$/i.test(preview.path)?<Markdown body={draft.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')}/>:<div className="paper-text-preview">{draft.split('\n').map((line,index)=><div key={index}><span>{index+1}</span><code>{line||' '}</code></div>)}</div>:<p>此文件为二进制、非 UTF-8 文本或超过 2 MiB，暂不在线编辑，可下载查看。</p>}
           </>:<>
             <header className="paper-files-list-heading">
-              <h3>{results?'搜索结果':manuscriptView?'稿件目录':fileLabel(directory,crumbs.at(-1)??'工作区文件')}</h3>
+              <h3>{results?'搜索结果':manuscriptView?'稿件目录':(crumbs.at(-1)??'工作区文件')}</h3>
               {(results||currentListing)&&<span>{entries.length} 项</span>}
             </header>
             {truncated&&results&&<p className="quiet">搜索结果已截断，请缩小文件名范围。</p>}
@@ -232,8 +231,8 @@ export function ProjectFilesPage({projectId,focusId,initialDirectory='',onNaviga
                     <button type="button" className="paper-file-open" disabled={busy||entry.kind==='symlink'} onClick={()=>entry.kind==='directory'?openDirectory(entry.path):selectFile(entry.path)}>
                       <span className="paper-file-tile" data-kind={entry.kind}><FileGlyph name={entry.name} kind={entry.kind} size={19}/></span>
                       <span className="paper-file-info">
-                        <strong>{fileLabel(entry.path,entry.name)}</strong>
-                        <small>{entry.path==='library'&&<>library/ · </>}{results&&parent(entry.path)&&<>{parent(entry.path)} · </>}{entry.kind==='symlink'?'符号链接，不跟随访问':entry.kind==='directory'?'文件夹':size(entry.size)}</small>
+                        <strong>{entry.name}</strong>
+                        <small>{results&&parent(entry.path)&&<>{parent(entry.path)} · </>}{entry.kind==='symlink'?'符号链接，不跟随访问':entry.kind==='directory'?'文件夹':size(entry.size)}</small>
                       </span>
                     </button>
                     {entry.protected&&<span className="paper-file-managed">平台管理</span>}
