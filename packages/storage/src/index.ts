@@ -48,8 +48,8 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 6) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 6) return;
+    if (version > 7) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 7) return;
     if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
@@ -191,6 +191,20 @@ export class TrashStore {
       PRAGMA user_version = 6;
       COMMIT;
     `);
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE IF NOT EXISTS project_code_repositories(
+        repository_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+        data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS project_code_repositories_project ON project_code_repositories(project_id);
+      INSERT OR IGNORE INTO project_code_repositories
+        SELECT json_extract(data,'$.repository_id'),project_id,data FROM experiment_repositories;
+      PRAGMA user_version = 7;
+      COMMIT;
+    `);
+
   }
 
   createProject(input: Omit<ResearchProject, "protocol_version" | "project_id" | "status" | "created_at" | "updated_at">): ResearchProject {

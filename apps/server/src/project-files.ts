@@ -59,8 +59,10 @@ export class ProjectFiles {
   private structuralWritable(id:string,path:string){
     const physical=this.writable(id,path);
     const row=this.store.db.prepare('SELECT data FROM experiment_repositories WHERE project_id=?').get(id) as {data:string}|undefined;
-    const repository=row?(JSON.parse(row.data) as {path?:string}).path:undefined;
-    if(repository&&existsSync(repository)&&inside(physical,realpathSync(repository)))fail('FILES_BOUND_REPOSITORY',403);
+    if(row.some(item=>{
+      const repository=(JSON.parse(item.data) as {path:string}).path;
+      return existsSync(repository)&&inside(physical,realpathSync(repository));
+    }))fail('FILES_BOUND_REPOSITORY',403);
     return physical;
   }
   private entry(id:string,parent:string,name:string):FileEntry{

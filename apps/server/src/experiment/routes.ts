@@ -199,18 +199,28 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     }
     }finally{release();}
   }
+  if(parts.length===1&&parts[0]==="repositories"){
+    if(method==="GET"){send(response,200,{repositories:service.data.repositories(projectId),default_id:service.data.repository(projectId)?.repository_id??null});return true;}
+    if(method==="POST"){send(response,201,{repository:await service.repository.bind(projectId,await readJson(request),false)});return true;}
+    if(method==="PUT"){
+      const input=z.object({repository_id:z.string().min(1)}).strict().parse(await readJson(request));
+      const repository=service.repository.bound(projectId,input.repository_id);
+      service.data.setDefaultRepository(repository);send(response,200,{repository});return true;
+    }
+  }
   if(parts[0]==="repository"){
+    const repositoryId=url.searchParams.get('repository_id')??undefined;
     if(parts.length===3&&parts[1]==="directories"&&parts[2]==="select"&&method==="POST"){send(response,200,await selectDirectory(await readJson(request)));return true;}
     if(parts.length===2&&parts[1]==="directories"&&method==="GET"){send(response,200,await browseDirectories(url.searchParams.get("path")??undefined));return true;}
     if(parts.length===2&&parts[1]==="directories"&&method==="POST"){send(response,201,await createDirectory(await readJson(request)));return true;}
     if(parts.length===1&&method==="GET"){send(response,200,{repository:service.data.repository(projectId)??null});return true;}
     if(parts.length===1&&method==="PUT"){send(response,200,{repository:await service.repository.bind(projectId,await readJson(request))});return true;}
-    if(parts[1]==="status"&&method==="GET"){send(response,200,await service.repository.status(projectId));return true;}
-    if(parts[1]==="tree"&&method==="GET"){send(response,200,{entries:await service.repository.tree(projectId,url.searchParams.get("path")??"")});return true;}
-    if(parts[1]==="file"&&method==="GET"){send(response,200,await service.repository.file(projectId,url.searchParams.get("path")??""));return true;}
-    if(parts[1]==="history"&&method==="GET"){send(response,200,{commits:await service.repository.history(projectId,z.coerce.number().int().min(1).parse(url.searchParams.get("page")??1))});return true;}
-    if(parts[1]==="commit"&&method==="POST"){const input=z.object({message:z.string().trim().min(1).max(2000)}).strict().parse(await readJson(request));send(response,200,await service.repository.commit(projectId,input.message));return true;}
-    if(parts[1]==="editor"&&method==="POST"){await service.repository.editor(projectId);send(response,200,{started:true});return true;}
+    if(parts[1]==="status"&&method==="GET"){send(response,200,await service.repository.status(projectId,repositoryId));return true;}
+    if(parts[1]==="tree"&&method==="GET"){send(response,200,{entries:await service.repository.tree(projectId,url.searchParams.get("path")??"",repositoryId)});return true;}
+    if(parts[1]==="file"&&method==="GET"){send(response,200,await service.repository.file(projectId,url.searchParams.get("path")??"",repositoryId));return true;}
+    if(parts[1]==="history"&&method==="GET"){send(response,200,{commits:await service.repository.history(projectId,z.coerce.number().int().min(1).parse(url.searchParams.get("page")??1),repositoryId)});return true;}
+    if(parts[1]==="commit"&&method==="POST"){const input=z.object({message:z.string().trim().min(1).max(2000)}).strict().parse(await readJson(request));send(response,200,await service.repository.commit(projectId,input.message,repositoryId));return true;}
+    if(parts[1]==="editor"&&method==="POST"){await service.repository.editor(projectId,repositoryId);send(response,200,{started:true});return true;}
   }
   if(parts[0]==="ssh-profiles"){
     if(parts.length===2&&parts[1]==="from-command"&&method==="POST"){

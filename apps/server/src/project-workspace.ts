@@ -66,7 +66,7 @@ export class ProjectWorkspaces {
       else if(Array.isArray(value))for(const entry of value)visit(entry,key);
       else if(value&&typeof value==='object')for(const [name,entry] of Object.entries(value))visit(entry,name);
     };
-    for(const table of ['experiment_repositories','experiment_datasets','experiment_plans'])for(const row of this.store.db.prepare(`SELECT data FROM ${table} WHERE project_id=?`).all(id) as {data:string}[])visit(JSON.parse(row.data));
+    for(const table of ['experiment_repositories','project_code_repositories','experiment_datasets','experiment_plans'])for(const row of this.store.db.prepare(`SELECT data FROM ${table} WHERE project_id=?`).all(id) as {data:string}[])visit(JSON.parse(row.data));
     return [...refs];
   }
   state(id:string){
@@ -242,7 +242,7 @@ export class ProjectWorkspaces {
   private rebind(id:string,source:string,target:string){
     const map=(value:unknown):unknown=>typeof value==='string'&&inside(source,value)?target+value.slice(source.length):Array.isArray(value)?value.map(map):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,map(entry)])):value;
     this.store.db.transaction(()=>{
-      for(const table of ['experiment_repositories','experiment_datasets','experiment_plans','experiment_runs']){
+      for(const table of ['experiment_repositories','project_code_repositories','experiment_datasets','experiment_plans','experiment_runs']){
         const rows=this.store.db.prepare(`SELECT rowid,data FROM ${table} WHERE project_id=?`).all(id) as {rowid:number;data:string}[];
         for(const row of rows)this.store.db.prepare(`UPDATE ${table} SET data=? WHERE rowid=?`).run(JSON.stringify(map(JSON.parse(row.data))),row.rowid);
       }
