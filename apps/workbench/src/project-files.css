@@ -218,11 +218,15 @@
 
 .paper-files-tree {
   min-width: 0;
-  max-height: 78dvh;
   padding: 10px 7px;
-  overflow: auto;
   border-inline-end: 1px solid var(--line);
   background: var(--surface-soft);
+}
+
+.paper-files-tree-scroll {
+  max-height: 74dvh;
+  overflow: auto;
+  padding: 2px;
 }
 
 .paper-files-tree-heading {
@@ -533,10 +537,10 @@
   .paper-file-search { flex: 1 1 100%; }
   .paper-files-layout { grid-template-columns: minmax(0, 1fr); }
   .paper-files-tree {
-    max-height: 200px;
     border-inline-end: 0;
     border-bottom: 1px solid var(--line);
   }
+  .paper-files-tree-scroll { max-height: 160px; }
 }
 
 @media (max-width: 400px) {

@@ -177,7 +177,9 @@ export function ProjectFilesPage({projectId,focusId,onNavigate}:{projectId:strin
       <div className="paper-files-layout">
         <aside className="paper-files-tree" aria-label="项目文件树">
           <div className="paper-files-tree-heading"><FolderTree size={15} aria-hidden="true"/>目录</div>
-          <FolderNode path="" label="论文工作区" base={base} revision={revision} hidden={hidden} directory={directory} selected={preview?.path} onDirectory={openDirectory} onFile={selectFile} onError={setError}/>
+          <div className="paper-files-tree-scroll">
+            <FolderNode path="" label="论文工作区" base={base} revision={revision} hidden={hidden} directory={directory} selected={preview?.path} onDirectory={openDirectory} onFile={selectFile} onError={setError}/>
+          </div>
         </aside>
         <div className="paper-files-content" aria-busy={loading||(!preview&&!results&&listingLoading)}>
           {loading?<p className="paper-files-empty" role="status">正在读取文件…</p>:preview?<>
