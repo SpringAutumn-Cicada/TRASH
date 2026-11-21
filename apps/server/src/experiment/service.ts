@@ -1,3 +1,4 @@
+import { ProjectFiles } from "../project-files.js";
 import { assertExperimentScheme, saveRunArchive } from './run-archive.js';
 import { projectRuntime } from "../project-layout.js";
 import { discoverComputeResources, assertComputeSelection } from './compute-resources.js';
@@ -28,7 +29,9 @@ export class ExperimentService {
   readonly datasetUploadSessions:DatasetUploadSessions;
   readonly reproductionQueues:ReproductionQueueService;
   private inFlight=new Set<string>();private closed=false;private timer:ReturnType<typeof setInterval>;
+  private readonly files: ProjectFiles;
   constructor(readonly store:TrashStore){
+    this.files = new ProjectFiles(store, id => this.busyProject(id));
     this.workspaces=new WorkspaceService(store);this.reproductions=new ReproductionService(store);this.data=new ExperimentStore(store.db);this.datasetUploads=new DatasetUploadService(this.data,store.listProjects().map(item=>item.project_id),store.root);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);this.environmentAnalysis=new EnvironmentAnalysisService(store,this.reproductions);this.deployments=new EnvironmentDeploymentService(store,this.reproductions,this.workspaces);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
     this.failureAnalyses=new ExperimentFailureAnalysis(this);
@@ -113,11 +116,26 @@ export class ExperimentService {
   async confirmPlan(projectId:string,id:string,version:number):Promise<ExperimentPlanVersion>{
     const plan=this.data.plan(projectId,id,version);
     if(plan.status==="superseded" || this.data.plans(projectId).some(p=>p.plan_id===id&&p.version>version))experimentError("VERSION_CONFLICT",409);
+    if (plan.status === "confirmed") return plan;
     await this.preflight(plan);
     return this.store.db.transaction(()=>{
+      const latest = this.data.plans(projectId).find(item => item.plan_id === id);
+      if (!latest || latest.version !== version || latest.status === "superseded") experimentError("VERSION_CONFLICT",409);
+      if (latest.status === "confirmed") return latest;
+      const { direction_id, scheme_id } = plan.content;
+      let method_sha256: string | undefined;
+      if (!plan.reproduction && direction_id && scheme_id) {
+        assertExperimentScheme(join(this.store.root, "projects", projectId), direction_id, scheme_id);
+        const path = `experiments/${direction_id}/${scheme_id}/README.md`;
+        const document = this.files.preview(projectId, path);
+        if (document.content === undefined || !document.etag) experimentError("METHOD_UNREADABLE",422);
+        method_sha256 = createHash("sha256").update(document.content).digest("hex");
+        this.store.db.prepare("INSERT INTO experiment_method_snapshots(project_id,sha256,content) VALUES (?,?,?) ON CONFLICT DO NOTHING")
+          .run(projectId, method_sha256, document.content);
+      }
       for(const old of this.data.plans(projectId).filter(p=>p.plan_id===id&&p.status==="confirmed"&&p.version!==version))this.data.savePlan({...old,status:"superseded"});
-      const confirmed={...plan,status:"confirmed" as const,confirmed_at:new Date().toISOString()};this.data.savePlan(confirmed);return confirmed;
-    })();
+      const confirmed={...plan,method_sha256,status:"confirmed" as const,confirmed_at:new Date().toISOString()};this.data.savePlan(confirmed);return confirmed;
+    }).immediate();
   }
   submit(projectId:string,input:{plan_id:string;version:number;idempotency_key:string;preparation:boolean},retryOf?:string):ExperimentRun{
     const duplicate=this.data.runs(projectId).find(run=>run.idempotency_key===input.idempotency_key);if(duplicate){if(duplicate.plan.plan_id!==input.plan_id||duplicate.plan.version!==input.version||duplicate.preparation!==input.preparation)experimentError("IDEMPOTENCY_CONFLICT",409);return duplicate;}

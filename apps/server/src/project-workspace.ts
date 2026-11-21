@@ -157,7 +157,7 @@ export class ProjectWorkspaces {
       }
     }
     for(const source of this.store.listSources(id))json(join(this.anchor(id),projectLibraryPath(this.anchor(id),'literature/parsed'),source.source_id+'.json'),{source,segments:this.store.listSourceSegments(source.source_id)});
-    const tables=['projects','sources','artifacts','knowledge_versions','knowledge_keys','knowledge_metrics','knowledge_tasks','experiment_repositories','experiment_datasets','experiment_environments','experiment_plans','experiment_runs'];
+    const tables=['projects','sources','artifacts','knowledge_versions','knowledge_keys','knowledge_metrics','knowledge_tasks','experiment_repositories','experiment_datasets','experiment_environments','experiment_plans','experiment_runs','experiment_method_snapshots'];
     const snapshot=Object.fromEntries(tables.map(table=>[table,this.store.db.prepare(`SELECT * FROM ${table} WHERE project_id=?`).all(id)]));
     const details={
       source_details:this.store.db.prepare('SELECT d.* FROM source_details d JOIN sources s ON s.source_id=d.source_id WHERE s.project_id=?').all(id),

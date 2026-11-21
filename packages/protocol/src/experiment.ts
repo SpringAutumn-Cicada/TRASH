@@ -44,7 +44,7 @@ export const experimentPlanInputSchema = z.object({
   }
 });
 export type ExperimentPlanContent = z.infer<typeof experimentPlanInputSchema>;
-export interface ExperimentPlanVersion { plan_id: string; project_id: string; version: number; status: "draft" | "confirmed" | "superseded"; repository: ProjectRepository; reproduction?:ReproductionSnapshot; profile: SshProfile; datasets: DatasetRef[]; content: ExperimentPlanContent; created_at: string; confirmed_at?: string }
+export interface ExperimentPlanVersion { method_sha256?:string; plan_id: string; project_id: string; version: number; status: "draft" | "confirmed" | "superseded"; repository: ProjectRepository; reproduction?:ReproductionSnapshot; profile: SshProfile; datasets: DatasetRef[]; content: ExperimentPlanContent; created_at: string; confirmed_at?: string }
 export const experimentRunStateSchema = z.enum(["queued", "preflight", "syncing", "running", "collecting", "completed", "failed", "cancel_requested", "cancelled", "disconnected", "unknown_remote_state"]);
 export type ExperimentRunState = z.infer<typeof experimentRunStateSchema>;
 export const ACTIVE_EXPERIMENT_STATES = ["queued", "preflight", "syncing", "running", "collecting", "cancel_requested", "disconnected", "unknown_remote_state"] as const;

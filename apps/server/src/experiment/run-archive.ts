@@ -49,6 +49,8 @@ export function saveRunArchive(root:string,run:ExperimentRun){
   writeOwned(join(path,'run.json'),{
     run_id:run.run_id,direction_id,scheme_id,plan_id:run.plan.plan_id,plan_version:run.plan.version,
     status:run.status,created_at:run.created_at,updated_at:run.updated_at,
+    method_sha256:run.plan.method_sha256,
+    method_snapshot_api:run.plan.method_sha256 && `/api/v1/projects/${run.project_id}/experiment-method-snapshots/${run.plan.method_sha256}`,
     code:run.plan.reproduction
       ? {reproduction_id:run.plan.reproduction.reproduction_id,snapshot_id:run.plan.reproduction.snapshot_id,sha256:run.plan.reproduction.sha256}
       : {repository_id:run.plan.repository.repository_id,commit:run.plan.content.commit_sha},

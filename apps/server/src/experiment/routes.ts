@@ -342,6 +342,13 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
   if(parts[0]==="experiment-schemes"&&parts.length===1&&method==="GET"){
     send(response,200,{schemes:experimentSchemes(join(service.store.root,'projects',projectId))});return true;
   }
+  if (parts[0] === "experiment-method-snapshots" && parts.length === 2 && method === "GET") {
+    const hash = z.string().regex(/^[a-f0-9]{64}$/).parse(parts[1]);
+    const document = service.store.db.prepare("SELECT content FROM experiment_method_snapshots WHERE project_id=? AND sha256=?")
+      .get(projectId, hash) ?? experimentError("NOT_FOUND", 404);
+    send(response, 200, document);
+    return true;
+  }
   if(parts[0]==="experiment-plans"){
     if(parts.length===1&&method==="GET"){send(response,200,{plans:service.data.plans(projectId)});return true;}
     if(parts.length===1&&method==="POST"){const input=z.object({plan_id:z.string().optional(),base_version:z.number().int().nonnegative().default(0),content:z.record(z.unknown())}).strict().parse(await readJson(request));send(response,201,{plan:service.createPlan(projectId,input.content,input.plan_id,input.base_version)});return true;}

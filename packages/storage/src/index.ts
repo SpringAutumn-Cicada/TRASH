@@ -48,8 +48,8 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 7) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 7) return;
+    if (version > 8) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 8) return;
     if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
@@ -178,7 +178,7 @@ export class TrashStore {
       INSERT INTO knowledge_task_summaries(task_id,${summaryFields.join(",")})
       ${selectTaskSummary} WHERE task_id=NEW.task_id
       ON CONFLICT(task_id) DO UPDATE SET ${summaryFields.map(field => `${field}=excluded.${field}`).join(", ")};`;
-    this.db.exec(`
+    if (version < 6) this.db.exec(`
       BEGIN EXCLUSIVE;
       DROP TRIGGER IF EXISTS task_summary_insert;
       DROP TRIGGER IF EXISTS task_summary_update;
@@ -191,7 +191,7 @@ export class TrashStore {
       PRAGMA user_version = 6;
       COMMIT;
     `);
-    this.db.exec(`
+    if (version < 7) this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE IF NOT EXISTS project_code_repositories(
         repository_id TEXT PRIMARY KEY,
@@ -202,6 +202,15 @@ export class TrashStore {
       INSERT OR IGNORE INTO project_code_repositories
         SELECT json_extract(data,'$.repository_id'),project_id,data FROM experiment_repositories;
       PRAGMA user_version = 7;
+      COMMIT;
+    `);
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE experiment_method_snapshots(
+        project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+        sha256 TEXT NOT NULL, content TEXT NOT NULL, PRIMARY KEY(project_id,sha256)
+      );
+      PRAGMA user_version = 8;
       COMMIT;
     `);
 
