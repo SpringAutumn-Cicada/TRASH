@@ -1,3 +1,4 @@
+import { ExperimentMethodAgent } from "./experiment-method-agent.js";
 import { useEffect, useState } from "react";
 import { api, uiError } from "./api.js";
 import { ChatMarkdown } from "./chat-markdown.js";
@@ -60,22 +61,25 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
     finally { setReadingReply(false); }
   }
 
-  async function save() {
-    if (saving || !document?.etag) return;
+  async function save(content = draft, expected = document?.etag, fromAgent = false) {
+    if (saving || !expected) return false;
     setSaving(true);
     setError("");
     try {
       const updated = await api<Document>(base + "/files/save", {method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({path, etag:document.etag, content:draft})});
+        body:JSON.stringify({path, etag:expected, content})});
       setDocument(updated);
       setEditing(false);
       setIncoming(undefined);
+      return true;
     } catch (cause) {
       setError(uiError(cause, "方法设计保存失败，草稿已保留。"));
       if (cause instanceof Error && cause.message === "FILES_CHANGED") {
+        if (fromAgent) return "conflict" as const;
         try { setIncoming(await api<Document>(preview)); }
         catch { setError("无法读取外部修改，草稿已保留。"); }
       }
+      return false;
     } finally { setSaving(false); }
   }
 
@@ -83,9 +87,12 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
   return <section className="experiment-card experiment-method">
     <div className="section-heading"><h3>方法设计</h3><div className="knowledge-toolbar">
       {!editing && <button className="secondary-button" onClick={()=>setRevision(v=>v+1)}>重新读取</button>}
-      {!editing && document?.editable && <button className="primary-button" onClick={()=>{setDraft(body ?? ""); setEditing(true);}}>编辑方法</button>}
+      {!editing && document?.editable && <button className="secondary-button" disabled={saving} onClick={()=>{setDraft(body ?? ""); setEditing(true);}}>编辑方法</button>}
     </div></div>
     {error && <p role="alert">{error}</p>}
+    {document?.editable && document.etag && body !== undefined &&
+      <ExperimentMethodAgent base={base} experimentKey={experimentKey} body={body} etag={document.etag}
+        disabled={editing||saving} onApply={(content,etag)=>save(content,etag,true)} onRefresh={()=>setRevision(v=>v+1)}/>}
     {editing ? <>
       <label>方法说明（Markdown）<textarea className="json-editor" rows={16} value={draft} disabled={saving}
         onChange={event=>setDraft(event.target.value)}/></label>

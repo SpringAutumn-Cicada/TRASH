@@ -250,3 +250,15 @@
 
 .result-interpretation { display: grid; gap: .75rem; min-width: 0; border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; }
 .result-interpretation legend { padding-inline: .35rem; font-weight: 600; }
+
+.method-agent { margin-bottom: 1.25rem; }
+.method-agent form, .method-candidate { margin-block: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: .75rem; }
+.method-agent form label { display: grid; gap: .5rem; }
+.method-agent form textarea { min-height: 96px; margin-bottom: .75rem; resize: vertical; }
+.method-candidate h4 { margin-top: 0; }
+.method-candidate details { margin: .75rem 0; }
+.method-diff span { display: block; min-height: 1lh; }
+.method-diff .added { color: var(--ink); background: color-mix(in srgb, #2d9d57 24%, var(--surface)); }
+.method-diff .removed { color: var(--ink); background: color-mix(in srgb, #d75963 24%, var(--surface)); }
+.method-large-diff { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: .75rem; }
+.method-large-diff section { min-width: 0; }
