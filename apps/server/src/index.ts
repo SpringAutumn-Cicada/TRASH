@@ -369,7 +369,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         const document=markdown.read(projectId,url.searchParams.get('id')??'');
         if(document.page_role==='exploration-topic'){
           const candidate=exploration.explorationOrigin(projectId,document);
-          sendJson(response,200,{document:{...document,exploration_candidate:candidate}});return;
+          const added=candidate&&projectQuestions(project).some(question=>question.source_run_id===candidate.run_id&&question.source_candidate_id===candidate.candidate_id);
+          sendJson(response,200,{document:{...document,exploration_candidate:candidate&&{...candidate,added}}});return;
         }
         if(document.level==='summary'){
           const title=legacyMaterialTitle(document.title,document.modified,exploration.summaryTitles(projectId).get(document.id));

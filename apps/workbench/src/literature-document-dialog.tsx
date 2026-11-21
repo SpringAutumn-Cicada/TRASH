@@ -14,7 +14,7 @@ import {projectPath,useUnsavedChanges} from './navigation.js';
 import './markdown-knowledge.css';
 import './wiki-reading.css';
 
-type Document={topic_discovery_history?:boolean;topic_id?:string;page_role?:string;material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
+type Document={exploration_candidate?:{run_id:string;candidate_id:string;title:string;question:string;complete:boolean;added:boolean};topic_discovery_history?:boolean;topic_id?:string;page_role?:string;material_scope?:string;id:string;source_id?:string;card_type?:string;kind:string;title:string;path:string;text:string;hash:string;stale?:boolean;level?:string};
 type DirectoryVersion={id:string;title:string;hash:string;text:string;at:string;current:boolean;archived:boolean};
 export function LiteratureDocumentDialog({projectId,source,initialType='wiki',initialId,documentId,onDocumentNavigate,onClose,onSaved,embedded=false,onReadingLock}:{onReadingLock?:(locked:boolean)=>void;embedded?:boolean;projectId:string;source?:Source;initialType?:string;initialId?:string;documentId?:string;onDocumentNavigate?:(id:string)=>void;onClose:()=>void;onSaved:()=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/markdown-knowledge`;
@@ -60,6 +60,23 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
     });
   };
   const remove=()=>{if(!doc||doc.source_id||doc.level==='overview'||doc.path.endsWith('/index.md')||!window.confirm(`确认删除“${doc.title}”？条目将移入回收站。`))return;void run(async()=>{await api(base+'/delete',{method:'POST',body:JSON.stringify({id:doc.id,expected:doc.hash,confirm:true})});onSaved();onClose();});};
+  const candidate=doc?.exploration_candidate;
+  const addExplorationCandidate=()=>{
+    if(!candidate?.complete||candidate.added)return;
+    void run(async()=>{
+      const path=`/projects/${encodeURIComponent(projectId)}/research-questions`;
+      const {project}=await api<{project:{updated_at:string}}>(path);
+      try{
+        await api(path,{method:'POST',body:JSON.stringify({
+          title:candidate.title.slice(0,200),question:candidate.question,status:'candidate',
+          rationale:'来自探索主题，待补充检索与验证',expected_updated_at:project.updated_at,
+          source_run_id:candidate.run_id,source_candidate_id:candidate.candidate_id,
+        })});
+      }catch(cause){if(!(cause instanceof Error)||cause.message!=='RESEARCH_QUESTION_EXISTS')throw cause;}
+      setDoc(current=>current?.exploration_candidate?.candidate_id===candidate.candidate_id
+        ?{...current,exploration_candidate:{...candidate,added:true}}:current);
+    });
+  };
   const isTopicOverview=Boolean(doc?.topic_id&&doc.id===doc.topic_id);
   const body=doc?.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')??'';
   const article=isTopicOverview?orderTopicOverview(body.replace(/^\s*#[ \t]+[^\r\n]+(?:\r?\n|$)/,'')):doc?.kind==='wiki-page'&&(doc.level==='single'||doc.level==='summary')?body.replace(/^#\s+.+$/m,()=>`# ${doc.title}`):body;
@@ -81,7 +98,7 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
       if(!embedded&&event.key==='Escape'){event.stopPropagation();close();}
       if(!embedded&&event.key==='Tab'){const nodes=Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')??[]).filter(node=>node.getClientRects().length);const first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
     }}>
-      <header><div><small>{doc?.topic_id?'主题 Wiki 组':doc?.level==='single'?'论文内容':'研究知识'}</small><h3 id="literature-document-title">{doc?.id.includes('--')?doc.title:source?.title??doc?.title??'关联知识'}</h3></div><div className="library-document-header-actions">{doc&&!doc.source_id&&doc.level!=='overview'&&!doc.path.endsWith('/index.md')&&<button type="button" className="icon-button library-document-delete" aria-label="删除当前 Wiki" title="删除当前 Wiki" disabled={busy||editing} onClick={remove}><Trash2 size={16}/></button>}{!embedded&&<button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button>}</div></header>
+      <header><div><small>{doc?.topic_id?'主题 Wiki 组':doc?.level==='exploration'?'探索主题':doc?.level==='single'?'论文内容':'研究知识'}</small><h3 id="literature-document-title">{doc?.id.includes('--')?doc.title:source?.title??doc?.title??'关联知识'}</h3></div><div className="library-document-header-actions">{doc&&!doc.source_id&&doc.level!=='overview'&&doc.page_role!=='exploration-topic'&&!doc.path.endsWith('/index.md')&&<button type="button" className="icon-button library-document-delete" aria-label="删除当前 Wiki" title="删除当前 Wiki" disabled={busy||editing} onClick={remove}><Trash2 size={16}/></button>}{!embedded&&<button type="button" className="icon-button" aria-label="关闭内容" disabled={busy} onClick={close}><X size={18}/></button>}</div></header>
       {error&&<ErrorNotice>{error}</ErrorNotice>}
       {doc?.topic_id&&<nav className="topic-wiki-navigation" aria-label="主题组页面">{documents.filter(page=>page.topic_id===doc.topic_id).sort((a,b)=>Number(b.id===doc.topic_id)-Number(a.id===doc.topic_id)||a.path.localeCompare(b.path)).map(page=><button type="button" key={page.id} className={page.id===doc.id?'selected':''} aria-current={page.id===doc.id?'page':undefined} disabled={busy||loading} onClick={()=>{if(dirty&&!window.confirm('放弃未保存的修改？'))return;reading.go(page.id);}}>{page.id===doc.topic_id?'主题总览':page.id.endsWith('--methods')?'方法与条件':page.id.endsWith('--results')?'结果与分歧':'可复用认识'}</button>)}</nav>}
       {doc?.topic_id&&topicVersions&&<div className="topic-wiki-versions">{topicVersions.map(version=><details key={version.revision}><summary>版本 {version.revision} · {new Date(version.at).toLocaleString()} · {version.current.length} 页</summary>{version.current.map(file=><p key={file.path}><code>{file.path.split('/').at(-1)} · {file.hash.slice(0,12)}</code> <button type="button" disabled={busy} onClick={()=>void run(async()=>{const id=knowledgeDocumentId(file.path);const versions=(await api<{versions:{hash:string;text:string}[]}>(base+'/history?id='+encodeURIComponent(id??''))).versions;const snapshot=versions.find(item=>item.hash===file.hash);if(!snapshot)throw new Error('该文件快照不存在');setHistory([snapshot]);})}>查看快照</button></p>)}</details>)}{!topicVersions.length&&<p>暂无整组发布快照。</p>}</div>}
@@ -94,6 +111,11 @@ export function LiteratureDocumentDialog({projectId,source,initialType='wiki',in
           </details>)}
         </section>:doc?<>
           {linked&&!isTopicOverview&&<p>关联文档：{doc.title}</p>}{doc.stale&&<p className="mk-stale">来源有变化 · 待更新</p>}
+          {!editing&&doc.page_role==='exploration-topic'&&<div className="topic-direction-actions">
+            {candidate?<button type="button" className="secondary-button" disabled={busy||!candidate.complete||candidate.added} onClick={addExplorationCandidate}>
+              {candidate.added?'已加入候选问题':candidate.complete?'加入候选问题':'依据或章节待补齐'}
+            </button>:<span>原始候选来源暂不可用。</span>}
+          </div>}
           {isTopicOverview&&!editing&&<div className="topic-direction-actions">
             <a className="text-button" href={directionUrl()}>从此主题探索方向</a>
             {questions.length>0&&<details><summary>选择待验证问题</summary><ul>{questions.map(question=><li key={question}><a href={directionUrl(question)}>{question}</a></li>)}</ul></details>}
