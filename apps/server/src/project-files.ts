@@ -22,7 +22,7 @@ type FileEntry={name:string;path:string;kind:'directory'|'file'|'symlink';size:n
 type Recycled={id:string;path:string;deletedAt:string;fingerprint:string;kind:'file'|'directory'};
 export class ProjectFiles {
   private knowledge:KnowledgeStore;
-  constructor(private store:TrashStore,private blocked:(id:string)=>boolean){this.knowledge=new KnowledgeStore(store.db);}
+  constructor(private store:TrashStore,private blocked:(id:string)=>boolean, private methodWriteBlocked=blocked){this.knowledge=new KnowledgeStore(store.db);}
   private root(id:string){const root=join(this.store.root,'projects',id);if(!existsSync(root))fail('FILES_WORKSPACE_MISSING',404);return realpathSync(root);}
   private locate(id:string,value:string,allowMissing=false){
     inputPath.parse(value);const root=this.root(id),normalized=value.split('/').filter(Boolean).join('/');
@@ -49,8 +49,8 @@ export class ProjectFiles {
     const match=libraryLogicalPath(path.split('/').filter(Boolean).join('/')).match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
     return match?{kind:match[1]==='wiki'?'wiki-page' as const:'literature-card' as const,id:match[2]}:undefined;
   }
-  private writable(id:string,path:string){
-    if(this.blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
+  private writable(id:string,path:string,blocked=this.blocked){
+    if(blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
     if(this.isProtected(path))fail('FILES_MANAGED_READONLY',403);
     const physical=this.locate(id,path,true);
     // Registered artifacts remain immutable even when stored in a nonstandard project folder.
@@ -229,7 +229,10 @@ export class ProjectFiles {
   save(id:string,value:unknown){
     const input=z.object({path:inputPath,etag:z.string().regex(/^[a-f0-9]{64}$/),content:z.string().max(textLimit),version:z.number().int().positive().optional()}).strict().parse(value);
     if(Buffer.byteLength(input.content)>textLimit)fail('FILES_TOO_LARGE',413);
-    if(this.blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
+    // Confirmed runs use their frozen method. Editing the live README still uses its content hash.
+    const blocked = /^experiments\/[a-z0-9][a-z0-9_-]{0,63}\/[a-z0-9][a-z0-9_-]{0,63}\/README\.md$/.test(input.path)
+      ? this.methodWriteBlocked : this.blocked;
+    if(blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
     const path=this.locate(id,input.path),managed=this.managed(input.path);
     if(managed){
       if(!existsSync(join(this.root(id),'project.yaml')))fail('FILES_MANAGED_READONLY',403);
@@ -238,7 +241,7 @@ export class ProjectFiles {
       this.knowledge.write(id,managed.kind,{object_id:managed.id,base_version:record.version,content:parseKnowledgeMarkdown(input.content,record)});
     }else{
       if(!this.preview(id,input.path).editable)fail('FILES_MANAGED_READONLY',403);
-      this.writable(id,input.path);if(hash(this.bytes(path))!==input.etag)fail('FILES_CHANGED');
+      this.writable(id,input.path,blocked);if(hash(this.bytes(path))!==input.etag)fail('FILES_CHANGED');
       const temp=path+'.'+randomUUID()+'.tmp';
       try{writeFileSync(temp,input.content,{flag:'wx',mode:lstatSync(path).mode&0o777});renameSync(temp,path);}finally{if(existsSync(temp))unlinkSync(temp);}
     }

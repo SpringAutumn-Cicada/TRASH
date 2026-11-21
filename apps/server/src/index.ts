@@ -809,7 +809,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const codeAgent = new CodeAgent(store, experiments);
   const analysis = new LiteratureAnalysis(store, knowledge, agent);
   const exploration=new ResearchExploration(store,knowledge,agent);
-  const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)));
+  const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)), id=>workspaces.busy(id));
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
     const origin = request.headers.origin;

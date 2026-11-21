@@ -4,6 +4,7 @@ import { ChatMarkdown } from "./chat-markdown.js";
 import { useUnsavedChanges } from "./navigation.js";
 
 type Document = { content?: string; etag?: string; editable: boolean };
+type MethodTask = {task_id:string; status:string; instructions:string; experiment?:{direction_id:string;scheme_id:string}};
 type Source = { name: string; path: string; kind: string };
 
 export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
@@ -18,6 +19,8 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
+  const [tasks,setTasks] = useState<MethodTask[]>([]);
+  const [readingReply,setReadingReply] = useState(false);
   const [incoming, setIncoming] = useState<Document>();
   const [revision, setRevision] = useState(0);
   const dirty = editing && draft !== document?.content;
@@ -39,8 +42,23 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
     api<{ entries: Source[] }>(base + "/files?path=research", {signal:controller.signal}).then(({ entries }) => {
       if (!controller.signal.aborted) setSources(entries.filter(item => item.kind === "file" && /\.md$/i.test(item.name) && !item.name.includes("`")));
     }).catch(() => { /* A project without research notes can still edit its method. */ });
+    api<{tasks:MethodTask[]}>(base + "/code-agent/tasks", {signal:controller.signal}).then(value=>{
+      if (!controller.signal.aborted) setTasks(value.tasks.filter(task=>task.status==="completed" &&
+        task.experiment && task.experiment.direction_id+"/"+task.experiment.scheme_id===experimentKey));
+    }).catch(()=>{ /* The method draft is independent of Agent availability. */ });
     return () => controller.abort();
-  }, [base, editing]);
+  }, [base, editing, experimentKey]);
+
+  async function appendReply(id: string) {
+    if (!id || readingReply) return;
+    setReadingReply(true);
+    try {
+      const {task} = await api<{task:{response:string}}>(base+"/code-agent/tasks/"+encodeURIComponent(id));
+      if (task.response.trim()) setDraft(value=>value.trimEnd()+"\n\n"+task.response.trim()+"\n");
+      else setError("此任务没有可引用的回复。");
+    } catch(cause) { setError(uiError(cause,"读取 Agent 回复失败。")); }
+    finally { setReadingReply(false); }
+  }
 
   async function save() {
     if (saving || !document?.etag) return;
@@ -74,12 +92,15 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
       {incoming?.etag && <details open><summary>磁盘上的最新版本</summary><pre>{incoming.content}</pre>
         <button className="secondary-button" onClick={()=>{setDocument(incoming);setIncoming(undefined);setError("");}}>已核对，以此版本为基准继续编辑草稿</button></details>}
       <div className="knowledge-toolbar">
+        {tasks.length>0 && <select aria-label="引用实验 Agent 回复" value="" disabled={saving||readingReply}
+          onChange={e=>void appendReply(e.target.value)}><option value="">引用代码 Agent 回复</option>
+          {tasks.map(task=><option key={task.task_id} value={task.task_id}>{task.instructions.slice(0,65)}</option>)}</select>}
         {sources.length>0 && <select aria-label="引用研究方案" value="" disabled={saving} onChange={e=>{
           const source=e.target.value;
           if(source) setDraft(value=>value.trimEnd()+"\n\n来源方案 · `"+source+"`\n");
         }}><option value="">引用 research 中的方案</option>{sources.map(s=><option key={s.path} value={s.path}>{s.name}</option>)}</select>}
-        <button className="primary-button" disabled={saving||!dirty||Boolean(incoming)} onClick={()=>void save()}>保存方法</button>
-        <button className="secondary-button" disabled={saving} onClick={()=>{
+        <button className="primary-button" disabled={saving||readingReply||!dirty||Boolean(incoming)} onClick={()=>void save()}>保存方法</button>
+        <button className="secondary-button" disabled={saving||readingReply} onClick={()=>{
           if(dirty && !window.confirm("放弃尚未保存的方法修改？")) return;
           setEditing(false); setIncoming(undefined); setRevision(v=>v+1);
         }}>取消</button>

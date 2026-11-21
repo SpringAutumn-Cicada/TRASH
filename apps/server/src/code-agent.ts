@@ -30,6 +30,7 @@ const inputSchema = z.object({
 }).strict();
 type Input = z.infer<typeof inputSchema>;
 export interface CodeTask {
+  experiment?: Input["experiment"];
   purpose?: "project-chat"; conversation_id?: string; session_id?: string; repository_path?: string; repository_id?: string;
   task_id: string; project_id: string; path: string; instructions: string; model: string; sandbox: Input["sandbox"];
   status: "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -172,7 +173,7 @@ export class CodeAgent {
       const document = join(root, "experiments", direction_id, scheme_id, "README.md");
       methodContext = `本次自研实验的方法档案位于 ${JSON.stringify(document)}。涉及算法或评价时先阅读该档案，报告对应的假设、代码位置与配置。区分已有实现和待确认动机。只有工程性改动时无需修订方法。\n`;
     }
-    const task: CodeTask = { task_id: `code_${randomUUID()}`, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "",repository_id:repo?.repository_id??previous?.repository_id };
+    const task: CodeTask = { experiment:input.experiment, task_id: `code_${randomUUID()}`, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "",repository_id:repo?.repository_id??previous?.repository_id };
     if (chatUrl) {
       task.skill_id = input.skill_id;
       task.attachments=attachments.map(({id,name,size,mime,image})=>({id,name,size,mime,image}));
