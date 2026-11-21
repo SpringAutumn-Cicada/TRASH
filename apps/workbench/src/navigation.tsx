@@ -6,6 +6,27 @@ export const projectPages: { id: ProjectPage; label: string }[] = [
   { id: "overview", label: "概览" }, { id: "literature", label: "文献" }, { id: "cards", label: "卡片" },
   { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "files", label: "项目文件" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }
 ];
+export const projectSidebarPages = ["overview","literature","experiments","paper","chat","files"] as const;
+export const experimentTabs = [
+  {id:"runs",label:"计划与运行"},{id:"code",label:"实验代码"},{id:"reproductions",label:"文献复现"},
+  {id:"datasets",label:"数据集"},{id:"results",label:"实验结果"},{id:"compute",label:"算力"}
+] as const;
+export type ExperimentTab=typeof experimentTabs[number]["id"];
+export type NavigateOptions={tab?:ExperimentTab;action?:string;focus?:string;status?:string};
+export function projectSidebarPage(page:ProjectPage){
+  return page==="wiki"||page==="cards"?"literature":page;
+}
+function experimentLocation(page:ProjectPage|undefined,options:NavigateOptions){
+  const {action,focus}=options;
+  if(page==="reproductions")return {page:"experiments" as const,options:{...options,tab:"reproductions" as const}};
+  if(page==="autodl")return {page:"experiments" as const,options:{...options,tab:"compute" as const}};
+  if(page==="data"||page==="results"){
+    const tab=page==="results"||focus||action==="experimental-data"||action==="new-experiment-record"?"results":"datasets";
+    return {page:"experiments" as const,options:{...options,tab:tab as ExperimentTab,
+      action:page==="results"?(action==="new"?"new-experiment-record":"experimental-data"):action}};
+  }
+  return {page,options};
+}
 export const DirtyContext = createContext<(id: string, dirty: boolean) => void>(() => {});
 export function useUnsavedChanges(dirty: boolean): () => void {
   const id = useId(), register = useContext(DirtyContext);
@@ -18,24 +39,29 @@ export function readPreference(key: string): string | null {
 export function writePreference(key: string, value: string): void {
   try { window.localStorage.setItem(key, value); } catch { /* Browser storage may be disabled. */ }
 }
-export function parseProjectRoute(value: string): { projectId: string; page?: ProjectPage; action?: string; focusId?: string; status?: string } | undefined {
+export function parseProjectRoute(value: string) {
   try {
     const url = new URL(value, window.location.origin);
     const match = url.pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?\/?$/);
     if (!match) return undefined;
-    const legacyResults=match[2]==="results";
-    const page:ProjectPage|undefined = legacyResults?"data":projectPages.find(p => p.id === match[2])?.id;
+    const page=match[2]==="results"?"results":projectPages.find(p => p.id === match[2])?.id;
     if (match[2] && !page) return undefined;
-    return { projectId: decodeURIComponent(match[1]), page, action: legacyResults?(url.searchParams.get("action")==="new"?"new-experiment-record":"experimental-data"):url.searchParams.get("action") ?? undefined, focusId: url.searchParams.get("focus") ?? undefined, status: url.searchParams.get("status") ?? undefined };
+    const tab=experimentTabs.find(item=>item.id===url.searchParams.get("tab"))?.id;
+    const {page:normalized,options}=experimentLocation(page,{
+      tab,action:url.searchParams.get("action")??undefined,focus:url.searchParams.get("focus")??undefined,
+      status:url.searchParams.get("status")??undefined
+    });
+    return {projectId:decodeURIComponent(match[1]),page:normalized,tab:options.tab,action:options.action,focusId:options.focus,status:options.status};
   } catch { return undefined; }
 }
-export function projectPath(id: string, page: ProjectPage, options?: { action?: string; focus?: string; status?: string }): string {
-  if(page==="results")return projectPath(id,"data",{...options,action:options?.action==="new"?"new-experiment-record":"experimental-data"});
+export function projectPath(id: string, page: ProjectPage, options:NavigateOptions={}) {
+  const location=experimentLocation(page,options);
   const params = new URLSearchParams();
-  if (options?.action) params.set("action", options.action);
-  if (options?.focus) params.set("focus", options.focus);
-  if (options?.status) params.set("status", options.status);
-  return `/projects/${encodeURIComponent(id)}/${page}${params.size ? `?${params}` : ""}`;
+  for(const key of ["tab","action","focus","status"] as const){
+    const value=location.options[key];
+    if(value)params.set(key,value);
+  }
+  return `/projects/${encodeURIComponent(id)}/${location.page}${params.size ? `?${params}` : ""}`;
 }
 export function useWorkspaceNavigation() {
   const [path, setPath] = useState(() => window.location.pathname + window.location.search);

@@ -23,14 +23,14 @@ import { ExperimentsPage } from "./experiments.js";
 import { ProjectChat } from "./project-chat.js";
 import { OverviewPage } from "./overview.js";
 import { CreateProjectDialog, DeleteProjectDialog } from "./project-dialogs.js";
-import { DirtyContext, parseProjectRoute, projectPages, projectPath, readPreference, useWorkspaceNavigation, writePreference } from "./navigation.js";
+import { DirtyContext, parseProjectRoute, projectPages, projectPath, projectSidebarPage, projectSidebarPages, type NavigateOptions, readPreference, useWorkspaceNavigation, writePreference } from "./navigation.js";
 import "./styles.css";
 import "./themes.css";
 import "./workspace.css";
 
 const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:BookText,data:Database,reproductions:GitBranch,experiments:FlaskConical,autodl:Server,results:ChartColumn,paper:NotebookText,files:FolderOpen,tasks:ListTodo,chat:MessagesSquare};
 
-type NavigateOptions={action?:string;focus?:string;status?:string};
+
 function rememberedPage(id:string):ProjectPage {
   const stored=readPreference(`trash-project-page:${id}`);
   if(stored==="results")return "results";
@@ -112,13 +112,13 @@ function App() {
     if(path==="/"){
       const last=parseProjectRoute(readPreference("trash-last-location")??"/");
       const target=projects.find(item=>item.project_id===last?.projectId);
-      if(target)navigate(projectPath(target.project_id,last?.projectId===target.project_id?(last.page??rememberedPage(target.project_id)):rememberedPage(target.project_id)),true,true);
+      if(target)navigate(projectPath(target.project_id,last.page??rememberedPage(target.project_id),{tab:last.tab}),true,true);
     }else if(project&&route&&!route.page)navigate(projectPath(project.project_id,rememberedPage(project.project_id)),true,true);
   },[loaded,projects,path,navigate]);
   useEffect(()=>{
     if(!project||!route?.page)return;
-    writePreference("trash-last-location",projectPath(project.project_id,route.page));writePreference(`trash-project-page:${project.project_id}`,route.page);writePreference(`trash-project-visited:${project.project_id}`,String(Date.now()));
-  },[project?.project_id,route?.page]);
+    writePreference("trash-last-location",projectPath(project.project_id,route.page,{tab:route.tab}));writePreference(`trash-project-page:${project.project_id}`,route.page);writePreference(`trash-project-visited:${project.project_id}`,String(Date.now()));
+  },[project?.project_id,route?.page,route?.tab]);
   const closeDrawer=useCallback(()=>{setDrawer(false);requestAnimationFrame(()=>toggleRef.current?.focus());},[]);
   useEffect(()=>{
     if(!narrow||!drawer)return;
@@ -168,7 +168,11 @@ function App() {
       {inside&&project?<>
         <button type="button" className="sidebar-back" title="返回项目列表" aria-label="返回项目列表" onClick={()=>{setSidebarLayer("projects");setNewMenu(false);requestAnimationFrame(()=>sidebarRef.current?.querySelector<HTMLElement>('.sidebar-search input,.sidebar-create button')?.focus());}}><ArrowLeft size={16}/><span>返回项目列表</span></button>
         <div className="sidebar-current-project" title={project.title}><span className="sidebar-current-symbol" aria-hidden="true">{project.title.slice(0,1)}</span><div><small>当前项目</small><strong>{project.title}</strong></div></div>
-        <nav className="sidebar-page-list" aria-label="项目功能">{projectPages.filter(item=>item.id!=="cards"&&item.id!=="wiki").map(item=>{const Icon=pageIcons[item.id];return <button type="button" key={item.id} className={`sidebar-page-link ${(page===item.id||(item.id==="literature"&&(page==="cards"||page==="wiki")))?"active":""}`} aria-current={(page===item.id||(item.id==="literature"&&(page==="cards"||page==="wiki")))?"page":undefined} aria-label={item.label} title={item.label} onClick={()=>goPage(item.id)}><Icon size={18}/><span>{item.label}</span></button>;})}</nav>
+        <nav className="sidebar-page-list" aria-label="项目功能">{projectSidebarPages.map(id=>{
+          const label=projectPages.find(item=>item.id===id)!.label;
+          const Icon=pageIcons[id],active=projectSidebarPage(page)===id;
+          return <button type="button" key={id} className={`sidebar-page-link${active?" active":""}`} aria-current={active?"page":undefined} aria-label={label} title={label} onClick={()=>goPage(id)}><Icon size={18} aria-hidden="true"/><span>{label}</span></button>;
+        })}</nav>
       </>:<>
         <div className="sidebar-create"><button className="primary-button" aria-label="新建项目" title="新建项目" onClick={openCreate}><Plus size={16}/><span>新建项目</span></button>{!compact&&<button className="secondary-button" aria-label="更多项目操作" aria-expanded={newMenu} onClick={()=>{if(!newMenu&&!canLeave(()=>setNewMenu(true)))return;setNewMenu(!newMenu);}}><ChevronDown size={15}/></button>}</div>
         {newMenu&&!compact&&<div className="sidebar-secondary"><RestoreKnowledge onRestored={(restored)=>{void refresh().then(()=>{if(restored)navigate(projectPath(restored.project_id,"overview"),false,true);});setNewMenu(false);}}/></div>}
@@ -182,12 +186,13 @@ function App() {
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
         <div className="workspace-title"><h1>{project?.title??"欢迎使用 TRASH"}</h1><p>{(project?.research_question||project?.research_area)??"整理文献、记录思路，逐步推进研究。"}</p></div>
         {project&&<div className="workspace-autodl-control"><AutoDlConnectionStatus key={project.project_id} projectId={project.project_id}/><button type="button" className="secondary-button workspace-autodl-connect" onClick={()=>{setAutoDlProfile(undefined);setAutoDlOpen(true);}}><Server size={16}/><span>AutoDL 连接</span></button></div>}
+        {project&&<button type="button" className="secondary-button" onClick={()=>goPage("tasks")}>任务</button>}
         {project&&<div className="workspace-project-menu"><button className="icon-button" aria-label="项目操作" aria-expanded={projectMenu} onClick={()=>setProjectMenu(!projectMenu)}><MoreHorizontal size={20}/></button>{projectMenu&&<div className="workspace-menu" onKeyDown={e=>{if(e.key==="Escape")setProjectMenu(false);}}><button onClick={()=>{if(canLeave(()=>{setWorkspaceOpen(true);setProjectMenu(false);})){setWorkspaceOpen(true);setProjectMenu(false);}}}><FolderOpen size={15}/>项目配置</button><button onClick={()=>void exportProject()}><Download size={15}/>导出项目知识包</button><button className="danger-action" onClick={()=>{setDeleteTarget(project);setProjectMenu(false);}}><Trash2 size={15}/>删除项目</button><button onClick={()=>setProjectMenu(false)}><X size={15}/>关闭菜单</button></div>}</div>}
       </header>
       <main className="workspace-content">
         {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+":"+path}>
-          {page==="tasks"?<TaskWorkspace key={project.project_id} projectId={project.project_id} focusId={route.focusId}/>:page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} onOpenSettings={()=>setWorkspaceOpen(true)} projectUpdatedAt={project.updated_at} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"||page==="reproductions"||page==="autodl"?<ExperimentsPage projectId={project.project_id} reproductionOnly={page==="reproductions"} autoDlOnly={page==="autodl"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onBrowseArchive={focus=>goPage("files",{action:"directory",focus})} onResult={id=>goPage("results",{focus:id})}/>:page==="data"?<DataPage projectId={project.project_id} onNavigate={goPage} action={route.action} focusId={route.focusId} status={route.status}/>:page==="files"?<ProjectFilesPage key={project.project_id+":"+(route.action==="directory"?route.focusId??"":"")} projectId={project.project_id} initialDirectory={route.action==="directory"?route.focusId:undefined} focusId={route.action==="directory"?undefined:route.focusId} onNavigate={goPage}/>:page==="paper"?<ManuscriptPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="chat"?<ProjectChat projectId={project.project_id} onBrowseResearch={focus=>goPage("files",{action:"directory",focus})}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
+          {page==="tasks"?<TaskWorkspace key={project.project_id} projectId={project.project_id} focusId={route.focusId}/>:page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} onOpenSettings={()=>setWorkspaceOpen(true)} projectUpdatedAt={project.updated_at} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"&&(route.tab!=="datasets"&&route.tab!=="results")?<ExperimentsPage projectId={project.project_id} reproductionOnly={route.tab==="reproductions"} autoDlOnly={route.tab==="compute"} snapshotId={route.action==="reproduction-plan"?route.focusId:undefined} focusId={route.action==="reproduction-plan"?undefined:route.focusId} onReproductionPlan={snapshot=>goPage("experiments",{action:"reproduction-plan",focus:snapshot.snapshot_id})} onBrowseArchive={focus=>goPage("files",{action:"directory",focus})} onResult={id=>goPage("results",{focus:id})}/>:page==="experiments"?<DataPage projectId={project.project_id} onNavigate={goPage} action={route.tab==="results"?route.action??"experimental-data":route.action} focusId={route.focusId} status={route.status}/>:page==="files"?<ProjectFilesPage key={project.project_id+":"+(route.action==="directory"?route.focusId??"":"")} projectId={project.project_id} initialDirectory={route.action==="directory"?route.focusId:undefined} focusId={route.action==="directory"?undefined:route.focusId} onNavigate={goPage}/>:page==="paper"?<ManuscriptPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="chat"?<ProjectChat projectId={project.project_id} onBrowseResearch={focus=>goPage("files",{action:"directory",focus})}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
