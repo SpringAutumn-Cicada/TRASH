@@ -1,3 +1,4 @@
+import { createExperiment, experimentCatalogUpdate, listExperiments, setExperimentCode } from "./catalog.js";
 import { experimentSchemes } from './run-archive.js';
 import { startDirectoryRepair, directoryRepair, applyDirectoryRepair, stopDirectoryRepair, resumeDirectoryRepair } from './directory-repair.js';
 import { discoverComputeResources } from './compute-resources.js';
@@ -307,6 +308,25 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="GET"){send(response,200,{datasets:service.data.datasets(projectId)});return true;}
     if(parts.length===1&&method==="POST"){const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const dataset={...value,dataset_id:`dataset_${randomUUID()}`,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(dataset);send(response,201,{dataset});return true;}
     if(parts[2]==="check"&&method==="POST"){send(response,202,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
+  }
+  if (parts[0] === "experiment-catalog" && parts.length === 1) {
+    const root = join(service.store.root, "projects", projectId);
+    if (!service.store.getProject(projectId)) experimentError("PROJECT_NOT_FOUND", 404);
+    if (method === "GET") {
+      send(response, 200, { experiments: listExperiments(root) });
+      return true;
+    }
+    if (method === "POST") {
+      send(response, 201, { experiment: createExperiment(root, await readJson(request)) });
+      return true;
+    }
+    if (method === "PUT") {
+      const input = experimentCatalogUpdate.parse(await readJson(request));
+      if (input.code.repository_id) service.repository.bound(projectId, input.code.repository_id);
+      setExperimentCode(root, input);
+      send(response, 200, { experiments: listExperiments(root) });
+      return true;
+    }
   }
   if(parts[0]==="experiment-schemes"&&parts.length===1&&method==="GET"){
     send(response,200,{schemes:experimentSchemes(join(service.store.root,'projects',projectId))});return true;
