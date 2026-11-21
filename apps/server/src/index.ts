@@ -6,6 +6,8 @@ import {evidenceMigrationPreview,migrateEvidence} from './evidence-migration.js'
 import {projectQuestions,saveProjectQuestion} from './research-questions.js';
 import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
+import {libraryMigrationPending,libraryPreview,migrateLibrary,rollbackLibrary} from './library-migration.js';
+import {pdfPreparation} from './pdf-preparation.js';
 import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
 import {sourceAnalyses,streamSourceAnalyses} from './source-analyses.js';
@@ -173,6 +175,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    const anchor=join(store.root,'projects',projectId);
+    const libraryRoute=subpath==='workspace/library'||subpath==='workspace/library/rollback';
+    if(libraryMigrationPending(anchor)&&!libraryRoute&&!(subpath==='workspace'&&method==='GET')){
+      sendJson(response,409,{error:'LIBRARY_MIGRATION_PENDING'});return;
+    }
     if(!subpath&&method==='PATCH'){
       const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_constraints:z.string().trim().max(10000).optional(),research_area:z.string().trim().max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
       if(input.expected_updated_at&&input.expected_updated_at!==project.updated_at){sendJson(response,409,{error:'VERSION_CONFLICT'});return;}
@@ -184,6 +191,23 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(libraryRoute){
+      if(subpath==='workspace/library'&&method==='GET'){sendJson(response,200,libraryPreview(anchor));return;}
+      if(method==='POST'){
+        const input=z.object({confirm:z.literal(true),fingerprint:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict().parse(await readJson(request));
+        if(workspaces.busy(projectId)||(workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||directoryRepairBusy(store,projectId)||pdfPreparation(store).busy(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){
+          sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;
+        }
+        try {
+          const result=subpath==='workspace/library'?migrateLibrary(anchor,input.fingerprint):rollbackLibrary(anchor);
+          new MarkdownKnowledge(store).invalidate(projectId);
+          publishProjectChange(store,projectId,{wiki:true});
+          sendJson(response,200,result);
+        }catch(error){workspaceError(error);}
+        return;
+      }
+      sendJson(response,404,{error:'NOT_FOUND'});return;
+    }
     if(subpath==='research-questions'&&method==='GET'){sendJson(response,200,{project,questions:projectQuestions(project)});return;}
     const questionRoute=subpath.match(/^research-questions\/(question_[A-Za-z0-9_-]+)$/);
     if((subpath==='research-questions'&&method==='POST')||(questionRoute&&method==='PATCH')){

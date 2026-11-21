@@ -366,6 +366,7 @@ export class MarkdownKnowledge {
   }
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
   commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={},options:{preserveSourceVersions?:boolean;skipPaperVersion?:boolean;deferPaperVersion?:boolean;taskId?:string;fullPaperSource?:string;restorePaperSource?:string;fullTopicId?:string}={}){
+    files=files.map(file=>({...file,path:libraryLogicalPath(file.path)}));
     this.invalidate(project);
     this.recover(project);
     if(!files.length||files.length>128||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
