@@ -1,7 +1,7 @@
 import { ExperimentMethodAgent } from "./experiment-method-agent.js";
 import { useEffect, useState } from "react";
 import { api, uiError } from "./api.js";
-import { ChatMarkdown } from "./chat-markdown.js";
+import { MethodMarkdown } from "./method-markdown.js";
 import { useUnsavedChanges } from "./navigation.js";
 
 type Document = { content?: string; etag?: string; editable: boolean };
@@ -112,6 +112,6 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
           setEditing(false); setIncoming(undefined); setRevision(v=>v+1);
         }}>取消</button>
       </div>
-    </> : body !== undefined ? <ChatMarkdown text={body} onOpenResearch={onOpenFile}/> : !error && <p role="status">正在读取方法档案…</p>}
+    </> : body !== undefined ? <MethodMarkdown text={body} onOpenResearch={onOpenFile}/> : !error && <p role="status">正在读取方法档案…</p>}
   </section>;
 }

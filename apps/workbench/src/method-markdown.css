@@ -1,0 +1,50 @@
+.method-diagram {
+  margin: 0 0 1rem;
+  padding: .75rem;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.method-diagram figcaption {
+  margin-bottom: .5rem;
+  font-size: .875rem;
+  font-weight: 600;
+}
+
+.method-diagram-scroll {
+  overflow: auto;
+  max-height: 32rem;
+  padding: .5rem;
+  border-radius: .5rem;
+  background: #faf8fd;
+}
+
+.method-diagram img {
+  display: block;
+  height: auto;
+  max-width: none;
+  margin-inline: auto;
+}
+
+.method-diagram details {
+  margin-block: .5rem 0;
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+.method-diagram-comparison {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: .75rem;
+  margin-bottom: .75rem;
+}
+
+.method-diagram-comparison > section {
+  min-width: 0;
+}
+
+.method-diagram-comparison h5 {
+  margin: .35rem 0 .5rem;
+}

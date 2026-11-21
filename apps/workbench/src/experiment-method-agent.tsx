@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, uiError } from "./api.js";
-import { ChatMarkdown } from "./chat-markdown.js";
+import { MethodDraftPreview } from "./method-markdown.js";
 import { useUnsavedChanges } from "./navigation.js";
 
 type MethodDraft = { markdown: string | null; summary: string; questions: string[]; expected: string };
@@ -199,7 +199,7 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
         {stale ? <p role="status">当前正文已经变化。请查看旧草稿后重新生成，或将需要的内容手动合入。</p>
           : candidate.markdown===body ? <p role="status">草稿和当前正文一致。</p>
           : <MethodDiff before={body} after={candidate.markdown}/>}
-        <details><summary>查看草稿正文</summary><ChatMarkdown text={candidate.markdown}/></details>
+        <MethodDraftPreview current={body} proposed={candidate.markdown}/>
         <button type="button" className="primary-button" disabled={disabled||saving||Boolean(stale)||candidate.markdown===body}
           onClick={()=>void adopt(candidate)}>采用草稿</button>
       </>}

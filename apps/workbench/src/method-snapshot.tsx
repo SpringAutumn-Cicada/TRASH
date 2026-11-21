@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ExperimentPlanVersion } from "@trash/protocol";
 import { api, uiError } from "./api.js";
-import { ChatMarkdown } from "./chat-markdown.js";
+import { MethodMarkdown } from "./method-markdown.js";
 
 export function MethodSnapshot({plan}:{plan:ExperimentPlanVersion}) {
   const [content,setContent] = useState<string>();
@@ -26,6 +26,6 @@ export function MethodSnapshot({plan}:{plan:ExperimentPlanVersion}) {
     <p>计划 v{plan.version} · Git <code>{plan.content.commit_sha}</code></p>
     {loading && <p role="status">正在读取快照…</p>}
     {error && <p role="alert">{error} <button type="button" onClick={()=>void load()}>重试</button></p>}
-    {content !== undefined && <ChatMarkdown text={content}/>}
+    {content !== undefined && <MethodMarkdown text={content}/>}
   </details>;
 }
