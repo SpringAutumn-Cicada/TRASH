@@ -11,7 +11,7 @@ export const experimentTabs = [
   {id:"compute",label:"AutoDL"},{id:"catalog",label:"实验列表"},{id:"runs",label:"计划与运行"},
   {id:"reproductions",label:"文献复现"},{id:"datasets",label:"数据集"},{id:"results",label:"实验结果"}
 ] as const;
-export type ExperimentTab=typeof experimentTabs[number]["id"] | "code";
+export type ExperimentTab=typeof experimentTabs[number]["id"] | "code" | "method";
 export type NavigateOptions={tab?:ExperimentTab;action?:string;focus?:string;status?:string;experiment?:string};
 export function projectSidebarPage(page:ProjectPage){
   return page==="wiki"||page==="cards"?"literature":page;
@@ -47,7 +47,7 @@ export function parseProjectRoute(value: string) {
     const page=match[2]==="results"?"results":projectPages.find(p => p.id === match[2])?.id;
     if (match[2] && !page) return undefined;
     const tabParam=url.searchParams.get("tab");
-    const tab=tabParam==="code"?"code":experimentTabs.find(item=>item.id===tabParam)?.id;
+    const tab=tabParam==="method"?(url.searchParams.get("experiment")?"method":"catalog"):tabParam==="code"?"code":experimentTabs.find(item=>item.id===tabParam)?.id;
     const {page:normalized,options}=experimentLocation(page,{
       tab,action:url.searchParams.get("action")??undefined,focus:url.searchParams.get("focus")??undefined,
       status:url.searchParams.get("status")??undefined,experiment:url.searchParams.get("experiment")??undefined

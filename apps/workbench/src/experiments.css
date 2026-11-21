@@ -241,3 +241,9 @@
 }
 .experiment-repository-location > span { color: var(--muted); }
 .experiment-repository-location > code { flex: 1 1 16rem; min-width: 0; }
+
+.experiment-method .section-heading { align-items: center; flex-wrap: wrap; gap: .75rem; }
+.experiment-method > label { display: grid; gap: .5rem; }
+.experiment-method .json-editor { box-sizing: border-box; width: 100%; resize: vertical; }
+.experiment-method > .knowledge-toolbar { margin-top: .75rem; }
+.experiment-method .chat-markdown, .experiment-method pre { overflow-wrap: anywhere; }

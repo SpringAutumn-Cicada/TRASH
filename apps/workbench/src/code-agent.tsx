@@ -9,7 +9,7 @@ type Task = {
 };
 const statusNames: Record<string, string> = { running: "运行中", cancelling: "正在取消", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断，需核对旧进程" };
 const errors: Record<string, string> = { PROJECT_HAS_ACTIVE_TASKS: "当前项目正在分析文献或处理知识任务，请等待完成或先停止分析。", CODE_AGENT_BUSY: "该仓库有 Agent 正在执行，请等待或先取消。", CODE_AGENT_RECOVERY_REQUIRED: "旧任务已中断，请核对旧进程并确认停止后再启动。", EXPERIMENT_ACTIVE: "该仓库有未结束实验，请先处理实验状态。", SERVER_STOPPING: "服务正在停止。", INVALID_REQUEST: "请检查任务、时限及授权选项。", NOT_FOUND: "任务不存在或已结束。" };
-export function CodeAgentPanel({ projectId, repositoryPath, repositoryId, experimentEntrypoint }: { projectId: string; repositoryPath: string; repositoryId?:string; experimentEntrypoint?:boolean }) {
+export function CodeAgentPanel({ projectId, repositoryPath, repositoryId, experiment }: { projectId: string; repositoryPath: string; repositoryId?:string; experiment?:{direction_id:string;scheme_id:string} }) {
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/code-agent`;
   const [instructions, setInstructions] = useState(""), [model, setModel] = useState(""), [sandbox, setSandbox] = useState("workspace-write"), [timeout, setTimeoutValue] = useState(30), [confirmed, setConfirmed] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]), [selectedId, setSelectedId] = useState(""), [selected, setSelected] = useState<Task>();
@@ -37,10 +37,12 @@ export function CodeAgentPanel({ projectId, repositoryPath, repositoryId, experi
     <div className="section-heading"><div><h3><Bot size={17}/>本机 Codex Agent</h3><p>在绑定仓库中读取代码、修改文件和执行命令，使用运行 TRASH 的 WSL / 本机 Codex 配置。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={() => void act(async () => { const value = await call<{ available: boolean; version?: string; wsl?: string; error?: string }>("/detect"); setDetection(value.available ? `${value.version} · ${value.wsl || "本机环境"}` : value.error || "CLI 不可用"); })}><RefreshCw size={14}/>检测 CLI</button></div>
     {detection && <p role="status">{detection}</p>}
     <form onSubmit={event => { event.preventDefault(); void act(async () => {
-      const value = await call<{ task: Task }>("/tasks", { instructions, model, sandbox, repository_id:repositoryId, timeout_seconds: timeout * 60, confirm: confirmed });
+      const value = await call<{ task: Task }>("/tasks", { instructions, model, sandbox, repository_id:repositoryId, experiment:experiment && {direction_id:experiment.direction_id, scheme_id:experiment.scheme_id}, timeout_seconds: timeout * 60, confirm: confirmed });
       setSelectedId(value.task.task_id); setSelected(value.task); setTasks(old => [value.task, ...old]); setInstructions(""); setConfirmed(false);
     }); }}>
-      {experimentEntrypoint && <button type="button" className="secondary-button" disabled={busy || Boolean(instructions.trim())}
+      {experiment && <button type="button" className="secondary-button" disabled={busy || Boolean(instructions.trim())}
+        onClick={() => setInstructions("请阅读实验方法设计，对照仓库中的实现和配置，给出可纳入方法页的 Markdown 草案。标明实现位置，把研究动机的推测列为待确认。")}>从代码梳理方法</button>}
+      {experiment && <button type="button" className="secondary-button" disabled={busy || Boolean(instructions.trim())}
         onClick={() => setInstructions("检查当前实验仓库，按现有代码和配置实现实验入口脚本。在回复中给出脚本相对路径、参数和从仓库根目录运行的完整命令。如果资料不足，请说明缺少的信息。")}>
         起草入口脚本任务
       </button>}

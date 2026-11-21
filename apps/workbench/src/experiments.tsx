@@ -1,3 +1,4 @@
+import { ExperimentMethod } from "./experiment-method.js";
 import { ExperimentCatalog, experimentKeyOf } from "./experiment-catalog.js";
 import { sshConnectionErrors } from './ssh-errors.js';
 import { ExperimentCodeUpload } from "./experiment-code-upload.js";
@@ -39,7 +40,7 @@ async function request<T>(base:string,path:string,body?:unknown,method=body===un
 }
 const stateNames:Record<string,string>={queued:"排队",preflight:"预检查",syncing:"同步代码",running:"运行中",collecting:"收集产物",completed:"已完成",failed:"失败",cancel_requested:"取消请求中",cancelled:"已取消",disconnected:"连接中断",unknown_remote_state:"远端状态待确认"};
 const terminal=["completed","failed","cancelled"];
-const experimentTabIcons = {compute:Server,runs:ClipboardList,catalog:Code2,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
+const experimentTabIcons = {method:ClipboardList,compute:Server,runs:ClipboardList,catalog:Code2,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
 const codeTabs=[{id:"overview",label:"仓库与 Git"},{id:"code",label:"文件浏览"},{id:"agent",label:"代码 Agent"}] as const;
 const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"settings",label:"工作区设置"},{id:"workspace",label:"AutoDL 工作区"}] as const;
 type Navigate=(page:ProjectPage,options?:NavigateOptions)=>void;
@@ -107,7 +108,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
       setCodeTab(repository ? "code" : "overview");
       setCatalog(items => [...items.filter(item => experimentKeyOf(item) !== experimentKeyOf(experiment)), experiment]);
       created = true;
-      onNavigate("experiments", { tab: "code", experiment: experimentKeyOf(experiment) });
+      onNavigate("experiments", { tab: "method", experiment: experimentKeyOf(experiment) });
     });
     return created;
   };
@@ -271,13 +272,15 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
       loading={loadingContext} recycle={recycleExperiment}
       create={(title, id) => saveCatalogExperiment("/experiment-catalog", { title, id })}
       register={name => saveCatalogExperiment("/experiment-catalog/register", { name, confirm:true })}
-      open={item => onNavigate("experiments", {tab:"code", experiment:experimentKeyOf(item)})}
+      open={item => onNavigate("experiments", {tab:"method", experiment:experimentKeyOf(item)})}
       openReproduction={id => onNavigate("experiments", {tab:"reproductions", focus:id, experiment:"reproduction:"+id})}/>}
     {experimentKey && <div className="experiment-detail-toolbar">
       <button type="button" className="text-button" onClick={() => onNavigate("experiments", {tab:"catalog"})}>返回实验列表</button>
       <h3>{experiment?.title ?? scopedReproduction?.name ?? (loadingContext ? "正在读取实验…" : "未找到实验")}</h3>
       {(experiment || scopedReproduction) && <div className="experiment-subnav">
-        <button type="button" className="secondary-button" aria-pressed={section!=="runs"}
+        {experiment && <button type="button" className="secondary-button" aria-pressed={section==="method"}
+          onClick={() => onNavigate("experiments", {tab:"method", experiment:experimentKey})}>方法设计</button>}
+        <button type="button" className="secondary-button" aria-pressed={section==="code"||section==="reproductions"}
           onClick={() => onNavigate("experiments", {tab:experiment?"code":"reproductions", experiment:experimentKey, focus:reproductionScope})}>代码</button>
         <button type="button" className="secondary-button" aria-pressed={section==="runs"&&!showScopedResults}
           onClick={() => onNavigate("experiments", {tab:"runs", experiment:experimentKey})}>计划与运行</button>
@@ -285,6 +288,8 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
           onClick={() => onNavigate("experiments", {tab:"runs", action:"experiment-results", experiment:experimentKey})}>结果</button>
       </div>}
     </div>}
+    {section==="method" && experiment && <ExperimentMethod key={projectId+experimentKey} projectId={projectId}
+      experimentKey={experimentKeyOf(experiment)} onOpenFile={focus=>onNavigate("files",{focus})}/>}
     {showScopedResults && <div className="experiment-runs">
       {runs.filter(item => matchesScope(item.plan) && item.result_id).map(item =>
         <button type="button" className="experiment-run" key={item.run_id}
@@ -339,7 +344,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
     </div>}
     {section==="code"&&experiment&&repo&&<div hidden={tab!=="agent"}>
       <CodeAgentPanel key={experimentKey+repo.repository_id} projectId={projectId} repositoryPath={repo.path}
-        repositoryId={repo.repository_id} experimentEntrypoint/>
+        repositoryId={repo.repository_id} experiment={experiment}/>
     </div>}
     {section==="code"&&tab==="code"&&(repo?<><div className="knowledge-toolbar"><ExperimentCodeUpload projectId={projectId} repositoryId={repo.repository_id} profiles={profiles} profileId={profileId} connectedProfiles={terminalSessions.filter(item=>!item.ended).map(item=>item.profile_id)}/></div><RepositoryBrowser key={projectId+repo.repository_id} projectId={projectId} repositoryPath={repo.path} repositoryId={repo.repository_id}/></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>尚未绑定代码仓库</h3><p>{experimentKey ? "这个旧实验没有可用的默认仓库。新建自研实验时会自动初始化仓库。" : "先绑定本地 Git 仓库，再浏览目录和代码。"}</p>{!experimentKey&&<button type="button" className="primary-button" onClick={()=>setCodeTab("overview")}>管理仓库</button>}</div>)}
     {autoDlOnly&&tab==="hosts"&&<section id="autodl-instance-information"><h3>AutoDL 信息</h3>

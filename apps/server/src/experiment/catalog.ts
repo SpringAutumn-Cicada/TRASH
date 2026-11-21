@@ -17,8 +17,12 @@ export const experimentCodeSettings = z.object({
   entrypoint: relativeFile.optional(),
   paper_id: manuscriptId.optional(),
 }).strict();
-const selection = z.object({ direction_id: directoryId, scheme_id: directoryId });
-export const experimentCatalogUpdate = selection.extend({ code: experimentCodeSettings }).strict();
+export const experimentSelection = z.object({ direction_id: directoryId, scheme_id: directoryId });
+export const experimentCatalogUpdate = experimentSelection.extend({ code: experimentCodeSettings }).strict();
+
+function methodTemplate(title: string) {
+  return `# ${title}\n\n## 研究问题与假设\n\n## 方法机制与适用条件\n\n## 实现位置与配置\n\n## 对照、评价指标与判断标准\n`;
+}
 
 function info(path: string) {
   try { return lstatSync(path); }
@@ -144,7 +148,7 @@ export async function createExperiment(root: string, projectId: string, store: E
     };
     const experiment = { direction_id, scheme_id, title, repository_id: repository.repository_id };
     const stagedArchive = (archiveStage = mkdtempSync(join(parent, ".experiment-")));
-    writeFileSync(join(stagedArchive, "README.md"), `# ${title}\n\n## 验证问题\n\n## 对照与评价方式\n`, { flag: "wx" });
+    writeFileSync(join(stagedArchive, "README.md"), methodTemplate(title), { flag: "wx" });
     writeFileSync(join(stagedArchive, ".experiment-code.json"),
       JSON.stringify({ repository_id: repository.repository_id }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
 
@@ -227,7 +231,7 @@ export async function registerExperiment(
       repository_id: `repo_${randomUUID()}`, project_id: projectId, bound_at: new Date().toISOString(),
     };
     const experiment = { direction_id, scheme_id, title: name, repository_id: repository.repository_id };
-    writeFileSync(join(stage, "README.md"), `# ${name}\n`, { flag: "wx" });
+    writeFileSync(join(stage, "README.md"), methodTemplate(name), { flag: "wx" });
     writeFileSync(join(stage, ".experiment-code.json"),
       JSON.stringify({ repository_id: repository.repository_id }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
     store.db.transaction(() => {
