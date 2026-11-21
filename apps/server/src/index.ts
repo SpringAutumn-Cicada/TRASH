@@ -11,7 +11,7 @@ import {closeTaskStreams} from './task-events.js';
 import {sourceAnalyses,streamSourceAnalyses} from './source-analyses.js';
 import {closeProjectStreams,projectStream,publishProjectChange} from './project-updates.js';
 import { PdfReading } from "./pdf-reading.js";
-import { createResearchFolder } from "./project-layout.js";
+import { createResearchFolder, ensureResearchDirectory } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
@@ -259,6 +259,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const pdf=new PdfReading(store);
       if(pdfRoute[2]){const page=await pdf.page(projectId,pdfRoute[1],Number(pdfRoute[2]),Number(url.searchParams.get('scale')??2200));const bytes=await import('node:fs/promises').then(fs=>fs.readFile(page.path));response.writeHead(200,{'content-type':'image/png','content-length':bytes.length,'cache-control':'private, max-age=3600','x-content-type-options':'nosniff'});response.end(bytes);return;}
       const doc=await pdf.document(projectId,pdfRoute[1]);sendJson(response,200,{source_id:doc.source_id,hash:doc.hash,artifact_id:doc.artifact_id,pageCount:doc.pageCount,pages:doc.pages});return;
+    }
+    if(subpath==='workspace/research'&&method==='POST'){
+      if(workspaces.busy(projectId)){sendJson(response,409,{error:'WORKSPACE_MIGRATING'});return;}
+      try { ensureResearchDirectory(store.root,projectId); }
+      catch(error){workspaceError(error);}
+      sendJson(response,200,{path:'research'});return;
     }
     if(subpath==='workspace/research-folders'&&method==='POST'){
       if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}

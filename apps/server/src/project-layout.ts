@@ -1,9 +1,9 @@
-import {existsSync,lstatSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {existsSync,lstatSync,mkdirSync,realpathSync,writeFileSync,rmSync} from 'node:fs';
 import {join,resolve,sep} from 'node:path';
 import {z} from 'zod';
 import type {TrashStore} from '@trash/storage';
 
-export const publicDirectories=['literature','knowledge_base','code','data','experiments','manuscript'];
+export const publicDirectories=['literature','knowledge_base','code','data','experiments','manuscript','research'];
 export const runtimeNames=new Set(['research-exploration','agent-workspace','code-agent','tasks','literature-analysis','dataset-hashes','directory-repairs','environment-analysis','environment-deployments','experiment-bindings','remote-workspaces','dataset-upload-sessions','reproduction-queues','experiment-runs']);
 // Existing absolute references and imported code remain valid. No implicit data migration.
 export function projectRuntime(root:string,project:string,name:string,...parts:string[]){
@@ -15,6 +15,15 @@ export const visibleEntry=(parent:string,name:string,internal:boolean)=>internal
 const slug=z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 const input=z.object({kind:z.enum(['direction','scheme','run']),id:slug,title:z.string().trim().min(1).max(120),direction:slug.optional(),scheme:slug.optional()}).strict();
 function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
+export function ensureResearchDirectory(root:string,project:string){
+  const workspace=join(root,'projects',project);
+  if(!existsSync(workspace))fail('FILES_WORKSPACE_MISSING',404);
+  const directory=join(realpathSync(workspace),'research');
+  try { mkdirSync(directory); }
+  catch(error){ if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error; }
+  if(!lstatSync(directory).isDirectory())fail('FILES_NOT_DIRECTORY',422);
+  return directory;
+}
 export function createResearchFolder(store:TrashStore,project:string,value:unknown){
   const data=input.parse(value);if(!store.getProject(project))fail('PROJECT_NOT_FOUND',404);
   if(data.kind!=='direction'&&!data.direction||data.kind==='run'&&!data.scheme)fail('INVALID_REQUEST',400);

@@ -1,6 +1,6 @@
 import {bibliographyState,sourceContentHash} from './source-bibliography.js';
 import { PdfReading } from "./pdf-reading.js";
-import { projectRuntime } from "./project-layout.js";
+import { ensureResearchDirectory, projectRuntime } from "./project-layout.js";
 import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { stageChatSkills, type ChatSkillId } from "./project-chat-skills.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, renameSync, readlinkSync, realpathSync, unlinkSync } from "node:fs";
@@ -49,6 +49,11 @@ export function prepareChatWorkspace(store: TrashStore, projectId: string, selec
   const path = projectRuntime(store.root,projectId,'agent-workspace'); mkdirSync(path, { recursive: true });
   const projectRoot=join(store.root,'projects',projectId);
   const manuscripts=manuscriptPath(projectRoot,path);
+  let research:string|undefined;
+  if(existsSync(join(projectRoot,'project.yaml'))){
+    try { research=ensureResearchDirectory(store.root,projectId); }
+    catch { /* Other chat workflows can still run when this output path is unavailable. */ }
+  }
   writeFileSync(join(path, "project_snapshot.json"), JSON.stringify({ at:new Date().toISOString(),project:store.getProject(projectId),source_count:store.listSources(projectId).length,knowledge_count:new MarkdownKnowledge(store).index(projectId).documents.length,note:'仅项目概览，无知识正文。先 list/search 查询索引，再 get 按需读取；综合必须报告实际覆盖范围。' }),{mode:0o600});
   writeFileSync(join(path,'bibliography-baselines.json'),JSON.stringify(Object.fromEntries(store.listSources(projectId).map(source=>[source.source_id,{authors:source.authors,title:source.title,year:source.year,publication_date:source.publication_date,revision:bibliographyState(store,source.source_id).revision??0,content_hash:sourceContentHash(source)}]))),{mode:0o600});
   writeFileSync(join(path,'knowledge-reads.json'),'[]',{mode:0o600});
@@ -74,7 +79,9 @@ Wiki是面向后续Agent的精简研究记忆；主题从文献开放发现，�
 Wiki 按单篇/综合/方向用途先读取上文对应 skill，直接写 Markdown 到 knowledge-draft/knowledge_base/。论文入口为 papers/<source_id>/whoami.md，题录为 idcard.md，方法、结果和依据等职责页遵循 references/paper-wiki.md。全部为 kind: wiki-page，保留任务指定稳定ID和真实source_id。主题位于 topics/，假设 hypotheses/，发现 discoveries/，分批总结 summaries/，总览 overview.md。
 先通过 get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"knowledge_base/papers/source_example/whoami.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；Wiki 使用 references/wiki.md 的明确证据与关系写法，引用依据中的文件须实际 get/context 读取；导航链接不作为证据；冲突保留副本，不重试覆盖。不再生成或读取basic/key/detail旧卡片；使用whoami入口及同篇Wiki职责页。发布后平台回填标题和年月，人工修改冲突保留建议。
 实验结果仍使用 write，kind=experiment-result，input 为原结构化记录及 base_version。不能编造结果。
-不要修改正式知识目录、.trash、数据库、任务文件、原始论文或其他项目。${manuscripts?`论文架位于 ${manuscripts}。先确认本轮所指论文，已有论文按 paper.yaml 找到当前稿，正文和修订稿放该篇的 drafts/，图片放 figures/，公式源放 equations/，表格放 tables/，引文文件放 references/，交付文件放 exports/，一次性工作文件放 work/。新论文由论文页建立主目录，禁止自行指定或修改 paper.yaml。历史稿件按用户指明的路径处理。`:"项目尚未配置论文工作区，先请用户在项目配置中设置。"}Wiki发布后直接可用，无人工采纳步骤；保留未知事实和待验证假设，不自动删除或发起实验。写入不代替用户验收。
+不要修改正式知识目录、.trash、数据库、任务文件、原始论文或其他项目。
+${research?`用户明确要求保存研究想法、候选假设、研究方案或讨论笔记时，使用项目的 research/（实际目录 ${JSON.stringify(research)}），文档直接放在该目录下，文件名体现主题。普通讨论直接回复，用户没有要求保存时不写文件。保存后报告相对于项目根目录的路径。论文正文和修订稿走下方稿件规则，正式实验配置和结果放 experiments/，发布知识走前述 Wiki 流程。`:"研究笔记目录不可用。用户要求保存研究想法或方案时说明缺少可用的 research/ 目录，不要改存稿件目录。"}
+${manuscripts?`论文架位于 ${manuscripts}。先确认本轮所指论文，已有论文按 paper.yaml 找到当前稿，正文和修订稿放该篇的 drafts/，图片放 figures/，公式源放 equations/，表格放 tables/，引文文件放 references/，交付文件放 exports/，一次性工作文件放 work/。新论文由论文页建立主目录，禁止自行指定或修改 paper.yaml。历史稿件按用户指明的路径处理。`:"项目尚未配置论文工作区，先请用户在项目配置中设置。"}Wiki发布后直接可用，无人工采纳步骤；保留未知事实和待验证假设，不自动删除或发起实验。写入不代替用户验收。
 `);
   return path;
 }

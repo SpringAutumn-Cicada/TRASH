@@ -3,7 +3,7 @@ import { ChatHeightControl, useChatHeight } from "./chat-height-control.js";
 import { ModalLayer } from './modal-layer.js';
 import { ErrorNotice } from './error-notice.js';
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ArrowDown, Bot, Check, ChevronDown, Copy, List, LoaderCircle, MessageSquare, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Puzzle, Trash2, Search, Play, Send, Settings2, Square, X } from 'lucide-react';
+import { ArrowDown, Bot, Check, ChevronDown, Copy, FolderOpen, List, LoaderCircle, MessageSquare, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Puzzle, Trash2, Search, Play, Send, Settings2, Square, X } from 'lucide-react';
 import { useUnsavedChanges } from './navigation.js';
 import { copyText } from './clipboard.js';
 import { ChatMarkdown } from './chat-markdown.js';
@@ -95,7 +95,7 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
   </>;
 }
 
-export function ProjectChat({projectId}:{projectId:string}){
+export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBrowseResearch:(path:string)=>void}){
   const {height:chatHeight,change:changeChatHeight}=useChatHeight(projectId);
   const transcriptRef=useRef<HTMLDivElement>(null);
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
@@ -242,7 +242,10 @@ export function ProjectChat({projectId}:{projectId:string}){
   const copy=(id:string,text:string)=>void copyText(text).then(()=>{if(alive.current)setCopied(id);}).catch(()=>setError('复制失败，请手动选择内容复制。'));
   const readLogs=(turn:Turn)=>void act(async()=>{const data=await call<{task:Turn}>(`/code-agent/tasks/${turn.task_id}`);if(alive.current){setLogs(old=>({...old,[turn.task_id]:data.task.logs}));setOpenLogs(old=>({...old,[turn.task_id]:true}));}});
   return <section className="project-chat">
-    <header className="chat-page-heading"><div className="chat-page-icon"><Bot size={23}/></div><div><h2>Agent 对话</h2><p>围绕文献、研究思路和论文写作，持续推进当前项目。</p></div><button type="button" className="secondary-button" disabled={busy||attachments.uploading} onClick={()=>choose()}><MessageSquarePlus size={15}/>新建对话</button></header>
+    <header className="chat-page-heading"><div className="chat-page-icon"><Bot size={23}/></div><div><h2>Agent 对话</h2><p>围绕文献、研究思路和论文写作，持续推进当前项目。</p></div><button type="button" className="secondary-button" disabled={busy||attachments.uploading} onClick={()=>void act(async()=>{
+      const result=await call<{path:string}>('/workspace/research',{});
+      if(alive.current)onBrowseResearch(result.path);
+    })}><FolderOpen size={15}/>研究笔记</button><button type="button" className="secondary-button" disabled={busy||attachments.uploading} onClick={()=>choose()}><MessageSquarePlus size={15}/>新建对话</button></header>
     <div className={`chat-layout ${history?'':'chat-history-hidden'} ${chatHeight!==null?'chat-custom-height':''}`} style={chatHeight!==null?{'--chat-message-height':`${chatHeight}px`} as React.CSSProperties:undefined}>
       {history&&<aside className="chat-conversations" aria-label="项目对话记录"><div className="chat-history-heading"><strong>历史对话 <small>{sessions.length}</small></strong></div><label className="chat-history-search"><Search size={14}/><input aria-label="搜索对话" placeholder="搜索对话…" value={query} onChange={event=>setQuery(event.target.value)}/></label><div className="chat-session-list">{loading?<p>正在读取对话…</p>:filtered.map(item=><div key={item.id} className={`chat-session-card ${conversation===item.id?'selected':''}`}>
         <button type="button" className="chat-session-open" aria-current={conversation===item.id?'true':undefined} disabled={busy||attachments.uploading} onClick={()=>choose(item)}>
