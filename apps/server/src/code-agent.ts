@@ -1,3 +1,4 @@
+import { readChatModelConfig, reasoningEffort } from "./chat-model-config.js";
 import { projectRuntime } from "./project-layout.js";
 import { resolveChatAttachments, type ChatAttachment } from "./chat-attachments.js";
 import { readChatOutput, type ChatOutput } from "./chat-output.js";
@@ -18,6 +19,7 @@ const execute = promisify(execFile);
 const inputSchema = z.object({
   attachments:z.array(z.string().regex(/^artifact_[A-Za-z0-9-]+$/)).max(10).default([]),
   conversation_id: z.string().uuid().optional(), instructions: z.string().trim().min(1).max(30000), model: z.string().trim().max(200).default(""),
+  reasoning_effort: reasoningEffort.optional(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
   timeout_seconds: z.number().int().min(30).max(7200).default(1800), confirm: z.literal(true)
 }).strict();
@@ -27,6 +29,7 @@ export interface CodeTask {
   task_id: string; project_id: string; path: string; instructions: string; model: string; sandbox: Input["sandbox"];
   status: "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
   created_at: string; finished_at?: string; version?: string; exit_code?: number | null; error?: string;
+  reasoning_effort?:Input["reasoning_effort"];
   attachments?:ChatAttachment[];
   output?: ChatOutput[];
   logs: string; response: string; before?: string; after?: string; truncated?: boolean;
@@ -53,6 +56,40 @@ export class CodeAgent {
     return names.filter(name => /^code_[a-f0-9-]+\.json$/.test(name)).flatMap(name => {
       try { return [JSON.parse(readFileSync(join(this.directory(project), name), "utf8")) as CodeTask]; } catch { return []; }
     }).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+  private conversationMeta(project:string,id:string):{title?:string;deleted?:true}{
+    if(!z.string().uuid().safeParse(id).success)return {};
+    const file=join(projectRuntime(this.store.root,project,'chat-conversations'),id+'.json');
+    try{return JSON.parse(readFileSync(file,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return {};throw error;}
+  }
+  chatHistory(project:string){
+    const conversations=new Map<string,ReturnType<CodeAgent['conversationMeta']>>();
+    const tasks=this.list(project).filter(task=>{
+      if(task.purpose!=='project-chat'||!task.conversation_id)return false;
+      const id=task.conversation_id;
+      if(!conversations.has(id))conversations.set(id,this.conversationMeta(project,id));
+      return !conversations.get(id)?.deleted;
+    });
+    return {tasks:tasks.map(task=>({...task,logs:''})),titles:Object.fromEntries([...conversations]
+      .flatMap(([id,meta])=>meta.title&&!meta.deleted?[[id,meta.title]]:[]))};
+  }
+  changeConversation(project:string,id:string,change:{title:string}|{deleted:true}){
+    const parsed=z.string().uuid().safeParse(id);
+    if(!parsed.success)experimentError('CHAT_SESSION_NOT_FOUND',404);
+    const meta=this.conversationMeta(project,id);
+    const turns=this.list(project).filter(task=>task.purpose==='project-chat'&&task.conversation_id===id);
+    if(!turns.length||meta.deleted)experimentError('CHAT_SESSION_NOT_FOUND',404);
+    if('deleted' in change&&(this.continuing.has(project)||turns.some(task=>['running','cancelling','interrupted'].includes(task.status))))
+      experimentError('CHAT_SESSION_ACTIVE',409);
+    const directory=projectRuntime(this.store.root,project,'chat-conversations');
+    mkdirSync(directory,{recursive:true});
+    const path=join(directory,id+'.json');
+    writeFileSync(path+'.tmp',JSON.stringify({...meta,...change}),{mode:0o600});
+    renameSync(path+'.tmp',path);
+  }
+  chatModelConfig(project:string){
+    const workspace=projectRuntime(this.store.root,project,'agent-workspace');
+    return readChatModelConfig(this.command,existsSync(workspace)?workspace:undefined);
   }
   busy(project: string): boolean {
     const path = this.experiments.data.repository(project)?.path;
@@ -88,11 +125,12 @@ export class CodeAgent {
     if (this.busy(project) || [...this.active.values()].some(item => item.task.path === path || (Boolean(path) && item.task.repository_path === path))) experimentError("CODE_AGENT_BUSY", 409);
     if (this.experiments.data.runs().some(run => this.experiments.data.active(run) && (run.plan.repository.path === path || run.project_id === project || (Boolean(repo) && run.plan.repository.path === repo!.path)))) experimentError("EXPERIMENT_ACTIVE", 409);
     if (this.list(project).some(task => task.status === "interrupted")) experimentError("CODE_AGENT_RECOVERY_REQUIRED", 409);
-    const task: CodeTask = { task_id: `code_${randomUUID()}`, project_id: project, path, instructions: input.instructions, model: input.model, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "" };
+    const task: CodeTask = { task_id: `code_${randomUUID()}`, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "" };
     if (chatUrl) {
       task.attachments=attachments.map(({id,name,size,mime,image})=>({id,name,size,mime,image}));
       task.purpose = "project-chat"; task.conversation_id = input.conversation_id ?? randomUUID(); task.repository_path = repo?.path;
       if (input.conversation_id) {
+        if(this.conversationMeta(project,input.conversation_id).deleted)experimentError("CHAT_SESSION_NOT_FOUND",404);
         const previous = this.list(project).find(t => t.purpose === "project-chat" && t.conversation_id === input.conversation_id && t.session_id);
         if (!previous) experimentError("CHAT_SESSION_NOT_FOUND", 409);
         task.session_id = previous.session_id;
@@ -115,7 +153,7 @@ export class CodeAgent {
       await item.done;
       return await this.start(project, { ...input, conversation_id: item.task.conversation_id,
         instructions: input.instructions,
-        model: item.task.model, sandbox: item.task.sandbox }, chatUrl, true);
+        model: item.task.model, reasoning_effort:item.task.reasoning_effort, sandbox: item.task.sandbox }, chatUrl, true);
     } finally { this.continuing.delete(project); }
   }
   acknowledge(project: string, id: string) {
@@ -148,6 +186,7 @@ export class CodeAgent {
       const imageArgs=attachments.filter(file=>file.image).flatMap(file=>['--image',file.path]);
       const attachmentDirectories=[...new Set(attachments.map(file=>join(file.path,'..')))];
       const args = ["exec", "--sandbox", task.sandbox, "-c", 'approval_policy="never"', "-C", task.path, ...(task.model ? ["--model", task.model] : []),
+        ...(task.reasoning_effort?["-c",`model_reasoning_effort=${JSON.stringify(task.reasoning_effort)}`]:[]),
         ...(chat ? ["--skip-git-repo-check", "-c", 'sandbox_workspace_write.network_access=true', ...(task.repository_path ? ["--add-dir", task.repository_path] : []), ...(paperWorkspace ? ["--add-dir",paperWorkspace] : []),...attachmentDirectories.flatMap(path=>["--add-dir",path])] : ["--ephemeral"]),
         ...(chat && task.session_id ? ["resume", "--json",...imageArgs, task.session_id, "-"] : ["--json", "--color", "never",...imageArgs, "-"])];
       const child = spawn(this.command, args, { cwd: task.path, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(chat ? { TRASH_PROJECT_TOOL_TOKEN: item.toolToken, TRASH_PROJECT_TOOL_URL: item.toolUrl } : {}) } }); item.child = child;

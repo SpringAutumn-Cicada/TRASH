@@ -406,7 +406,23 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
-    if (subpath === "chat/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose === "project-chat").map(task => ({ ...task, logs: "" })) }); return; }
+    if (subpath === "chat/tasks" && method === "GET") { sendJson(response,200,codeAgent.chatHistory(projectId)); return; }
+    if (subpath === "chat/model-config" && method === "GET") {
+      sendJson(response,200,await codeAgent.chatModelConfig(projectId));return;
+    }
+    const conversationRoute=subpath.match(/^chat\/conversations\/([^/]+)\/(rename|delete)$/);
+    if(conversationRoute&&method==='POST'){
+      const [,id,action]=conversationRoute;
+      const body=await readJson(request);
+      if(action==='rename'){
+        const {title}=z.object({title:z.string().trim().min(1).max(120)}).strict().parse(body);
+        codeAgent.changeConversation(projectId,id,{title});
+      }else{
+        z.object({confirm:z.literal(true)}).strict().parse(body);
+        codeAgent.changeConversation(projectId,id,{deleted:true});
+      }
+      sendJson(response,200,{ok:true});return;
+    }
     if (subpath === "chat/tasks" && method === "POST") {
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
       sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request), toolUrl) }); return;
