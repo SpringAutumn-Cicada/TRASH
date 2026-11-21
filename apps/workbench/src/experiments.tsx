@@ -5,11 +5,12 @@ import "./data.css";
 import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
-import { ChartColumn, ClipboardList, Code2, Columns2, Database, Download, FolderOpen, GitBranch, Pencil, Play, Plus, RefreshCw, Server } from "lucide-react";
+import { ChartColumn, ClipboardList, Code2, Columns2, Database, Download, FlaskConical, FolderOpen, GitBranch, Pencil, Play, Plus, RefreshCw, Server } from "lucide-react";
 import type { ProjectPage, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { DatasetsPanel } from "./data.js";
 import { ExperimentalDataPanel } from "./experimental-data.js";
 import { experimentTabs, type ExperimentTab, type NavigateOptions, useUnsavedChanges } from "./navigation.js";
+import "./literature-visual.css";
 import "./experiments.css";
 import { ModalLayer } from "./modal-layer.js";
 import { AutoDlTerminal, type TerminalSession } from "./autodl-terminal.js";
@@ -146,23 +147,28 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
     {deleteInstance&&<AutoDlDeleteDialog projectId={projectId} profile={deleteInstance} onClose={()=>setDeleteInstance(undefined)} onDeleted={()=>{const deletedId=deleteInstance.profile_id;setDeleteInstance(undefined);setProfiles(items=>items.filter(item=>item.profile_id!==deletedId));if(profileId===deletedId){setProfileId("");}setNotice("实例配置与已保存密码已删除，远端实例未受影响。");void run(load);}}/>}
     {instanceDialog&&<AutoDlInstanceDialog projectId={projectId} mode={instanceDialog} profiles={profiles} initialId={profileId} onDelete={profile=>{setInstanceDialog(undefined);setDeleteInstance(profile);}} onClose={()=>setInstanceDialog(undefined)} onSaved={profile=>{setInstanceDialog(undefined);setProfileId(profile.profile_id);void run(async()=>{await load();setNotice("实例已保存。连接信息变化后，请重新核对主机指纹。");});}}/>}
     {directoryPicker&&<DirectoryPicker base={base} initialPath={repoPath} onClose={()=>setDirectoryPicker(false)} onSelect={path=>{setRepoPath(path);setDirectoryPicker(false);}}/>}
-    <div className="section-heading"><h2>实验</h2><button className="icon-button" disabled={busy} title="刷新实验配置" aria-label="刷新实验配置" onClick={()=>void run(load)}><RefreshCw size={16}/></button></div>
-    <nav className="experiment-tabs" aria-label="实验子页" onKeyDown={event=>{
-      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
-      const buttons=Array.from(event.currentTarget.querySelectorAll("button"));
-      const index=buttons.findIndex(button=>button===event.target);
-      if(index<0)return;
-      event.preventDefault();
-      const target=event.key==="Home"?0:event.key==="End"?buttons.length-1:
-        (index+(event.key==="ArrowRight"?1:buttons.length-1))%buttons.length;
-      buttons[target]?.focus();
-    }}>{experimentTabs.map(item=>{
-      const Icon=experimentTabIcons[item.id];
-      return <button type="button" key={item.id} aria-current={section===item.id?"page":undefined}
-        onClick={()=>{if(section!==item.id)onNavigate("experiments",{tab:item.id});}}>
-        <Icon size={16} aria-hidden="true"/><span>{item.label}</span>
-      </button>;
-    })}</nav>
+    <header className="experiment-section-header">
+      <div className="experiment-section-title"><span><FlaskConical size={22} aria-hidden="true"/></span><h2>实验</h2></div>
+      <nav className="experiment-tabs" aria-label="实验子页" onKeyDown={event=>{
+        if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+        const buttons=Array.from(event.currentTarget.querySelectorAll("button"));
+        const index=buttons.findIndex(button=>button===event.target);
+        if(index<0)return;
+        event.preventDefault();
+        const target=event.key==="Home"?0:event.key==="End"?buttons.length-1:
+          (index+(event.key==="ArrowRight"?1:buttons.length-1))%buttons.length;
+        buttons[target]?.focus();
+      }}>{experimentTabs.map(item=>{
+        const Icon=experimentTabIcons[item.id];
+        return <button type="button" key={item.id} aria-current={section===item.id?"page":undefined}
+          onClick={()=>{if(section!==item.id)onNavigate("experiments",{tab:item.id});}}>
+          <Icon size={16} aria-hidden="true"/><span>{item.label}</span>
+        </button>;
+      })}</nav>
+      <button type="button" className="icon-button experiment-section-refresh" disabled={busy} title="刷新实验配置" aria-label="刷新实验配置" onClick={()=>void run(load)}>
+        <RefreshCw size={16} aria-hidden="true"/>
+      </button>
+    </header>
     {section==="code"&&<nav className="experiment-subnav" aria-label="代码视图">{codeTabs.map(item=>
       <button type="button" className="secondary-button" key={item.id} aria-pressed={codeTab===item.id} onClick={()=>setCodeTab(item.id)}>{item.label}</button>
     )}</nav>}

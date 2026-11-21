@@ -1,32 +1,34 @@
-/* Literature title and navigation share the project theme. */
-.literature-section-header{
- display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:14px 24px;
+/* Shared heading and navigation styles for literature and experiments. */
+:is(.literature-section-header,.experiment-section-header){
  padding:16px 20px;border:1px solid var(--line);border-radius:14px;
  background:var(--surface);box-shadow:var(--shadow-soft)
 }
-.literature-section-title{display:flex;align-items:center;gap:12px}
-.literature-section-title>span{
+.literature-section-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:14px 24px}
+:is(.literature-section-title,.experiment-section-title){display:flex;align-items:center;gap:12px}
+:is(.literature-section-title,.experiment-section-title)>span{
  display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:10px;
  background:var(--accent-soft);color:var(--accent)
 }
-.literature-section-title h2{margin:0;color:var(--ink);font-size:19px;font-weight:700}
-.literature-module-tabs{
- display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:100%;
+:is(.literature-section-title,.experiment-section-title) h2{margin:0;color:var(--ink);font-size:19px;font-weight:700}
+:is(.literature-module-tabs,.experiment-tabs){
+ display:grid;gap:4px;max-width:100%;
  padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft)
 }
-.literature-module-tabs>button{
+:is(.literature-module-tabs,.experiment-tabs)>button{
  display:flex;align-items:center;justify-content:center;gap:7px;min-height:36px;
  padding:6px 12px;border:1px solid transparent;border-radius:7px;background:transparent;
  color:var(--muted);font:inherit;font-size:13px;white-space:nowrap;cursor:pointer
 }
-.literature-module-tabs>button:hover{color:var(--ink);background:var(--surface)}
-.literature-module-tabs>button[aria-selected=true]{
+:is(.literature-module-tabs,.experiment-tabs)>button:hover{color:var(--ink);background:var(--surface)}
+:is(.literature-module-tabs,.experiment-tabs)>button:is([aria-selected=true],[aria-current=page]){
  color:var(--accent);background:var(--accent-soft);border-color:var(--accent-line);font-weight:650
 }
-.literature-module-tabs>button>svg{flex:none}
-.literature-module-tabs>button:focus-visible{outline:2px solid var(--focus-ring,var(--accent));outline-offset:1px}
+:is(.literature-module-tabs,.experiment-tabs)>button>svg{flex:none}
+:is(.literature-module-tabs,.experiment-tabs)>button:focus-visible{outline:2px solid var(--focus-ring,var(--accent));outline-offset:1px}
+.literature-module-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:600px){
- .literature-section-header{padding:14px;gap:12px}
+ :is(.literature-section-header,.experiment-section-header){padding:14px}
+ .literature-section-header{gap:12px}
  .literature-module-tabs{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
