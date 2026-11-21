@@ -152,8 +152,6 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const messages=useMemo(()=>turns.filter(turn=>turn.conversation_id===conversation).sort((a,b)=>a.created_at.localeCompare(b.created_at)),[turns,conversation]);
   const active=turns.find(turn=>['running','cancelling'].includes(turn.status)),session=sessions.find(item=>item.id===conversation),last=messages.at(-1);
   const currentTurn = active?.conversation_id === conversation ? active : last;
-  const currentStatus = currentTurn && (connected ? currentTurn.status : 'offline');
-  const statusText = currentStatus === 'offline' ? '状态待同步' : currentStatus && (states[currentStatus] ?? currentStatus);
   const sessionTitle=(item:Session)=>titles[item.id]||item.first.instructions.slice(0,70);
   const filtered=sessions.filter(item=>`${sessionTitle(item)}\n${item.first.instructions}\n${item.latest.instructions}`.toLowerCase().includes(query.trim().toLowerCase()));
   const scrollBottom=(smooth=false)=>{const node=messagesRef.current;if(node)node.scrollTo({top:node.scrollHeight,behavior:smooth?'smooth':'auto'});follow.current=true;setAway(false);setUnread(false);};
@@ -289,25 +287,27 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
         {indexOpen&&<nav className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
       </div>
         <div ref={transcriptRef} className="chat-transcript-wrap"><div ref={messagesRef} className="chat-messages" role="log" aria-label="Agent 对话消息" aria-live="polite" aria-relevant="additions text" onScroll={event=>{const node=event.currentTarget,isAway=node.scrollHeight-node.scrollTop-node.clientHeight>90;follow.current=!isAway;setAway(isAway);if(!isAway)setUnread(false);}}>
-          {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+item.text:item.text);input.current?.focus();}}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messages.map((turn,index)=><section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
+          {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+item.text:item.text);input.current?.focus();}}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messages.map((turn,index)=>{
+            const isCurrent = turn.task_id === currentTurn?.task_id;
+            const status = isCurrent && !connected ? 'offline' : turn.status;
+            const statusText = status === 'offline' ? '状态待同步' : states[status] ?? status;
+            return <section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
             <article className="chat-message chat-user"><header><span>你</span><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header>{turn.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>{turn.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===turn.skill_id)?.title??turn.skill_id}</div>}<div className="chat-user-body">{turn.instructions}</div><ChatAttachmentList base={base} entries={turn.attachments??[]}/><footer className="chat-user-actions"><button type="button" onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>引用</button><button type="button" aria-label="复制用户消息" onClick={()=>copy(turn.task_id+'-user',turn.instructions)}>{copied===turn.task_id+'-user'?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id+'-user'?'已复制':'复制'}</button></footer></article>
             <article className="chat-message chat-assistant"><header><span className="chat-agent-avatar"><Bot size={15}/></span><strong>论文助手</strong><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header>{turn.output?.length?<ChatOutputMessages output={turn.output} response={turn.response}/>:turn.response?<ChatMarkdown text={turn.response}/>:<div className={`chat-empty-response ${turn.status==='running'?'working':''}`}>{turn.status==='running'?<><span className="chat-thinking"><i/><i/><i/></span>正在处理，进展消息会陆续显示。</>:turn.status==='cancelling'?'正在停止，请稍候。':turn.status==='failed'?'本轮未能完成，可以查看过程后重新发送。':'本轮没有返回文本。'}</div>}{turn.error&&<p className="chat-error">{turn.error}</p>}
-              <div className="chat-turn-actions">{turn.response&&<button type="button" className="text-button" onClick={()=>copy(turn.task_id,turn.response)}>{copied===turn.task_id?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id?'已复制':'复制回复'}</button>}<button type="button" className="text-button" disabled={busy} aria-expanded={Boolean(openLogs[turn.task_id])} onClick={()=>openLogs[turn.task_id]?setOpenLogs(old=>({...old,[turn.task_id]:false})):readLogs(turn)}><ChevronDown size={13}/> {openLogs[turn.task_id]?'收起过程':'查看过程'}</button>{['failed','cancelled','interrupted'].includes(turn.status)&&<button type="button" className="text-button" disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>将问题填入输入框</button>}{turn.status==='interrupted'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('请先确认旧 Agent 进程已经停止，并核对本轮已产生的改动。确认完成？'))void act(async()=>{await call(`/code-agent/tasks/${turn.task_id}/acknowledge`,{confirm:true});await refresh();});}}>确认旧进程已停止</button>}
-                {turn.task_id!==currentTurn?.task_id&&<span className={`chat-turn-status status-${turn.status}`}>{states[turn.status]??turn.status}</span>}
+              <div className="chat-turn-actions">
+                <div className="chat-turn-buttons">{turn.response&&<button type="button" className="text-button" onClick={()=>copy(turn.task_id,turn.response)}>{copied===turn.task_id?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id?'已复制':'复制回复'}</button>}<button type="button" className="text-button" disabled={busy} aria-expanded={Boolean(openLogs[turn.task_id])} onClick={()=>openLogs[turn.task_id]?setOpenLogs(old=>({...old,[turn.task_id]:false})):readLogs(turn)}><ChevronDown size={13}/> {openLogs[turn.task_id]?'收起过程':'查看过程'}</button>{['failed','cancelled','interrupted'].includes(turn.status)&&<button type="button" className="text-button" disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>将问题填入输入框</button>}{turn.status==='interrupted'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('请先确认旧 Agent 进程已经停止，并核对本轮已产生的改动。确认完成？'))void act(async()=>{await call(`/code-agent/tasks/${turn.task_id}/acknowledge`,{confirm:true});await refresh();});}}>确认旧进程已停止</button>}
+                </div>
+                <span className={`chat-turn-status status-${status}`} role={isCurrent?'status':undefined}>
+                  {['running','cancelling'].includes(status) && <LoaderCircle size={12} className="spin" aria-hidden="true"/>}
+                  {status === 'completed' && <Check size={12} aria-hidden="true"/>}
+                  {statusText}
+                </span>
               </div>
               {openLogs[turn.task_id]&&<div className="chat-process-panel"><header><span>执行过程 · {states[turn.status]??turn.status}</span><button type="button" className="text-button" disabled={busy} onClick={()=>readLogs(turn)}>刷新</button></header><pre>{logs[turn.task_id]||'暂无过程记录。'}</pre></div>}
-            </article></section>)}
+            </article></section>;
+          })}
           </div>
-          {(currentStatus || away) && <div className="chat-transcript-footer">
-            {away && <button type="button" className="chat-jump-bottom" onClick={()=>scrollBottom(true)}>
-              <ArrowDown size={14} aria-hidden="true"/>{unread?'有新进展 · 回到最新':'回到最新消息'}
-            </button>}
-            {currentStatus && <span className={`chat-turn-status status-${currentStatus}`} role="status" aria-label="当前对话状态">
-              {['running','cancelling'].includes(currentStatus) && <LoaderCircle size={12} className="spin" aria-hidden="true"/>}
-              {currentStatus === 'completed' && <Check size={12} aria-hidden="true"/>}
-              {statusText}
-            </span>}
-          </div>}
+          {away&&<button type="button" className="chat-jump-bottom" onClick={()=>scrollBottom(true)}><ArrowDown size={14} aria-hidden="true"/>{unread?'有新进展 · 回到最新':'回到最新消息'}</button>}
         </div>
         <ChatHeightControl height={chatHeight} onChange={changeChatHeight} target={transcriptRef}/>
         {error&&<div className="chat-notice"><ErrorNotice>{error}</ErrorNotice><button type="button" className="icon-button" aria-label="关闭对话错误提示" onClick={()=>setError('')}><X size={13}/></button></div>}
