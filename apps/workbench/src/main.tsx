@@ -13,7 +13,7 @@ import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, GitBranch, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, BookText, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { KnowledgePanel, RestoreKnowledge } from "./knowledge.js";
@@ -27,7 +27,7 @@ import "./styles.css";
 import "./themes.css";
 import "./workspace.css";
 
-const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:NotebookText,data:Database,reproductions:FolderOpen,experiments:FlaskConical,autodl:FolderOpen,results:ChartColumn,paper:NotebookText,files:FolderOpen,tasks:ListTodo,chat:MessagesSquare};
+const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:BookText,data:Database,reproductions:GitBranch,experiments:FlaskConical,autodl:Server,results:ChartColumn,paper:NotebookText,files:FolderOpen,tasks:ListTodo,chat:MessagesSquare};
 
 type NavigateOptions={action?:string;focus?:string;status?:string};
 function rememberedPage(id:string):ProjectPage {
