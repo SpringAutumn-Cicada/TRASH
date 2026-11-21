@@ -5,7 +5,7 @@ import "./data.css";
 import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
-import { Download, FolderOpen, Columns2, Pencil, Play, Plus, RefreshCw } from "lucide-react";
+import { ChartColumn, ClipboardList, Code2, Columns2, Database, Download, FolderOpen, GitBranch, Pencil, Play, Plus, RefreshCw, Server } from "lucide-react";
 import type { ProjectPage, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { DatasetsPanel } from "./data.js";
 import { ExperimentalDataPanel } from "./experimental-data.js";
@@ -26,6 +26,7 @@ async function request<T>(base:string,path:string,body?:unknown,method=body===un
 }
 const stateNames:Record<string,string>={queued:"排队",preflight:"预检查",syncing:"同步代码",running:"运行中",collecting:"收集产物",completed:"已完成",failed:"失败",cancel_requested:"取消请求中",cancelled:"已取消",disconnected:"连接中断",unknown_remote_state:"远端状态待确认"};
 const terminal=["completed","failed","cancelled"];
+const experimentTabIcons = {compute:Server,runs:ClipboardList,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
 const codeTabs=[{id:"overview",label:"仓库与 Git"},{id:"code",label:"文件浏览"}] as const;
 const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"settings",label:"工作区设置"},{id:"workspace",label:"AutoDL 工作区"}] as const;
 type Navigate=(page:ProjectPage,options?:NavigateOptions)=>void;
@@ -155,14 +156,17 @@ export function ExperimentsPage({projectId,section,action,focusId,status,onNavig
       const target=event.key==="Home"?0:event.key==="End"?buttons.length-1:
         (index+(event.key==="ArrowRight"?1:buttons.length-1))%buttons.length;
       buttons[target]?.focus();
-    }}>{experimentTabs.map(item=>
-      <button type="button" key={item.id} className={section===item.id?"active":""} aria-current={section===item.id?"page":undefined}
-        onClick={()=>{if(section!==item.id)onNavigate("experiments",{tab:item.id});}}>{item.label}</button>
-    )}</nav>
+    }}>{experimentTabs.map(item=>{
+      const Icon=experimentTabIcons[item.id];
+      return <button type="button" key={item.id} aria-current={section===item.id?"page":undefined}
+        onClick={()=>{if(section!==item.id)onNavigate("experiments",{tab:item.id});}}>
+        <Icon size={16} aria-hidden="true"/><span>{item.label}</span>
+      </button>;
+    })}</nav>
     {section==="code"&&<nav className="experiment-subnav" aria-label="代码视图">{codeTabs.map(item=>
       <button type="button" className="secondary-button" key={item.id} aria-pressed={codeTab===item.id} onClick={()=>setCodeTab(item.id)}>{item.label}</button>
     )}</nav>}
-    {autoDlOnly&&<nav className="experiment-subnav" aria-label="算力视图">{autoDlTabs.map(item=>
+    {autoDlOnly&&<nav className="experiment-subnav" aria-label="AutoDL 视图">{autoDlTabs.map(item=>
       <button type="button" className="secondary-button" key={item.id} aria-pressed={computeTab===item.id} onClick={()=>setComputeTab(item.id)}>{item.label}</button>
     )}</nav>}
     {section==="runs"&&<div className="experiment-subnav">
