@@ -1,9 +1,8 @@
 import { startDatasetUpload, subscribeDatasetUploads, datasetUploadTasks } from "./background-dataset-upload.js";
 import { DatasetTransferProgress } from "./dataset-transfer-progress.js";
-import { ExperimentalDataPanel } from "./experimental-data.js";
-import React, { useEffect, useId, useRef, useState } from "react";
-import { Database, Activity, ChartColumn, SlidersHorizontal, Plus, FolderOpen, FileUp, Pencil, Trash2, Copy, X, Upload } from "lucide-react";
-import type { DatasetRef, RemoteWorkspace, SshProfile, ProjectPage } from "@trash/protocol";
+import React, { useEffect, useRef, useState } from "react";
+import { Database, Plus, FolderOpen, FileUp, Pencil, Trash2, Copy, X, Upload } from "lucide-react";
+import type { DatasetRef, RemoteWorkspace, SshProfile } from "@trash/protocol";
 import { ModalLayer } from "./modal-layer.js";
 import { RemoteDirectoryPicker } from "./remote-directory-picker.js";
 import { ErrorNotice } from "./error-notice.js";
@@ -12,17 +11,8 @@ import { copyText } from "./clipboard.js";
 import { useUnsavedChanges } from "./navigation.js";
 import "./data.css";
 const states:Record<string,string>={uploading:"上传中",ready:"已上传",failed:"上传失败",cancelled:"已终止",interrupted:"已中断"};
-const dataSections=[{id:"datasets",label:"数据集",icon:Database},{id:"experimental-data",label:"实验数据",icon:Activity},{id:"comparison",label:"对比实验",icon:ChartColumn},{id:"ablation",label:"消融实验",icon:SlidersHorizontal}] as const;
-export function DataPage({projectId,onNavigate,action,focusId,status}:{projectId:string;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void}){
- const [section,setSection]=useState<typeof dataSections[number]['id']>(action==='experimental-data'||action==='new-experiment-record'||focusId?'experimental-data':'datasets');
- const [experimentalVisited,setExperimentalVisited]=useState(false);
- useEffect(()=>{if(action==='experimental-data'||action==='new-experiment-record'||focusId)setSection('experimental-data');},[action,focusId]);
- useEffect(()=>{if(section==="experimental-data")setExperimentalVisited(true);},[section]);
- const id=useId();
- return <section className="data-page"><div className="data-heading"><span className="data-symbol"><Database size={25}/></span><div><h2>数据</h2><p>管理数据集、实验记录、对比实验与消融实验数据。</p></div></div><nav className="data-module-tabs" role="tablist" aria-label="数据子模块">{dataSections.map((item,index)=><button key={item.id} type="button" role="tab" id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel-${item.id}`} aria-selected={section===item.id} tabIndex={section===item.id?0:-1} className={section===item.id?'active':''} onClick={()=>setSection(item.id)} onKeyDown={event=>{let next:number;if(event.key==='ArrowRight')next=(index+1)%dataSections.length;else if(event.key==='ArrowLeft')next=(index+dataSections.length-1)%dataSections.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=dataSections.length-1;else return;event.preventDefault();const target=dataSections[next];setSection(target.id);document.getElementById(`${id}-tab-${target.id}`)?.focus();}}><item.icon size={16}/>{item.label}</button>)}</nav><div role="tabpanel" id={`${id}-panel-datasets`} aria-labelledby={`${id}-tab-datasets`} hidden={section!=='datasets'} tabIndex={0}><DatasetsPanel projectId={projectId}/></div><div role="tabpanel" id={`${id}-panel-experimental-data`} aria-labelledby={`${id}-tab-experimental-data`} hidden={section!=='experimental-data'} tabIndex={0}>{experimentalVisited&&<ExperimentalDataPanel projectId={projectId} active={section==='experimental-data'} onNavigate={onNavigate} action={action} focusId={focusId} status={status}/>}</div>{dataSections.filter(item=>item.id!=='datasets'&&item.id!=='experimental-data').map(item=><div key={item.id} role="tabpanel" id={`${id}-panel-${item.id}`} aria-labelledby={`${id}-tab-${item.id}`} hidden={section!==item.id} tabIndex={0}><div className="data-module-empty"><span className="data-symbol"><item.icon size={27}/></span><h3>{item.label}</h3><p>暂无{item.label}数据</p></div></div>)}</section>;
-}
 const historicalDataset=(item:DatasetRef)=>['cancelled','failed','interrupted'].includes(item.transfer_status??'');
-function DatasetsPanel({projectId}:{projectId:string}){
+export function DatasetsPanel({projectId}:{projectId:string}){
  const [datasets,setDatasets]=useState<DatasetRef[]>([]),[profiles,setProfiles]=useState<SshProfile[]>([]),[connected,setConnected]=useState<string[]>([]),[selected,setSelected]=useState(""),[query,setQuery]=useState(""),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [dialog,setDialog]=useState<"register"|"upload"|"edit">(),[editing,setEditing]=useState(""),[host,setHost]=useState(""),[name,setName]=useState(""),[path,setPath]=useState(""),[version,setVersion]=useState("1"),[notes,setNotes]=useState(""),[file,setFile]=useState<File>(),[extract,setExtract]=useState(true),[picker,setPicker]=useState(false),[workspace,setWorkspace]=useState<RemoteWorkspace|null>(null),[busy,setBusy]=useState(false),[removing,setRemoving]=useState<DatasetRef>();
  const [deleteFiles,setDeleteFiles]=useState(false);

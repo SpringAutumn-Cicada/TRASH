@@ -34,7 +34,7 @@ function sourceTypeLabel(sourceType: Source["source_type"]): string {
   return labels[sourceType];
 }
 
-export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource,onOpenSettings,projectUpdatedAt}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void;onOpenSettings?:()=>void;projectUpdatedAt?:string}) {
+export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource,onOpenSettings,onOpenReproduction,projectUpdatedAt}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void;onOpenSettings?:()=>void;onOpenReproduction?:(sourceId:string)=>void;projectUpdatedAt?:string}) {
   const [detail, setDetail] = useState<ProjectDetail>();
   const [searchScope,setSearchScope]=useState<'project'|'external'>('project');
   const [projectSearched,setProjectSearched]=useState(false),[externalSearched,setExternalSearched]=useState(false);
@@ -262,6 +262,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               {detail.sources.length>0&&!librarySources.some(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase()))&&<div className="library-empty library-no-results"><Search size={23}/><strong>没有找到匹配的文献</strong><button type="button" className="text-button" onClick={()=>setLibraryQuery('')}>清空筛选</button></div>}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
+              {onOpenReproduction&&<button type="button" className="secondary-button" onClick={()=>onOpenReproduction(selectedSource.source.source_id)}>查看复现</button>}
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />
               {selectedSource.source.abstract && <p className="source-abstract">{selectedSource.source.abstract}</p>}
               {selectedSource.segments.length ? <details><summary>查看解析文字（搜索索引，非原文排版）</summary><div className="segment-list">{selectedSource.segments.map((segment, index) => <article key={`${segment.locator.kind}-${index}`}><span>{locatorLabel(segment.locator)}</span><p>{segment.text}</p></article>)}</div></details> : <div className="metadata-note">{selectedSource.source.parse_status === "no_text" ? "未能从该来源提取文本。" : "该记录仅包含元数据。"}</div>}
