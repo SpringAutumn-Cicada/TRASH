@@ -172,7 +172,18 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     try{await action();}catch(cause){if(alive.current)setError(cause instanceof Error?cause.message:'操作失败。');}finally{acting.current=false;if(alive.current)setBusy(false);}
   };
   const configRequest=useRef<AbortController|undefined>(undefined);
-  const settingsId=useId();
+  const settingsId=useId(), historyId=useId(), messageIndexId=useId();
+  const historyToggle = useRef<HTMLButtonElement>(null);
+  const restoreHistoryFocus = useRef(false);
+  useEffect(()=>{
+    if (!restoreHistoryFocus.current) return;
+    restoreHistoryFocus.current = false;
+    historyToggle.current?.focus();
+  },[history]);
+  const toggleHistory = () => {
+    restoreHistoryFocus.current = true;
+    setHistory(visible=>!visible);
+  };
   const readModelConfig=useCallback(()=>{
     if(configRequest.current)return;
     const controller=new AbortController();
@@ -204,6 +215,9 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const selectedModel=config?.models.find(item=>item.id===shownModel);
   const defaultEffort=config?.reasoning_effort??selectedModel?.default_effort;
   const shownEffort=effort||defaultEffort;
+  const modelSummary = (shownModel ?? '模型设置') + (shownEffort ? ` · ${effortLabels[shownEffort] ?? shownEffort}` : '');
+  const permissionLabel = sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':'项目读写';
+  const threadTitle = session ? sessionTitle(session) : '新对话';
   const supportedEfforts=selectedModel?.efforts.length?selectedModel.efforts:Object.keys(effortLabels);
   const modelChoices=[...new Set([...(config?.models.map(item=>item.id)??[]),model])]
     .filter(value=>value&&value!==inheritedModel);
@@ -248,7 +262,14 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       if(alive.current)onBrowseResearch(result.path);
     })}><FolderOpen size={15}/>研究笔记</button><button type="button" className="secondary-button" disabled={busy||attachments.uploading} onClick={()=>choose()}><MessageSquarePlus size={15}/>新建对话</button></header>
     <div className={`chat-layout ${history?'':'chat-history-hidden'} ${chatHeight!==null?'chat-custom-height':''}`} style={chatHeight!==null?{'--chat-message-height':`${chatHeight}px`} as React.CSSProperties:undefined}>
-      {history&&<aside className="chat-conversations" aria-label="项目对话记录"><div className="chat-history-heading"><strong>历史对话 <small>{sessions.length}</small></strong></div><label className="chat-history-search"><Search size={14}/><input aria-label="搜索对话" placeholder="搜索对话…" value={query} onChange={event=>setQuery(event.target.value)}/></label><div className="chat-session-list">{loading?<p>正在读取对话…</p>:filtered.map(item=>{
+      {history&&<aside id={historyId} className="chat-conversations" aria-label="项目对话记录">
+        <div className="chat-history-heading">
+          <strong>历史对话 <small>{sessions.length}</small></strong>
+          <button type="button" ref={historyToggle} className="chat-header-icon chat-history-toggle"
+            aria-label="收起历史对话" title="收起历史对话" aria-expanded={true} aria-controls={historyId} onClick={toggleHistory}>
+            <PanelLeftClose size={16} aria-hidden="true"/>
+          </button>
+        </div><label className="chat-history-search"><Search size={14}/><input aria-label="搜索对话" placeholder="搜索对话…" value={query} onChange={event=>setQuery(event.target.value)}/></label><div className="chat-session-list">{loading?<p>正在读取对话…</p>:filtered.map(item=>{
         const title = sessionTitle(item);
         const selected = conversation === item.id;
         const status = active?.conversation_id === item.id ? active.status : item.latest.status;
@@ -272,13 +293,38 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
           </div>
         </div>;
       })}{!loading&&!filtered.length&&<p>{query?'没有匹配的对话。':'发送第一条消息，开始项目对话。'}</p>}</div><div className="chat-history-note">切换对话会暂存未发送内容；离开本页前请保存需要保留的草稿。</div></aside>}
-      <div className="chat-main"><div className="chat-thread-controls"><header className="chat-thread-heading"><button type="button" className="icon-button" aria-label={history?'收起历史对话':'展开历史对话'} onClick={()=>setHistory(!history)}>{history?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}</button><div className="chat-thread-info"><strong>{session?sessionTitle(session):'新对话'}</strong><span><i className={`chat-connection-dot ${connected?'':'offline'}`}/>{connected?'项目会话':'连接暂时中断，正在重试'}{messages.length>0?` · ${messages.length} 轮交流`:''}</span></div><button type="button" className={`chat-options-toggle ${options?'active':''}`} aria-label="模型和权限设置"
-          aria-expanded={options} aria-controls={settingsId} onClick={toggleOptions}>
-          <Settings2 size={14}/>
-          <span className="chat-model-summary">{shownModel??'模型设置'}{shownEffort?`·${effortLabels[shownEffort]??shownEffort}`:''}</span>
-          <span className="chat-permission-label">{sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':'项目读写'}</span>
-          <ChevronDown size={12}/>
-        </button><button type="button" className={`icon-button ${indexOpen?'active':''}`} aria-label="消息目录" aria-expanded={indexOpen} disabled={!messages.length} onClick={()=>{setOptions(false);setIndexOpen(!indexOpen);}}><List size={17}/></button></header>
+      <div className="chat-main"><div className="chat-thread-controls">
+        <header className="chat-thread-heading">
+          <div className="chat-thread-identity">
+            {!history && <button type="button" ref={historyToggle} className="chat-header-icon chat-history-toggle"
+              aria-label="展开历史对话" title="展开历史对话" aria-expanded={false} onClick={toggleHistory}>
+              <PanelLeftOpen size={16} aria-hidden="true"/>
+            </button>}
+            <div className="chat-thread-avatar"><MessageSquare size={18} aria-hidden="true"/></div>
+            <div className="chat-thread-info">
+              <strong title={threadTitle}>{threadTitle}</strong>
+              <div className="chat-thread-meta">
+                <span><i className={`chat-connection-dot ${connected?'':'offline'}`} aria-hidden="true"/>
+                  {connected?'项目会话':'连接中断，正在重试'}</span>
+                {messages.length>0 && <span className="chat-thread-count">{messages.length} 轮交流</span>}
+              </div>
+            </div>
+          </div>
+          <div className="chat-thread-actions">
+            <button type="button" className={`chat-options-toggle ${options?'active':''}`}
+              aria-label={`模型和权限设置，${modelSummary}，${permissionLabel}`}
+              aria-expanded={options} aria-controls={options?settingsId:undefined} onClick={toggleOptions}>
+              <Settings2 size={15} aria-hidden="true"/>
+              <span className="chat-model-summary">{modelSummary}</span>
+              <span className="chat-permission-label">{permissionLabel}</span>
+              <ChevronDown size={13} className="chat-options-chevron" aria-hidden="true"/>
+            </button>
+            <button type="button" className={`chat-header-icon chat-index-toggle ${indexOpen?'active':''}`}
+              aria-label="消息目录" title="消息目录" aria-expanded={indexOpen}
+              aria-controls={indexOpen?messageIndexId:undefined} disabled={!messages.length}
+              onClick={()=>{setOptions(false);setIndexOpen(!indexOpen);}}><List size={17} aria-hidden="true"/></button>
+          </div>
+        </header>
         {options&&<div id={settingsId} className="chat-options-panel">
           {configError?<p role="status">{configError}</p>:configLoading&&!config?<p role="status">正在读取模型设置…</p>:null}
           <div className="chat-settings">
@@ -295,7 +341,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
             </select></label>
           </div>
         </div>}
-        {indexOpen&&<nav className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
+        {indexOpen&&<nav id={messageIndexId} className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
       </div>
         <div ref={transcriptRef} className="chat-transcript-wrap"><div ref={messagesRef} className="chat-messages" role="log" aria-label="Agent 对话消息" aria-live="polite" aria-relevant="additions text" onScroll={event=>{const node=event.currentTarget,isAway=node.scrollHeight-node.scrollTop-node.clientHeight>90;follow.current=!isAway;setAway(isAway);if(!isAway)setUnread(false);}}>
           {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+item.text:item.text);input.current?.focus();}}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messages.map((turn,index)=>{
