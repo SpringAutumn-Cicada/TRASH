@@ -1,6 +1,6 @@
 import { ResearchFolders } from "./research-folders.js";
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronDown, ChevronRight, Download, File, FilePlus, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Save, Search, Trash2, Upload, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, ChevronRight, Download, Eye, File, FileArchive, FileCode2, FileImage, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, FolderTree, Link2, Move, Pencil, RefreshCw, Save, Search, Trash2, Upload, X } from 'lucide-react';
 import type { ProjectPage } from '@trash/protocol';
 import { api, uiError } from './api.js';
 import { Markdown } from './knowledge.js';
@@ -18,6 +18,16 @@ type Action={kind:'file'|'directory'|'rename'|'move'|'delete';entry?:Entry;finge
 const parent=(path:string)=>path.split('/').slice(0,-1).join('/');
 const size=(bytes:number)=>bytes<1024?`${bytes} B`:bytes<1048576?`${(bytes/1024).toFixed(1)} KiB`:`${(bytes/1048576).toFixed(1)} MiB`;
 const childPath=(directory:string,name:string)=>directory?directory+'/'+name:name;
+function FileGlyph({name,kind,expanded=false,size=16}:{name:string;kind:Entry['kind'];expanded?:boolean;size?:number}){
+  if(kind==='directory')return expanded?<FolderOpen size={size} aria-hidden="true"/>:<Folder size={size} aria-hidden="true"/>;
+  if(kind==='symlink')return <Link2 size={size} aria-hidden="true"/>;
+  const extension=name.split('.').at(-1)?.toLowerCase()??'';
+  const Icon=/^(png|jpg|jpeg|gif|webp|svg|bmp|tiff?)$/.test(extension)?FileImage
+    :/^(md|markdown|txt|pdf|docx?|tex)$/.test(extension)?FileText
+    :/^(py|js|jsx|ts|tsx|sh|json|ya?ml|toml|html|css)$/.test(extension)?FileCode2
+    :/^(zip|tar|gz|7z|rar)$/.test(extension)?FileArchive:File;
+  return <Icon size={size} aria-hidden="true"/>;
+}
 function FolderNode({path,label,depth=0,base,revision,hidden,directory,selected,onDirectory,onFile,onError}:{path:string;label:string;depth?:number;base:string;revision:number;hidden:boolean;directory:string;selected?:string;onDirectory:(path:string)=>void;onFile:(path:string)=>void;onError:(message:string)=>void}){
   const [expanded,setExpanded]=useState(path===''),[listing,setListing]=useState<Listing>(),[loading,setLoading]=useState(false);
   useEffect(()=>{if(path===''||directory===path||directory.startsWith(path+'/'))setExpanded(true);},[directory,path]);
@@ -26,14 +36,15 @@ function FolderNode({path,label,depth=0,base,revision,hidden,directory,selected,
     void api<Listing>(`${base}?path=${encodeURIComponent(path)}&hidden=${hidden}`).then(value=>{if(alive)setListing(value);}).catch(cause=>{if(alive)onError(uiError(cause,'目录读取失败。'));}).finally(()=>{if(alive)setLoading(false);});
     return()=>{alive=false;};
   },[base,path,expanded,revision,hidden]);
-  return <div className="paper-file-node"><div className={`paper-file-tree-row ${directory===path?'active':''}`} style={{paddingLeft:depth*15+5}}>
+  return <div className="paper-file-node"><div className={`paper-file-tree-row ${directory===path&&!selected?'active':''}`} style={{paddingInlineStart:Math.min(depth,8)*12+4}}>
     <button type="button" className="icon-button" aria-label={`${expanded?'折叠':'展开'} ${label}`} aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button>
-    <button type="button" onClick={()=>onDirectory(path)}><Folder size={15}/><span>{label}</span></button>
-  </div>{expanded&&<div>{loading?<p className="quiet">正在读取…</p>:listing?.entries.map(entry=>entry.kind==='directory'?<FolderNode key={entry.path} path={entry.path} label={entry.name} depth={depth+1} base={base} revision={revision} hidden={hidden} directory={directory} selected={selected} onDirectory={onDirectory} onFile={onFile} onError={onError}/>:<button type="button" key={entry.path} style={{paddingLeft:(depth+1)*15+30}} className={`paper-file-leaf ${selected===entry.path?'active':''}`} disabled={entry.kind==='symlink'} title={entry.kind==='symlink'?'符号链接：不跟随访问外部内容':entry.path} onClick={()=>onFile(entry.path)}><File size={14}/><span>{entry.name}</span>{entry.kind==='symlink'&&<small>链接</small>}</button>)}</div>}</div>;
+    <button type="button" title={label} aria-current={directory===path&&!selected?true:undefined} onClick={()=>onDirectory(path)}><FileGlyph name={label} kind="directory" expanded={expanded}/><span>{label}</span></button>
+  </div>{expanded&&<div>{loading?<p className="quiet">正在读取…</p>:listing?.entries.map(entry=>entry.kind==='directory'?<FolderNode key={entry.path} path={entry.path} label={entry.name} depth={depth+1} base={base} revision={revision} hidden={hidden} directory={directory} selected={selected} onDirectory={onDirectory} onFile={onFile} onError={onError}/>:<button type="button" key={entry.path} style={{paddingInlineStart:Math.min(depth+1,8)*12+28}} className={`paper-file-leaf ${selected===entry.path?'active':''}`} aria-current={selected===entry.path?true:undefined} disabled={entry.kind==='symlink'} title={entry.kind==='symlink'?'符号链接：不跟随访问外部内容':entry.path} onClick={()=>onFile(entry.path)}><FileGlyph name={entry.name} kind={entry.kind} size={14}/><span>{entry.name}</span>{entry.kind==='symlink'&&<small>链接</small>}</button>)}</div>}</div>;
 }
 export function ProjectFilesPage({projectId,focusId,onNavigate}:{projectId:string;focusId?:string;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void}){
   const base=`/projects/${encodeURIComponent(projectId)}/files`;
   const [directory,setDirectory]=useState(''),[listing,setListing]=useState<Listing>(),[preview,setPreview]=useState<Preview>(),[draft,setDraft]=useState(''),[editing,setEditing]=useState(false),[hidden,setHidden]=useState(false),[revision,setRevision]=useState(0),[query,setQuery]=useState(''),[results,setResults]=useState<Entry[]>(),[truncated,setTruncated]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[action,setAction]=useState<Action>(),[recycleOpen,setRecycleOpen]=useState(false),[pending,setPending]=useState<(()=>void)>();
+  const [listingLoading,setListingLoading]=useState(true);
   const requestId=useRef(0),alive=useRef(true);
   const dirty=Boolean(preview&&draft!==preview.content&&preview.content!==undefined);
   const clearDirty=useUnsavedChanges(dirty);
@@ -42,7 +53,11 @@ export function ProjectFilesPage({projectId,focusId,onNavigate}:{projectId:strin
   const reload=()=>setRevision(value=>value+1);
   useEffect(()=>{
     let active=true;
-    void api<Listing>(`${base}?path=${encodeURIComponent(directory)}&hidden=${hidden}`).then(value=>{if(active)setListing(value);}).catch(cause=>{if(active)setError(uiError(cause,'无法读取工作区，请先在本地工作区设置中配置目录。'));});
+    setListingLoading(true);
+    void api<Listing>(`${base}?path=${encodeURIComponent(directory)}&hidden=${hidden}`)
+      .then(value=>{if(active)setListing(value);})
+      .catch(cause=>{if(active)setError(uiError(cause,'无法读取工作区，请先在本地工作区设置中配置目录。'));})
+      .finally(()=>{if(active)setListingLoading(false);});
     return()=>{active=false;};
   },[base,directory,hidden,revision]);
   const openFile=async(path:string)=>{
@@ -80,35 +95,147 @@ export function ProjectFilesPage({projectId,focusId,onNavigate}:{projectId:strin
     }setNotice(`已上传 ${uploaded.length} 个文件。`);}
     catch(cause){setError(uiError(cause,`上传失败，已成功保存 ${uploaded.length} 个文件；同名文件不会覆盖。`));}finally{setBusy(false);reload();}
   };
-  const search=async(event:React.FormEvent)=>{
-    event.preventDefault();setBusy(true);setError('');
-    try{const value=await api<{entries:Entry[];truncated:boolean}>(`${base}/search?q=${encodeURIComponent(query)}&hidden=${hidden}`);setResults(value.entries);setTruncated(value.truncated);}
-    catch(cause){setError(uiError(cause,'文件名搜索失败。'));}finally{setBusy(false);}
+  const search=(event:React.FormEvent)=>{
+    event.preventDefault();
+    if(busy||loading||!query.trim())return;
+    guard(()=>{
+      setBusy(true);setError('');
+      void api<{entries:Entry[];truncated:boolean}>(`${base}/search?q=${encodeURIComponent(query.trim())}&hidden=${hidden}`)
+        .then(value=>{if(alive.current){setPreview(undefined);setDraft('');setEditing(false);setResults(value.entries);setTruncated(value.truncated);clearDirty();}})
+        .catch(cause=>setError(uiError(cause,'文件名搜索失败。'))).finally(()=>setBusy(false));
+    });
   };
-  const entries=results??listing?.entries??[];
+  const currentListing=listing?.path===directory?listing:undefined;
+  const entries=results??currentListing?.entries??[];
+  const crumbs=directory.split('/').filter(Boolean);
   const contentUrl=preview?`/api/v1${base}/content?path=${encodeURIComponent(preview.path)}`:'';
   const selected=preview?entries.find(entry=>entry.path===preview.path)??{path:preview.path,name:preview.name,kind:'file' as const,size:preview.size,modified:preview.modified,protected:!preview.editable||Boolean(preview.managed)}:undefined;
   return <section className="paper-files-page">
-    <div className="section-heading"><div><h2><FolderOpen size={22}/> 项目文件</h2><p>浏览论文工作区，预览文献、图片和稿件，管理普通文件。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={()=>guard(()=>{reload();if(preview)void openFile(preview.path);})}><RefreshCw size={15}/>刷新</button></div>
-    <code className="paper-files-root">{listing?.root??'正在读取工作区路径…'}</code>
-    <div className="paper-files-toolbar"><button type="button" className="secondary-button" disabled={busy||!directory} onClick={()=>openDirectory(parent(directory))}><ArrowUp size={14}/>上一级</button><button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('file')}><FilePlus size={14}/>新建文件</button><button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('directory')}><FolderPlus size={14}/>新建文件夹</button><label className="secondary-button upload-button"><Upload size={14}/>上传文件<input aria-label="上传项目文件" type="file" multiple disabled={busy} onChange={event=>{void upload(event.target.files);event.currentTarget.value='';}}/></label><button type="button" className="secondary-button" disabled={busy} onClick={()=>setRecycleOpen(true)}><Trash2 size={14}/>回收站</button><label><input type="checkbox" checked={hidden} onChange={event=>setHidden(event.target.checked)}/>显示内部与隐藏文件</label></div>
+    <header className="paper-files-header">
+      <div className="paper-files-title">
+        <span className="paper-files-symbol"><FolderOpen size={24} aria-hidden="true"/></span>
+        <div>
+          <h2>项目文件</h2>
+          <code className="paper-files-root" title={listing?.root}>{listing?.root??'正在读取工作区路径…'}</code>
+        </div>
+      </div>
+      <button type="button" className="secondary-button" disabled={busy} onClick={()=>guard(()=>{reload();if(preview)void openFile(preview.path);})}>
+        <RefreshCw size={15} aria-hidden="true"/>刷新
+      </button>
+    </header>
+
+    <div className="paper-files-commands">
+      <div className="paper-files-toolbar" role="group" aria-label="文件操作">
+        <label className={`primary-button upload-button${busy?' disabled':''}`}>
+          <Upload size={15} aria-hidden="true"/>上传文件
+          <input aria-label="上传项目文件" type="file" multiple disabled={busy} onChange={event=>{void upload(event.target.files);event.currentTarget.value='';}}/>
+        </label>
+        <button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('file')}>
+          <FilePlus size={15} aria-hidden="true"/>新建文件
+        </button>
+        <button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('directory')}>
+          <FolderPlus size={15} aria-hidden="true"/>新建文件夹
+        </button>
+        <button type="button" className="secondary-button" disabled={busy} onClick={()=>setRecycleOpen(true)}>
+          <Trash2 size={15} aria-hidden="true"/>回收站
+        </button>
+      </div>
+      <label className="paper-files-hidden">
+        <input type="checkbox" checked={hidden} onChange={event=>setHidden(event.target.checked)}/>显示内部与隐藏文件
+      </label>
+    </div>
     <ResearchFolders projectId={projectId} onCreated={reload}/>
-    <nav className="paper-files-breadcrumb" aria-label="项目目录路径"><button type="button" onClick={()=>openDirectory('')}>工作区</button>{directory.split('/').filter(Boolean).map((part,index,array)=><React.Fragment key={index}><span>/</span><button type="button" onClick={()=>openDirectory(array.slice(0,index+1).join('/'))}>{part}</button></React.Fragment>)}</nav>
-    <form className="paper-file-search" onSubmit={event=>void search(event)}><Search size={15}/><input aria-label="搜索项目文件名" placeholder="按文件名搜索整个工作区" value={query} onChange={event=>setQuery(event.target.value)}/><button className="secondary-button" disabled={busy||!query.trim()}>搜索</button>{results&&<button type="button" className="text-button" onClick={()=>{setResults(undefined);setQuery('');}}>清除搜索</button>}</form>
-    {error&&<ErrorNotice>{error}</ErrorNotice>}{notice&&<p role="status">{notice}</p>}
-    <div className="paper-files-layout"><aside className="paper-files-tree" aria-label="项目文件树"><FolderNode path="" label="论文工作区" base={base} revision={revision} hidden={hidden} directory={directory} selected={preview?.path} onDirectory={openDirectory} onFile={selectFile} onError={setError}/></aside>
-    <div className="paper-files-content" aria-busy={loading}>
-      {loading?<p role="status">正在读取文件…</p>:preview?<>
-        <div className="paper-file-heading"><div><h3>{preview.name}{dirty?' *':''}</h3><p>{size(preview.size)} · {new Date(preview.modified).toLocaleString()}</p><code>{preview.path}</code></div><button type="button" className="icon-button" aria-label="关闭文件预览" onClick={()=>openDirectory(directory)}><X size={16}/></button></div>
-        <div className="paper-files-toolbar"><a className="secondary-button" href={contentUrl+'&download=true'} download><Download size={14}/>下载</a>{preview.editable&&<button type="button" className="secondary-button" disabled={busy} onClick={()=>setEditing(!editing)}><Pencil size={14}/>{editing?'预览':'编辑源码'}</button>}{dirty&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void save()}><Save size={14}/>保存{preview.managed?'新版本':''}</button>}{selected&&!selected.protected&&<><button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('rename',selected)}>重命名</button><button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('move',selected)}>移动</button><button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('delete',selected)}>移入回收站</button></>}</div>
-        {preview.managed&&<p className="quiet">平台知识对象 v{preview.managed.version}，保存会校验证据并建立草稿版本。<button type="button" className="text-button" onClick={()=>guard(()=>onNavigate(preview.managed!.kind==='wiki-page'?'wiki':'cards',{focus:preview.managed!.id}))}>打开{preview.managed.kind==='wiki-page'?'Wiki':'卡片'}模块</button></p>}
-        {preview.readonlyReason&&<p className="quiet">{preview.readonlyReason}</p>}
-        {preview.kind==='pdf'?<iframe key={contentUrl} className="paper-pdf-preview" title={`PDF：${preview.name}`} src={contentUrl}/>:preview.kind==='image'?<img className="paper-image-preview" src={contentUrl} alt={preview.name}/>:preview.content!==undefined?editing?<textarea className="paper-file-editor" aria-label="文件源码" spellCheck={false} value={draft} onChange={event=>setDraft(event.target.value)}/>: /\.(md|markdown)$/i.test(preview.path)?<Markdown body={draft.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')}/>:<div className="paper-text-preview">{draft.split('\n').map((line,index)=><div key={index}><span>{index+1}</span><code>{line||' '}</code></div>)}</div>:<p>此文件为二进制、非 UTF-8 文本或超过 2 MiB，暂不在线编辑，可下载查看。</p>}
-      </>:<>
-        <h3>{results?'文件名搜索结果':directory||'工作区文件'}</h3>{truncated&&results&&<p>搜索结果已截断，请缩小文件名范围。</p>}
-        <div className="paper-file-list">{entries.map(entry=><div key={entry.path}><button type="button" disabled={entry.kind==='symlink'} onClick={()=>entry.kind==='directory'?openDirectory(entry.path):selectFile(entry.path)}>{entry.kind==='directory'?<Folder size={17}/>:<File size={17}/>}<span><strong>{results?entry.path:entry.name}</strong><small>{entry.kind==='symlink'?'符号链接，不跟随访问':entry.kind==='directory'?'文件夹':size(entry.size)}{entry.protected?' · 平台管理':''}</small></span></button>{!entry.protected&&entry.kind!=='symlink'&&<div><button type="button" className="text-button" disabled={busy} onClick={()=>startAction('rename',entry)}>重命名</button><button type="button" className="text-button" disabled={busy} onClick={()=>startAction('move',entry)}>移动</button><button type="button" className="icon-button" aria-label={`移入回收站：${entry.name}`} disabled={busy} onClick={()=>startAction('delete',entry)}><Trash2 size={14}/></button></div>}</div>)}{entries.length===0&&<p>此处暂无可显示的文件。</p>}</div>
-      </>}
-    </div></div>
+    {error&&<ErrorNotice>{error}</ErrorNotice>}
+    {notice&&<p className="paper-files-notice" role="status">{notice}</p>}
+
+    <div className="paper-files-explorer">
+      <div className="paper-files-address">
+        <div className="paper-files-location">
+          <button type="button" className="paper-files-icon-button" aria-label="上一级" title="上一级" disabled={busy||!directory} onClick={()=>openDirectory(parent(directory))}>
+            <ArrowUp size={16} aria-hidden="true"/>
+          </button>
+          <nav className="paper-files-breadcrumb" aria-label="项目目录路径">
+            <button type="button" aria-current={crumbs.length===0?'location':undefined} onClick={()=>openDirectory('')}>工作区</button>
+            {crumbs.map((part,index)=><React.Fragment key={index}>
+              <ChevronRight size={12} aria-hidden="true"/>
+              <button type="button" aria-current={index===crumbs.length-1?'location':undefined} onClick={()=>openDirectory(crumbs.slice(0,index+1).join('/'))}>{part}</button>
+            </React.Fragment>)}
+          </nav>
+        </div>
+        <form className="paper-file-search" onSubmit={search} aria-label="搜索工作区文件">
+          <div className="paper-file-search-field">
+            <Search size={15} aria-hidden="true"/>
+            <input type="search" aria-label="搜索项目文件名" placeholder="搜索整个工作区" value={query} onChange={event=>setQuery(event.target.value)}/>
+            {results&&<button type="button" className="paper-files-icon-button" aria-label="清除搜索" title="清除搜索" onClick={()=>{setResults(undefined);setQuery('');}}>
+              <X size={14} aria-hidden="true"/>
+            </button>}
+          </div>
+          <button className="secondary-button" disabled={busy||loading||!query.trim()}>搜索</button>
+        </form>
+      </div>
+
+      <div className="paper-files-layout">
+        <aside className="paper-files-tree" aria-label="项目文件树">
+          <div className="paper-files-tree-heading"><FolderTree size={15} aria-hidden="true"/>目录</div>
+          <FolderNode path="" label="论文工作区" base={base} revision={revision} hidden={hidden} directory={directory} selected={preview?.path} onDirectory={openDirectory} onFile={selectFile} onError={setError}/>
+        </aside>
+        <div className="paper-files-content" aria-busy={loading||(!preview&&!results&&listingLoading)}>
+          {loading?<p className="paper-files-empty" role="status">正在读取文件…</p>:preview?<>
+            <div className="paper-file-heading">
+              <span className="paper-file-tile" data-kind="file"><FileGlyph name={preview.name} kind="file" size={22}/></span>
+              <div className="paper-file-heading-info">
+                <h3>{preview.name}{dirty&&<small className="paper-file-unsaved">未保存</small>}</h3>
+                <p>{size(preview.size)} · {new Date(preview.modified).toLocaleString()}</p>
+                <code>{preview.path}</code>
+              </div>
+              <button type="button" className="paper-files-icon-button" aria-label="关闭文件预览" title="关闭文件预览" onClick={()=>openDirectory(directory)}><X size={17} aria-hidden="true"/></button>
+            </div>
+            <div className="paper-files-toolbar paper-file-preview-actions">
+              <a className="secondary-button" href={contentUrl+'&download=true'} download><Download size={14} aria-hidden="true"/>下载</a>
+              {preview.editable&&<button type="button" className="secondary-button" disabled={busy} onClick={()=>setEditing(!editing)}>
+                {editing?<Eye size={14} aria-hidden="true"/>:<Pencil size={14} aria-hidden="true"/>}{editing?'预览':'编辑源码'}
+              </button>}
+              {dirty&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void save()}><Save size={14} aria-hidden="true"/>保存{preview.managed?'新版本':''}</button>}
+              {selected&&!selected.protected&&<>
+                <button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('rename',selected)}>重命名</button>
+                <button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('move',selected)}>移动</button>
+                <button type="button" className="secondary-button" disabled={busy} onClick={()=>startAction('delete',selected)}>移入回收站</button>
+              </>}
+            </div>
+            {preview.managed&&<p className="quiet">平台知识对象 v{preview.managed.version}，保存会校验证据并建立草稿版本。<button type="button" className="text-button" onClick={()=>guard(()=>onNavigate(preview.managed!.kind==='wiki-page'?'wiki':'cards',{focus:preview.managed!.id}))}>打开{preview.managed.kind==='wiki-page'?'Wiki':'卡片'}模块</button></p>}
+            {preview.readonlyReason&&<p className="quiet">{preview.readonlyReason}</p>}
+            {preview.kind==='pdf'?<iframe key={contentUrl} className="paper-pdf-preview" title={`PDF：${preview.name}`} src={contentUrl}/>:preview.kind==='image'?<img className="paper-image-preview" src={contentUrl} alt={preview.name}/>:preview.content!==undefined?editing?<textarea className="paper-file-editor" aria-label="文件源码" spellCheck={false} value={draft} onChange={event=>setDraft(event.target.value)}/>: /\.(md|markdown)$/i.test(preview.path)?<Markdown body={draft.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')}/>:<div className="paper-text-preview">{draft.split('\n').map((line,index)=><div key={index}><span>{index+1}</span><code>{line||' '}</code></div>)}</div>:<p>此文件为二进制、非 UTF-8 文本或超过 2 MiB，暂不在线编辑，可下载查看。</p>}
+          </>:<>
+            <header className="paper-files-list-heading">
+              <h3>{results?'搜索结果':crumbs.at(-1)||'工作区文件'}</h3>
+              {(results||currentListing)&&<span>{entries.length} 项</span>}
+            </header>
+            {truncated&&results&&<p className="quiet">搜索结果已截断，请缩小文件名范围。</p>}
+            {!results&&!currentListing&&listingLoading?<p className="paper-files-empty" role="status">正在读取目录…</p>:entries.length>0?
+              <ul className="paper-file-list">
+                {entries.map(entry=><li key={entry.path}>
+                  <button type="button" className="paper-file-open" disabled={busy||entry.kind==='symlink'} onClick={()=>entry.kind==='directory'?openDirectory(entry.path):selectFile(entry.path)}>
+                    <span className="paper-file-tile" data-kind={entry.kind}><FileGlyph name={entry.name} kind={entry.kind} size={19}/></span>
+                    <span className="paper-file-info">
+                      <strong>{entry.name}</strong>
+                      <small>{results&&parent(entry.path)&&<>{parent(entry.path)} · </>}{entry.kind==='symlink'?'符号链接，不跟随访问':entry.kind==='directory'?'文件夹':size(entry.size)}</small>
+                    </span>
+                  </button>
+                  {entry.protected&&<span className="paper-file-managed">平台管理</span>}
+                  {!entry.protected&&entry.kind!=='symlink'&&<div className="paper-file-actions">
+                    <button type="button" className="paper-files-icon-button" aria-label={`重命名：${entry.name}`} title="重命名" disabled={busy} onClick={()=>startAction('rename',entry)}><Pencil size={15} aria-hidden="true"/></button>
+                    <button type="button" className="paper-files-icon-button" aria-label={`移动：${entry.name}`} title="移动" disabled={busy} onClick={()=>startAction('move',entry)}><Move size={15} aria-hidden="true"/></button>
+                    <button type="button" className="paper-files-icon-button paper-file-delete" aria-label={`移入回收站：${entry.name}`} title="移入回收站" disabled={busy} onClick={()=>startAction('delete',entry)}><Trash2 size={15} aria-hidden="true"/></button>
+                  </div>}
+                </li>)}
+              </ul>:(!error||results)&&<div className="paper-files-empty">
+                {results?<FolderSearch size={26} aria-hidden="true"/>:<FolderOpen size={26} aria-hidden="true"/>}
+                <p>{results?'没有匹配的文件或文件夹。':'此目录为空。'}</p>
+              </div>}
+          </>}
+        </div>
+      </div>
+    </div>
     {pending&&<DiscardChangesDialog onCancel={()=>setPending(undefined)} onConfirm={()=>{const next=pending;setPending(undefined);setDraft(preview?.content??'');clearDirty();next();}}/>}
     {action&&<FileActionDialog action={action} directory={directory} onClose={()=>setAction(undefined)} onSubmit={async(value)=>{
       const kind=action.kind==='file'||action.kind==='directory'?'create':action.kind==='delete'?'delete':'move';
