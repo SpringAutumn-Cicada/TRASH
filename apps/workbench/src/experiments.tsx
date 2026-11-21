@@ -23,6 +23,13 @@ import { CodeAgentPanel } from "./code-agent.js";
 import { RepositoryBrowser } from "./repository-browser.js";
 
 const failures:Record<string,string>={...sshConnectionErrors,DATASET_NOT_READY:"数据集尚未就绪，请先完成上传或选择其他数据集。",SSH_CREDENTIAL_STORE_FAILED:"本机凭据读取或保存失败，请检查数据目录权限及设备密钥是否完整。",REPRODUCTION_ARCHIVE_FAILED:"复现快照生成失败，请检查 Python 3、文件权限、符号链接、敏感文件与大小。",SNAPSHOT_HASH_MISMATCH:"复现代码快照校验失败，请重新创建计划。",SNAPSHOT_NOT_FOUND:"未找到代码快照，请重新创建计划。",NOT_FOUND:"未找到接口或所请求的内容。如果刚更新了连接终端功能，请先重启 TRASH 后端服务再连接。",SSH_PROFILE_NOT_FOUND:"主机配置不存在或已被删除，请刷新实例列表后重新选择。",INTERNAL_ERROR:"服务端处理失败（INTERNAL_ERROR），无法建立此次请求，请保留错误信息以便定位。",SERVER_STOPPING:"服务正在停止，请等待后端重新启动后再连接。",TERMINAL_PROFILE_BUSY:"该主机终端已连接，请先在 AutoDL 工作区断开再编辑或删除。",TERMINAL_CONNECTING:"正在建立终端连接，请稍候。",TERMINAL_LIMIT:"终端会话已达上限，请先断开不用的会话。",SSH_TERMINAL_FAILED:"SSH 认证后无法打开交互终端，请检查远端是否允许 Shell 和 PTY。",REMOTE_DIAGNOSTICS_FAILED:"SSH 已连接，但环境诊断失败，请检查实例的 python3、远端目录权限及磁盘空间。",SSH_COMMAND_TIMEOUT:"远端诊断命令超时，请确认实例是否正常运行后重试。",SSH_LOGIN_COMMAND_INVALID:"SSH 指令格式不正确，请填写 ssh -p 端口 用户名@主机，不要附带其他选项或命令。",CODE_AGENT_BUSY:"该仓库有开发 Agent 正在执行，请先等待或取消。",REPOSITORY_NOT_BOUND:"请先绑定本地 Git 仓库。",REPOSITORY_ROOT_REQUIRED:"请选择 Git 仓库根目录。",REPOSITORY_PATH_INVALID:"文件路径越出绑定仓库，不能访问。",GIT_TREE_DIRTY:"仓库存在未提交或未跟踪文件，请先在本地整理并提交。",GIT_OPERATION_FAILED:"Git 操作失败，请检查仓库、暂存区和提交身份。",GIT_SUBMODULE_UNSUPPORTED:"首版不自动展开子模块，请先整理为可独立运行的仓库。",GIT_LFS_UNSUPPORTED:"首版不自动同步 Git LFS，请改用远端数据引用。",SSH_FINGERPRINT_REQUIRED:"请先探测并核对主机指纹。",SSH_FINGERPRINT_CHANGED:"主机指纹已变化，连接被阻止。请重新核对主机身份。",SSH_FINGERPRINT_NOT_OBSERVED:"请先获取本次连接的指纹，再确认信任。",SSH_CREDENTIAL_REQUIRED:"请重新输入本次会话的 SSH 密码。",SSH_AUTH_FAILED:"SSH 认证失败，请检查用户名和认证信息。",SSH_KEY_REQUIRED:"请填写本地私钥路径。",SSH_AGENT_UNAVAILABLE:"本地服务未检测到 SSH Agent。",SSH_CONNECTION_FAILED:"SSH 连接失败，请检查地址、端口及实例状态。",SSH_NETWORK_FAILED:"无法连接 SSH 主机，请检查网络和实例状态。",EXPERIMENT_ACTIVE:"存在未结束或远端状态未确认的实验，暂不能执行此操作。",EXPERIMENT_BUSY:"当前主机正在处理请求，请稍后重试。",PLAN_NOT_CONFIRMED:"请先检查环境并确认实验计划。",PREPARATION_REQUIRED:"该计划需要先单独授权并成功执行环境准备脚本。",REMOTE_ENVIRONMENT_INCOMPLETE:"远端需要 Linux、Python 3.9+、Git、tmux 和 Bash。",GPU_UNAVAILABLE:"所选 GPU 编号不可用。",DATASET_HASH_MISMATCH:"数据或校验清单的 SHA-256 不匹配。",REMOTE_DISK_INSUFFICIENT:"远端剩余空间不足。",CODE_BUNDLE_TOO_LARGE:"代码包超过 200 MiB，请清理代码历史和大文件。",INVALID_REQUEST:"输入内容不符合格式，请检查必填字段和 JSON。",VERSION_CONFLICT:"计划已有新版本，请重新选择。",EDITOR_NOT_CONFIGURED:"绑定仓库时请先填写编辑器配置。"};
+Object.assign(failures, {
+  EXPERIMENT_NAME_INVALID: "实验名称不能用作目录名，请去掉路径符号或更换名称。",
+  EXPERIMENT_CODE_EXISTS: "code/papers 下已有同名目录或仓库记录，请换一个实验名称。",
+  EXPERIMENT_GIT_INIT_FAILED: "初始化 Git 仓库失败，请检查本机 Git 和工作区权限后重试。",
+  FILES_NOT_DIRECTORY: "工作区的代码或实验路径不可用，请检查目录结构。",
+  FILES_EXISTS: "此创建请求已用于另一个实验，请关闭窗口后重新创建。",
+});
 async function request<T>(base:string,path:string,body?:unknown,method=body===undefined?"GET":"POST",signal?:AbortSignal):Promise<T>{
   const response=await fetch(base+path,{method,signal,...(body===undefined?{}:{headers:{"content-type":"application/json"},body:JSON.stringify(body)})});const value=await response.json();if(!response.ok){const code=typeof value.error==="string"&&/^[A-Z][A-Z0-9_]{0,80}$/.test(value.error)?value.error:"UNKNOWN_ERROR";throw new Error(failures[code]??`操作失败（${code}，HTTP ${response.status}），请记录此错误信息以便定位。`);}return value as T;
 }
@@ -80,7 +87,13 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
   const createCatalogExperiment = async (title: string, id: string) => {
     let created = false;
     await run(async () => {
-      const { experiment } = await request<{experiment: ExperimentCatalogEntry}>(base, "/experiment-catalog", { title, id });
+      const { experiment, repository, default_id } = await request<{
+        experiment: ExperimentCatalogEntry; repository?: ProjectRepository; default_id: string | null;
+      }>(base, "/experiment-catalog", { title, id });
+      if (!alive.current) return;
+      if (repository) setRepositoryList(items => [...items.filter(item => item.repository_id !== repository.repository_id), repository]);
+      setDefaultRepositoryId(default_id);
+      setCodeTab(repository ? "code" : "overview");
       setCatalog(items => [...items.filter(item => experimentKeyOf(item) !== experimentKeyOf(experiment)), experiment]);
       created = true;
       onNavigate("experiments", { tab: "code", experiment: experimentKeyOf(experiment) });
@@ -260,6 +273,13 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
         </button>)}
       {!runs.some(item => matchesScope(item.plan) && item.result_id) && <p className="quiet">此实验暂无已登记的运行结果。</p>}
     </div>}
+    {section==="code" && experiment && repo && <div className="experiment-repository-location">
+      <span>本地代码目录</span>
+      <code>{repo.path}</code>
+      <button type="button" className="secondary-button"
+        onClick={() => void navigator.clipboard.writeText(repo.path).then(() => setNotice("已复制仓库路径。"))
+          .catch(() => setError("浏览器不允许复制，请手动选择路径。"))}>复制路径</button>
+    </div>}
     {section==="code" && experiment && <form className="experiment-form" key={experimentKey+"|"+experiment.repository_id+"|"+experiment.entrypoint+"|"+experiment.paper_id}
       onSubmit={event => {
         event.preventDefault();
@@ -315,7 +335,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
     {section==="code"&&(!experimentKey||experiment)&&<div hidden={tab!=="overview"} className="experiment-overview">
       <form className="experiment-form" onSubmit={event=>{event.preventDefault();void run(async()=>{const value=await request<{repository:ProjectRepository}>(base,"/repositories",{path:repoPath,...(editor?{editor:{executable:editor,args:[]}}:{})},"POST");if(experiment)await editExperimentCode(experiment,{repository_id:value.repository.repository_id,entrypoint:experiment.entrypoint,paper_id:experiment.paper_id});await load();setSelectedRepositoryId(value.repository.repository_id);setRepoPath("");setRepoInfo(undefined);setHistory([]);setNotice("仓库已绑定。");});}}><h3>添加本地 Git 仓库</h3><label htmlFor="experiment-repository-path">本地 Git 仓库根目录</label><div className="repository-path-control"><input id="experiment-repository-path" required value={repoPath} onChange={e=>setRepoPath(e.target.value)} placeholder="/home/user/research-code"/><button type="button" className="secondary-button" disabled={busy} onClick={()=>setDirectoryPicker(true)}><FolderOpen size={15}/>浏览目录</button></div><label>本地编辑器可执行文件（可选）<input value={editor} onChange={e=>setEditor(e.target.value)} placeholder="code"/></label><button className="primary-button" disabled={busy}>绑定仓库</button></form>
       {repo&&<CodeAgentPanel key={projectId+repo.path} projectId={projectId} repositoryPath={repo.path} repositoryId={repo.repository_id}/>}
-      {repo&&<><div className="knowledge-toolbar"><span>{repo.path}</span><button className="secondary-button" disabled={busy} onClick={()=>void run(repositoryDetails)}>Git 状态与差异</button><button className="secondary-button" onClick={()=>void navigator.clipboard.writeText(repo.path).then(()=>setNotice("已复制仓库路径")).catch(()=>setError("浏览器不允许复制，请手动选择路径。"))}>复制路径</button><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,repositoryQuery("/repository/editor"),{});setNotice("已请求打开配置的编辑器。");})}>打开本地编辑器</button></div>
+      {repo&&<><div className="knowledge-toolbar">{!experiment&&<span>{repo.path}</span>}<button className="secondary-button" disabled={busy} onClick={()=>void run(repositoryDetails)}>Git 状态与差异</button>{!experiment&&<button className="secondary-button" onClick={()=>void navigator.clipboard.writeText(repo.path).then(()=>setNotice("已复制仓库路径")).catch(()=>setError("浏览器不允许复制，请手动选择路径。"))}>复制路径</button>}<button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,repositoryQuery("/repository/editor"),{});setNotice("已请求打开配置的编辑器。");})}>打开本地编辑器</button></div>
       {repoInfo&&<><p>提交：<code>{repoInfo.head||"尚无提交"}</code> · {repoInfo.clean?"工作树干净":"存在未提交或未跟踪文件"}</p><details open><summary>工作树状态</summary><pre>{repoInfo.status||"无改动"}</pre></details><details><summary>未暂存差异</summary><pre>{repoInfo.diff||"无差异"}</pre></details><details><summary>已暂存差异</summary><pre>{repoInfo.staged_diff||"无差异"}</pre></details></>}
       <form className="experiment-inline" onSubmit={e=>{e.preventDefault();void run(async()=>{await request(base,repositoryQuery("/repository/commit"),{message:commitMessage});setCommitMessage("");await repositoryDetails();setNotice("提交已创建，未推送。");});}}><input aria-label="代码提交说明" required value={commitMessage} onChange={e=>setCommitMessage(e.target.value)} placeholder="提交说明；只提交本地已暂存的内容"/><button className="secondary-button" disabled={busy||!commitMessage.trim()}>确认提交暂存区</button></form>
       <div className="knowledge-toolbar"><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{setHistory((await request<{commits:typeof history}>(base,repositoryQuery(`/repository/history?page=${historyPage}`))).commits);})}>读取历史第 {historyPage} 页</button><button disabled={historyPage===1} onClick={()=>setHistoryPage(historyPage-1)}>上一页</button><button onClick={()=>setHistoryPage(historyPage+1)}>下一页</button></div>{history.map(item=><div className="experiment-history" key={item.sha}><code>{item.sha}</code><span>{item.title}</span><small>{item.at}</small></div>)}

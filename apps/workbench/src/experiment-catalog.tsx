@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronRight, FlaskConical, GitBranch, Plus } from "lucide-react";
 import type { ExperimentCatalogEntry, ReproductionCode } from "@trash/protocol";
 import { ModalLayer } from "./modal-layer.js";
@@ -16,6 +16,8 @@ export function ExperimentCatalog({ experiments, reproductions, busy, loading, c
 }) {
   const [filter, setFilter] = useState<"all" | "original" | "reproduction">("all");
   const [draft, setDraft] = useState<{ title: string; id: string }>();
+  const submission = useRef(false);
+  const [creating, setCreating] = useState(false);
   const cards = [
     ...(filter === "reproduction" ? [] : experiments.map(item => ({
       id: experimentKeyOf(item), title: item.title, icon: FlaskConical, kind: "自研",
@@ -47,17 +49,26 @@ export function ExperimentCatalog({ experiments, reproductions, busy, loading, c
     </div>
     {!cards.length && <p className="quiet" role="status">{loading ? "正在读取实验…" : "当前分类还没有实验。"}</p>}
     {draft && <ModalLayer><div className="modal-backdrop">
-      <form className="modal experiment-form" role="dialog" aria-modal="true" aria-labelledby="new-experiment-heading"
+      <form className="modal experiment-form" role="dialog" aria-modal="true" aria-labelledby="new-experiment-heading" aria-busy={creating}
         onSubmit={async event => {
           event.preventDefault();
-          if (await create(draft.title.trim(), draft.id)) setDraft(undefined);
+          if (busy || submission.current || !draft.title.trim()) return;
+          submission.current = true;
+          setCreating(true);
+          try {
+            if (await create(draft.title.trim(), draft.id)) setDraft(undefined);
+          } finally {
+            submission.current = false;
+            setCreating(false);
+          }
         }}>
         <h3 id="new-experiment-heading">新建自研实验</h3>
         <label>实验名称<input autoFocus required maxLength={120} disabled={busy} value={draft.title}
           onChange={event => setDraft({ title: event.target.value, id: crypto.randomUUID() })}/></label>
+        <p>代码目录 <code>code/papers/{draft.title.trim() || "<实验名称>"}/</code></p>
         <div className="modal-actions">
           <button type="button" className="secondary-button" disabled={busy} onClick={() => setDraft(undefined)}>取消</button>
-          <button className="primary-button" disabled={busy || !draft.title.trim()}>创建实验</button>
+          <button className="primary-button" disabled={busy || creating || !draft.title.trim()}>{creating ? "正在初始化 Git…" : "创建实验"}</button>
         </div>
       </form>
     </div></ModalLayer>}

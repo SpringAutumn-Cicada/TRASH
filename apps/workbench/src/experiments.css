@@ -215,3 +215,16 @@
   overflow-wrap: anywhere;
 }
 .experiment-catalog-copy small { color: var(--muted); }
+
+.experiment-repository-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--surface);
+}
+.experiment-repository-location > span { color: var(--muted); }
+.experiment-repository-location > code { flex: 1 1 16rem; min-width: 0; }

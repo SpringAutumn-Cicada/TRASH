@@ -317,7 +317,8 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       return true;
     }
     if (method === "POST") {
-      send(response, 201, await createExperiment(root, projectId, service.data, await readJson(request)));
+      const created = await createExperiment(root, projectId, service.data, await readJson(request));
+      send(response, 201, { ...created, default_id: service.data.repository(projectId)?.repository_id ?? null });
       return true;
     }
     if (method === "PUT") {
