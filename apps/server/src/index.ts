@@ -1,3 +1,4 @@
+import { methodDraftInput } from "./experiment/method-agent.js";
 import { CodeDirectoryMigration, codeMigrationPending } from './code-directory-migration.js';
 import { ManuscriptEvidence } from './manuscript-evidence.js';
 import { chatSkills } from "./project-chat-skills.js";
@@ -548,9 +549,24 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
       sendJson(response, 201, { task: await codeAgent.append(projectId, chatAppend[1], await readJson(request), toolUrl) }); return;
     }
+    if (subpath === "experiment-method/tasks" && method === "GET") {
+      const selection = methodDraftInput.parse({
+        direction_id: url.searchParams.get("direction_id"),
+        scheme_id: url.searchParams.get("scheme_id"),
+      });
+      response.setHeader("cache-control", "no-store");
+      sendJson(response, 200, { tasks: codeAgent.methodTasks(projectId, selection.direction_id, selection.scheme_id) });
+      return;
+    }
     if (subpath === "code-agent/detect" && method === "GET") { sendJson(response, 200, await codeAgent.detect()); return; }
-    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose !== "project-chat").map(task => ({ ...task, logs: "", response: "" })) }); return; }
+    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => !task.purpose).map(task => ({ ...task, logs: "", response: "" })) }); return; }
     if (subpath === "code-agent/tasks" && method === "POST") { sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request)) }); return; }
+    if (subpath === "experiment-method/tasks" && method === "POST") {
+      const input = z.object({ method: methodDraftInput, instructions: z.string().max(30000) }).strict().parse(await readJson(request));
+      const task = await codeAgent.start(projectId, { ...input, sandbox:"read-only", confirm:true });
+      sendJson(response, 201, { task_id: task.task_id });
+      return;
+    }
     const codeTask = subpath.match(/^code-agent\/tasks\/(code_[a-f0-9-]+)(?:\/(cancel|acknowledge))?$/);
     if (codeTask && method === "GET" && !codeTask[2]) { const task = codeAgent.list(projectId).find(t => t.task_id === codeTask[1]); if (!task) { sendJson(response, 404, { error: "NOT_FOUND" }); return; } sendJson(response, 200, { task }); return; }
     if (codeTask && method === "POST" && codeTask[2]) {
