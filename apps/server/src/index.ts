@@ -1,3 +1,4 @@
+import { CodeDirectoryMigration, codeMigrationPending } from './code-directory-migration.js';
 import { ManuscriptEvidence } from './manuscript-evidence.js';
 import { chatSkills } from "./project-chat-skills.js";
 import {legacyMaterialTitle} from './research-exploration-format.js';
@@ -181,6 +182,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if(libraryMigrationPending(anchor)&&!libraryRoute&&!(subpath==='workspace'&&method==='GET')){
       sendJson(response,409,{error:'LIBRARY_MIGRATION_PENDING'});return;
     }
+    if(codeMigrationPending(anchor)&&!(subpath==='workspace'&&method==='GET')&&subpath!=='workspace/code-layout'&&subpath!=='workspace/code-layout/rollback'){
+      sendJson(response,409,{error:'CODE_MOVE_RESUME_FIRST'});return;
+    }
     if(!subpath&&method==='PATCH'){
       const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_constraints:z.string().trim().max(10000).optional(),research_area:z.string().trim().max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
       if(input.expected_updated_at&&input.expected_updated_at!==project.updated_at){sendJson(response,409,{error:'VERSION_CONFLICT'});return;}
@@ -284,6 +288,25 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const pdf=new PdfReading(store);
       if(pdfRoute[2]){const page=await pdf.page(projectId,pdfRoute[1],Number(pdfRoute[2]),Number(url.searchParams.get('scale')??2200));const bytes=await import('node:fs/promises').then(fs=>fs.readFile(page.path));response.writeHead(200,{'content-type':'image/png','content-length':bytes.length,'cache-control':'private, max-age=3600','x-content-type-options':'nosniff'});response.end(bytes);return;}
       const doc=await pdf.document(projectId,pdfRoute[1]);sendJson(response,200,{source_id:doc.source_id,hash:doc.hash,artifact_id:doc.artifact_id,pageCount:doc.pageCount,pages:doc.pages});return;
+    }
+    if(subpath==='workspace/code-layout'||subpath==='workspace/code-layout/rollback'){
+      const selection=z.object({kind:z.enum(['repository','reproduction']),id:z.string().min(1).max(160)});
+      const service=new CodeDirectoryMigration(experiments,projectId);
+      try{
+        if(subpath==='workspace/code-layout'&&method==='GET'){
+          const query=url.searchParams;
+          sendJson(response,200,query.has('id')?service.preview(selection.strict().parse(Object.fromEntries(query))):{items:service.list()});return;
+        }
+        if(method==='POST'){
+          const input=selection.extend({confirm:z.literal(true),fingerprint:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict().parse(await readJson(request));
+          if(workspaces.busy(projectId)||(workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){
+            sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;
+          }
+          const key={kind:input.kind,id:input.id};
+          sendJson(response,200,subpath.endsWith('/rollback')?service.rollback(key):service.migrate(key,input.fingerprint));return;
+        }
+      }catch(error){workspaceError(error);}
+      sendJson(response,404,{error:'NOT_FOUND'});return;
     }
     if(subpath==='workspace/research'&&method==='POST'){
       if(workspaces.busy(projectId)){sendJson(response,409,{error:'WORKSPACE_MIGRATING'});return;}

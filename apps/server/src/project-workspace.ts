@@ -124,7 +124,9 @@ export class ProjectWorkspaces {
 
 对话中明确要求保存的研究想法、方案和讨论笔记直接放在 research/。
 
-支持多个研究方向：wiki/directions/<方向ID>.md、code/directions/<方向ID>/、experiments/<方向ID>/<方案ID>/runs/<运行ID>/。
+论文仓库通过论文页创建或绑定。项目内仓库放在 code/papers/<paper_id>/，复现源码放在 code/reproductions/。
+
+研究方向说明在 wiki/directions/<方向ID>.md，实验方案和运行归档在 experiments/<方向ID>/<方案ID>/runs/<运行ID>/。
 
 在文件模块使用“研究目录”创建方向、实验方案和运行批次；目录创建不代表已执行实验。
 平台运行记录保存在 .trash/runtime/；旧项目内部路径继续兼容，不自动移动。子目录按需创建，数据和公共代码使用引用避免重复复制。
@@ -247,6 +249,22 @@ export class ProjectWorkspaces {
         for(const row of rows)this.store.db.prepare(`UPDATE ${table} SET data=? WHERE rowid=?`).run(JSON.stringify(map(JSON.parse(row.data))),row.rowid);
       }
     })();
+    for(const [folder,pattern] of [
+      ['reproductions',/^repro_[a-f0-9-]+\.json$/],
+      ['code/reproductions',/^repro_[a-f0-9-]+\.json$/],
+      ['.trash/runtime/reproductions',/^repro_[a-f0-9-]+\.json$/],
+      ['.trash/code-migrations',/^(?:repository|reproduction)-[a-f0-9]{64}\.json$/]
+    ] as const){
+      const directory=join(target,folder);
+      if(!existsSync(directory)||!lstatSync(directory).isDirectory())continue;
+      for(const name of readdirSync(directory).filter(name=>pattern.test(name))){
+        const file=join(directory,name);
+        if(!lstatSync(file).isFile())continue;
+        const before=JSON.parse(readFileSync(file,'utf8')),after=map(before);
+        if(JSON.stringify(before)!==JSON.stringify(after))json(file,after);
+      }
+    }
+
   }
   cleanup(id:string,jobId:string){
     const file=join(this.jobRoot(),jobId+'.json');

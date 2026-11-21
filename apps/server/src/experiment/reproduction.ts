@@ -69,6 +69,9 @@ export class ReproductionService {
  private validateSource(project:string,input:z.infer<typeof reproductionInput>){if(input.source_id&&!this.store.listSources(project).some(s=>s.source_id===input.source_id))experimentError("SOURCE_NOT_FOUND",404);}
 
  update(project:string,id:string,value:unknown){const old=this.get(project,id),input=reproductionInput.parse(value);this.validateSource(project,input);return this.save({...old,...input,source_id:input.source_id});}
+ relocate(project:string,id:string,path:string){
+  return this.save({...this.get(project,id),path});
+ }
  remove(project:string,id:string){this.get(project,id);rmSync(this.record(project,id));}
  async importZip(project:string,request:IncomingMessage,name:string,filename?:string,sourceId?:string){
   if(sourceId&&this.store.getSource(sourceId)?.project_id!==project)experimentError('SOURCE_NOT_FOUND',404);
