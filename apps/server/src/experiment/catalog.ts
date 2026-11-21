@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { experimentError } from "@trash/storage";
 import type { ExperimentCatalogEntry } from "@trash/protocol";
+import { manuscriptId } from "../manuscript-layout.js";
 import { assertExperimentScheme, experimentSchemes } from "./run-archive.js";
 
 const directoryId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
@@ -13,7 +14,7 @@ const relativeFile = z.string().trim().max(1024).refine(value =>
 export const experimentCodeSettings = z.object({
   repository_id: z.string().min(1).max(128).optional(),
   entrypoint: relativeFile.optional(),
-  paper_id: directoryId.optional(),
+  paper_id: manuscriptId.optional(),
 }).strict();
 const selection = z.object({ direction_id: directoryId, scheme_id: directoryId });
 export const experimentCatalogUpdate = selection.extend({ code: experimentCodeSettings }).strict();
@@ -38,7 +39,9 @@ export function listExperiments(root: string): ExperimentCatalogEntry[] {
     const code = info(settingsPath)?.isFile()
       ? experimentCodeSettings.parse(JSON.parse(readFileSync(settingsPath, "utf8")))
       : {};
-    return { ...scheme, title: heading?.replace(/ · 实验方案$/, "") || scheme.scheme_id, ...code };
+    const title = scheme.direction_id === "unassigned" && scheme.scheme_id.startsWith("experiment_")
+      ? heading : heading?.replace(/ · 实验方案$/, "");
+    return { ...scheme, title: title || scheme.scheme_id, ...code };
   });
 }
 
