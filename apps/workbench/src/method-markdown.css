@@ -48,3 +48,17 @@
 .method-diagram-comparison h5 {
   margin: .35rem 0 .5rem;
 }
+
+.method-view-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+}
+
+.method-diagram-empty {
+  padding: 1.25rem;
+  border: 1px dashed var(--line);
+  border-radius: .75rem;
+  color: var(--muted);
+  text-align: center;
+}

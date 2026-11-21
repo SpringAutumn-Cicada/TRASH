@@ -1,5 +1,6 @@
 import { ExperimentMethodAgent } from "./experiment-method-agent.js";
 import { useEffect, useState } from "react";
+import { FileText, Workflow } from "lucide-react";
 import { api, uiError } from "./api.js";
 import { MethodMarkdown } from "./method-markdown.js";
 import { useUnsavedChanges } from "./navigation.js";
@@ -17,6 +18,7 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
   const [document, setDocument] = useState<Document>();
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
+  const [view, setView] = useState<"body" | "diagram">("body");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
@@ -87,11 +89,17 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
   return <section className="experiment-card experiment-method">
     <div className="section-heading"><h3>方法设计</h3><div className="knowledge-toolbar">
       {!editing && <button className="secondary-button" onClick={()=>setRevision(v=>v+1)}>重新读取</button>}
-      {!editing && document?.editable && <button className="secondary-button" disabled={saving} onClick={()=>{setDraft(body ?? ""); setEditing(true);}}>编辑方法</button>}
+      {!editing && document?.editable && <button className="secondary-button" disabled={saving} onClick={()=>{setDraft(body ?? ""); setView("body"); setEditing(true);}}>编辑方法</button>}
     </div></div>
+    <div className="experiment-subnav method-view-switch" role="group" aria-label="方法设计视图">
+      <button type="button" className="secondary-button" aria-pressed={view==="body"} disabled={editing}
+        onClick={()=>setView("body")}><FileText size={16} aria-hidden="true"/>方法正文</button>
+      <button type="button" className="secondary-button" aria-pressed={view==="diagram"} disabled={editing}
+        onClick={()=>setView("diagram")}><Workflow size={16} aria-hidden="true"/>流程图</button>
+    </div>
     {error && <p role="alert">{error}</p>}
     {document?.editable && document.etag && body !== undefined &&
-      <ExperimentMethodAgent base={base} experimentKey={experimentKey} body={body} etag={document.etag}
+      <ExperimentMethodAgent base={base} experimentKey={experimentKey} body={body} etag={document.etag} view={view}
         disabled={editing||saving} onApply={(content,etag)=>save(content,etag,true)} onRefresh={()=>setRevision(v=>v+1)}/>}
     {editing ? <>
       <label>方法说明（Markdown）<textarea className="json-editor" rows={16} value={draft} disabled={saving}
@@ -112,6 +120,6 @@ export function ExperimentMethod({ projectId, experimentKey, onOpenFile }: {
           setEditing(false); setIncoming(undefined); setRevision(v=>v+1);
         }}>取消</button>
       </div>
-    </> : body !== undefined ? <MethodMarkdown text={body} onOpenResearch={onOpenFile}/> : !error && <p role="status">正在读取方法档案…</p>}
+    </> : body !== undefined ? <MethodMarkdown text={body} view={view} onOpenResearch={onOpenFile}/> : !error && <p role="status">正在读取方法档案…</p>}
   </section>;
 }

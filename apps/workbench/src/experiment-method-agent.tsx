@@ -12,6 +12,7 @@ const statusNames: Record<string,string> = {
   running: "生成中", cancelling: "正在停止", completed: "已完成", failed: "生成失败",
   cancelled: "已停止", interrupted: "已中断",
 };
+const diagramRequest = "根据现稿和选定材料，只新增或更新 Mermaid 方法流程图。保留原有正文，返回包含流程图的完整 Markdown。";
 const activeTask = (task: MethodTask) => ["running","cancelling"].includes(task.status);
 
 function MethodDiff({ before, after }: { before: string; after: string }) {
@@ -47,8 +48,8 @@ function MethodDiff({ before, after }: { before: string; after: string }) {
     <span className={kind} key={index}>{kind==="added"?"+ ":kind==="removed"?"− ":"  "}{text}{"\n"}</span>)}</pre>;
 }
 
-export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply, onRefresh, disabled }: {
-  base:string; experimentKey:string; body:string; etag:string; disabled:boolean;
+export function ExperimentMethodAgent({ base, experimentKey, body, etag, view, onApply, onRefresh, disabled }: {
+  base:string; experimentKey:string; body:string; etag:string; disabled:boolean; view:"body" | "diagram";
   onApply:(markdown:string, expected:string)=>Promise<boolean | "conflict">; onRefresh:()=>void;
 }) {
   const [direction_id, scheme_id] = experimentKey.split("/");
@@ -56,7 +57,7 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
   const query = path + "?" + new URLSearchParams({direction_id, scheme_id});
   const [tasks,setTasks] = useState<MethodTask[]>([]);
   const [sources,setSources] = useState<Source[]>([]);
-  const [form,setForm] = useState(false);
+  const [form,setForm] = useState<"body" | "diagram">();
   const [instructions,setInstructions] = useState("");
   const [source,setSource] = useState("");
   const [selection,setSelection] = useState("");
@@ -106,9 +107,11 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
     busy.current = true;
     setSubmitting(true);
     setError("");
-    const request = instructions.trim() || (hasMethod
-      ? "核对当前方法与仓库实现，修订需要同步的部分。"
-      : "从选定材料或现有实现起草实验方法。若缺少确定研究问题的材料，请提出关键问题。");
+    const request = form === "diagram"
+      ? diagramRequest + (instructions.trim() ? "\n" + instructions.trim() : "")
+      : instructions.trim() || (hasMethod
+        ? "核对当前方法与仓库实现，修订需要同步的部分。"
+        : "从选定材料或现有实现起草实验方法。若缺少确定研究问题的材料，请提出关键问题。");
     try {
       const {task_id} = await api<{task_id:string}>(path, {
         method:"POST",
@@ -120,7 +123,7 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
       ]);
       setSelection(task_id);
       setInstructions("");
-      setForm(false);
+      setForm(undefined);
     } catch (cause) {
       setError(uiError(cause,"无法启动方法设计任务。"));
     } finally { busy.current = false; setSubmitting(false); }
@@ -160,7 +163,9 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
   return <div className="method-agent">
     <div className="knowledge-toolbar">
       {!form && <button type="button" className="primary-button" disabled={disabled||submitting||Boolean(active)||saving}
-        onClick={()=>setForm(true)}>{hasMethod?"让 Agent 修订":"让 Agent 起草"}</button>}
+        onClick={()=>setForm(view)}>
+        {view==="diagram"?"让 Agent 生成流程图":hasMethod?"让 Agent 修订":"让 Agent 起草"}
+      </button>}
       {tasks.length>0 && <select aria-label="方法生成记录" value={selection} disabled={saving}
         onChange={event=>setSelection(event.target.value)}>
         <option value="">方法生成记录</option>
@@ -174,17 +179,17 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
     </div>
     {error && <p role="alert">{error}</p>}
     {form && <form onSubmit={event=>{event.preventDefault();void generate();}}>
-      <label>给 Agent 的要求<textarea rows={3} value={instructions} disabled={submitting} maxLength={30000}
-        onChange={event=>setInstructions(event.target.value)} placeholder="写下研究意图，或指出要修订的内容"/></label>
+      <label>给 Agent 的要求<textarea rows={3} value={instructions} disabled={submitting} maxLength={form==="diagram"?30000-diagramRequest.length-1:30000}
+        onChange={event=>setInstructions(event.target.value)} placeholder={form==="diagram"?"可指定要展示的流程、分支或对照":"写下研究意图，或指出要修订的内容"}/></label>
       <div className="knowledge-toolbar">
         {sources.length>0 && <select aria-label="选择研究方案" value={source} disabled={submitting}
           onChange={event=>setSource(event.target.value)}>
           <option value="">选择 research 中的方案（可选）</option>
           {sources.map(item=><option key={item.path} value={item.path}>{item.name}</option>)}
         </select>}
-        <button className="primary-button" disabled={disabled||submitting||Boolean(active)}>生成草稿</button>
+        <button className="primary-button" disabled={disabled||submitting||Boolean(active)}>{form==="diagram"?"生成流程图草稿":"生成草稿"}</button>
         <button type="button" className="secondary-button" disabled={submitting}
-          onClick={()=>{setForm(false);setInstructions("");setSource("");}}>取消</button>
+          onClick={()=>{setForm(undefined);setInstructions("");setSource("");}}>取消</button>
       </div>
     </form>}
     {selected?.status==="interrupted" && <button type="button" className="secondary-button" disabled={stopping}
@@ -204,7 +209,12 @@ export function ExperimentMethodAgent({ base, experimentKey, body, etag, onApply
           onClick={()=>void adopt(candidate)}>采用草稿</button>
       </>}
       {!candidate.markdown && <button type="button" className="secondary-button" disabled={form||Boolean(active)}
-        onClick={()=>{setInstructions([selected.instructions,...candidate.questions.map(question=>"\n"+question+"\n答：")].join("\n").slice(0,30000));setForm(true);}}>
+        onClick={()=>{
+          const isDiagram = selected.instructions.startsWith(diagramRequest);
+          const initial = isDiagram ? selected.instructions.slice(diagramRequest.length).trim() : selected.instructions;
+          setInstructions([initial,...candidate.questions.map(question=>"\n"+question+"\n答：")].join("\n").slice(0,isDiagram?30000-diagramRequest.length-1:30000));
+          setForm(isDiagram ? "diagram" : "body");
+        }}>
         补充后继续
       </button>}
     </div>}

@@ -100,11 +100,16 @@ function MethodDiagrams({ diagrams }: { diagrams: string[] }) {
     label={diagrams.length === 1 ? "方法流程图" : `方法流程图 ${index + 1}`}/>);
 }
 
-export function MethodMarkdown({ text, onOpenResearch }: { text: string; onOpenResearch?: (path: string) => void }) {
+export function MethodMarkdown({ text, view = "both", onOpenResearch }: {
+  text: string;
+  view?: "body" | "diagram" | "both";
+  onOpenResearch?: (path: string) => void;
+}) {
   const { body, diagrams } = readMethodMarkdown(text);
   return <>
-    <MethodDiagrams diagrams={diagrams}/>
-    <ChatMarkdown text={body} onOpenResearch={onOpenResearch}/>
+    {view !== "body" && <MethodDiagrams diagrams={diagrams}/>}
+    {view === "diagram" && diagrams.length === 0 && <p className="method-diagram-empty">当前方法还没有流程图。</p>}
+    {view !== "diagram" && <ChatMarkdown text={body} onOpenResearch={onOpenResearch}/>}
   </>;
 }
 
