@@ -27,7 +27,7 @@ export function useChatAttachments(base:string,conversation:string,onError:(mess
     }}catch(cause){if(alive.current)onError(`${cause instanceof TypeError?'无法连接附件接口，请确认本分支后端服务已启动。':cause instanceof Error?cause.message:'附件上传失败。'}${added?` 已保留 ${added} 个上传成功的附件。`:''}`);}
     finally{locked.current=false;if(alive.current)setUploading(false);}
   };
-  return {entries,uploading,dragging,setDragging,upload,hasDrafts:Object.values(drafts).some(list=>list.length>0),remove:(id:string)=>setDrafts(old=>({...old,[conversation]:(old[conversation]??[]).filter(item=>item.id!==id)})),clear:()=>setDrafts(old=>({...old,[conversation]:[]})),
+  return {entries,uploading,dragging,setDragging,upload,hasDrafts:Object.values(drafts).some(list=>list.length>0),remove:(id:string)=>setDrafts(old=>({...old,[conversation]:(old[conversation]??[]).filter(item=>item.id!==id)})),discard:(id:string)=>setDrafts(old=>({...old,[id]:[]})),clear:()=>setDrafts(old=>({...old,[conversation]:[]})),
     paste:(event:React.ClipboardEvent)=>{const files=Array.from(event.clipboardData.files);if(files.length){event.preventDefault();void upload(files);}},
     drop:(event:React.DragEvent)=>{event.preventDefault();setDragging(false);void upload(Array.from(event.dataTransfer.files));}
   };
