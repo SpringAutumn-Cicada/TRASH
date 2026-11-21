@@ -122,6 +122,8 @@ export class ExperimentService {
   submit(projectId:string,input:{plan_id:string;version:number;idempotency_key:string;preparation:boolean},retryOf?:string):ExperimentRun{
     const duplicate=this.data.runs(projectId).find(run=>run.idempotency_key===input.idempotency_key);if(duplicate){if(duplicate.plan.plan_id!==input.plan_id||duplicate.plan.version!==input.version||duplicate.preparation!==input.preparation)experimentError("IDEMPOTENCY_CONFLICT",409);return duplicate;}
     const plan=this.data.plan(projectId,input.plan_id,input.version);if(plan.status!=="confirmed"&&!(retryOf&&plan.status==="superseded"))experimentError("PLAN_NOT_CONFIRMED",409);
+    const {direction_id,scheme_id}=plan.content;
+    if(direction_id&&scheme_id)assertExperimentScheme(join(this.store.root,'projects',projectId),direction_id,scheme_id);
     if(input.preparation&&!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");
     if(!input.preparation&&plan.content.preparation_script&&!this.data.runs(projectId).some(r=>r.preparation&&r.status==="completed"&&r.exit_code===0&&r.plan.plan_id===plan.plan_id&&r.plan.version===plan.version))experimentError("PREPARATION_REQUIRED",409);
     const id=`run_${randomUUID()}`,at=new Date().toISOString();

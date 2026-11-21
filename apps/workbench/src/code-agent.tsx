@@ -9,7 +9,7 @@ type Task = {
 };
 const statusNames: Record<string, string> = { running: "运行中", cancelling: "正在取消", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断，需核对旧进程" };
 const errors: Record<string, string> = { PROJECT_HAS_ACTIVE_TASKS: "当前项目正在分析文献或处理知识任务，请等待完成或先停止分析。", CODE_AGENT_BUSY: "该仓库有 Agent 正在执行，请等待或先取消。", CODE_AGENT_RECOVERY_REQUIRED: "旧任务已中断，请核对旧进程并确认停止后再启动。", EXPERIMENT_ACTIVE: "该仓库有未结束实验，请先处理实验状态。", SERVER_STOPPING: "服务正在停止。", INVALID_REQUEST: "请检查任务、时限及授权选项。", NOT_FOUND: "任务不存在或已结束。" };
-export function CodeAgentPanel({ projectId, repositoryPath, repositoryId }: { projectId: string; repositoryPath: string; repositoryId?:string }) {
+export function CodeAgentPanel({ projectId, repositoryPath, repositoryId, experimentEntrypoint }: { projectId: string; repositoryPath: string; repositoryId?:string; experimentEntrypoint?:boolean }) {
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/code-agent`;
   const [instructions, setInstructions] = useState(""), [model, setModel] = useState(""), [sandbox, setSandbox] = useState("workspace-write"), [timeout, setTimeoutValue] = useState(30), [confirmed, setConfirmed] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]), [selectedId, setSelectedId] = useState(""), [selected, setSelected] = useState<Task>();
@@ -40,6 +40,10 @@ export function CodeAgentPanel({ projectId, repositoryPath, repositoryId }: { pr
       const value = await call<{ task: Task }>("/tasks", { instructions, model, sandbox, repository_id:repositoryId, timeout_seconds: timeout * 60, confirm: confirmed });
       setSelectedId(value.task.task_id); setSelected(value.task); setTasks(old => [value.task, ...old]); setInstructions(""); setConfirmed(false);
     }); }}>
+      {experimentEntrypoint && <button type="button" className="secondary-button" disabled={busy || Boolean(instructions.trim())}
+        onClick={() => setInstructions("检查当前实验仓库，按现有代码和配置实现实验入口脚本。在回复中给出脚本相对路径、参数和从仓库根目录运行的完整命令。如果资料不足，请说明缺少的信息。")}>
+        起草入口脚本任务
+      </button>}
       <label>交给 Agent 的任务<textarea required value={instructions} onChange={event => setInstructions(event.target.value)} maxLength={30000} placeholder="例如：阅读仓库结构，实现训练入口，并说明修改了哪些文件。本次不运行测试。" disabled={busy}/></label>
       <div className="code-agent-settings"><label>模型（留空沿用本机配置）<input value={model} maxLength={200} onChange={event => setModel(event.target.value)}/></label><label>执行权限<select value={sandbox} onChange={event => { setSandbox(event.target.value); setConfirmed(false); }}><option value="read-only">只读分析</option><option value="workspace-write">项目目录读写</option><option value="danger-full-access">完整本机权限</option></select></label><label>最长运行时间（分钟）<input type="number" min={1} max={120} required value={timeout} onChange={event => setTimeoutValue(Number(event.target.value))}/></label></div>
       <p>目标目录：<code>{repositoryPath}</code></p>
