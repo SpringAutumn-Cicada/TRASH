@@ -13,7 +13,7 @@ type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title
 type Turn={attachments?:ChatAttachment[];skill_id?:string;output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>};
-type ChatSkill={id:string;title:string};
+type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
 type SkillsStatus='loading'|'ready'|'failed';
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
 const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
@@ -35,7 +35,7 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
     const rect=button.getBoundingClientRect();
     const gap=8, edge=12, width=Math.min(216,window.innerWidth-edge*2);
     const above=rect.top-gap-edge,below=window.innerHeight-rect.bottom-gap-edge;
-    const openAbove=above>=320||above>=below;
+    const openAbove=above>=420||above>=below;
     menu.style.width=`${width}px`;
     menu.style.left=`${Math.max(edge,Math.min(rect.left,window.innerWidth-width-edge))}px`;
     menu.style.top=openAbove?'auto':`${rect.bottom+gap}px`;
@@ -53,24 +53,34 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
   },[position]);
   const selected=skills.find(skill=>skill.id===value);
   const label=selected?`选择 Skill，当前为${selected.title}`:'选择 Skill';
+  const groups=[
+    {title:'TRASH Skill',items:skills.filter(skill=>skill.group!=='claude-scholar')},
+    {title:'Claude Scholar',items:skills.filter(skill=>skill.group==='claude-scholar')}
+  ];
+  const option=(skill:ChatSkill)=>
+    <button type="button" key={skill.id} disabled={disabled} aria-pressed={value===skill.id} onClick={()=>{
+      onChange(skill.id);
+      panel.current?.hidePopover();
+      trigger.current?.focus();
+    }}>
+      <span>{skill.title}</span>
+      {value===skill.id&&<Check size={15} aria-hidden="true"/>}
+    </button>;
   return <>
     <button ref={trigger} type="button" className={`chat-attachment-icon chat-skill-trigger${selected?' selected':''}`}
       aria-label={label} title={label} disabled={disabled} popoverTarget={id} onClick={position}>
       <Puzzle size={16} aria-hidden="true"/>
     </button>
-    <div ref={panel} id={id} popover="auto" className="chat-skill-popover" role="group" aria-label="TRASH Skill">
-      <strong className="chat-skill-heading">TRASH Skill</strong>
-      {status==='ready'?
-        [{id:'',title:'自动选择'},...skills].map(skill=>
-          <button type="button" key={skill.id} disabled={disabled} aria-pressed={value===skill.id} onClick={()=>{
-            onChange(skill.id);
-            panel.current?.hidePopover();
-            trigger.current?.focus();
-          }}>
-            <span>{skill.title}</span>
-            {value===skill.id&&<Check size={15} aria-hidden="true"/>}
-          </button>
-        ):<p role="status">{status==='loading'?'正在读取 Skill…':'暂时无法读取 Skill，请重新打开对话页面。'}</p>}
+    <div ref={panel} id={id} popover="auto" className="chat-skill-popover" role="group" aria-label="选择 Skill">
+      {status==='ready'?<>
+        {option({id:'',title:'自动选择'})}
+        {groups.filter(group=>group.items.length).map(group=>
+          <div key={group.title} className="chat-skill-group" role="group" aria-label={group.title}>
+            <strong className="chat-skill-heading">{group.title}</strong>
+            {group.items.map(option)}
+          </div>
+        )}
+      </>:<p role="status">{status==='loading'?'正在读取 Skill…':'暂时无法读取 Skill，请重新打开对话页面。'}</p>}
     </div>
   </>;
 }

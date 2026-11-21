@@ -298,12 +298,13 @@
 .chat-skill-trigger.selected,.chat-skill-trigger:has(+.chat-skill-popover:popover-open){background:var(--chat-canvas);color:var(--green)}
 .chat-skill-trigger:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .chat-skill-popover{position:fixed;inset:auto;box-sizing:border-box;margin:0;padding:6px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--chat-line);border-radius:13px;background:var(--chat-paper);color:var(--ink);box-shadow:0 10px 30px color-mix(in srgb,var(--ink) 16%,transparent);font-size:13px}
+.chat-skill-group{border-top:1px solid var(--chat-line);margin-top:4px;padding-top:3px}
 .chat-skill-heading{display:block;padding:7px 9px;color:var(--muted);font-size:11px;font-weight:600}
-.chat-skill-popover>button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:32px;padding:5px 9px;border:0;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
-.chat-skill-popover>button:disabled{opacity:.5;cursor:not-allowed}
-.chat-skill-popover>button:hover:not(:disabled),.chat-skill-popover>button[aria-pressed=true]{background:var(--chat-canvas);color:var(--green)}
-.chat-skill-popover>button:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
-.chat-skill-popover>button>svg{flex:none}
+.chat-skill-popover button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:32px;padding:5px 9px;border:0;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.chat-skill-popover button:disabled{opacity:.5;cursor:not-allowed}
+.chat-skill-popover button:hover:not(:disabled),.chat-skill-popover button[aria-pressed=true]{background:var(--chat-canvas);color:var(--green)}
+.chat-skill-popover button:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.chat-skill-popover button>svg{flex:none}
 .chat-skill-popover>p{margin:3px 9px 7px;color:var(--muted)}
 .chat-turn-skill{display:flex;align-items:center;gap:5px;margin-bottom:6px;font-size:12px;color:var(--muted)}
 .project-chat .chat-input-shell.chat-drop-active{border-width:1px}
