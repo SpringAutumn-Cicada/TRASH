@@ -3,7 +3,7 @@ import {copyFileSync,existsSync,lstatSync,mkdirSync,readFileSync,renameSync,writ
 import {join,resolve,sep} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {migratePdfPreparation,type TrashStore} from '@trash/storage';
+import {migratePdfPreparation,projectLibraryPath,type TrashStore} from '@trash/storage';
 import type {PdfFigure,PdfPreparation} from '@trash/protocol';
 import {PdfReading} from './pdf-reading.js';
 import {planPaperReading} from './paper-reading-plan.js';
@@ -18,7 +18,7 @@ export class PdfPreparationService {
  private owner=randomUUID();private timer:ReturnType<typeof setInterval>;private running=false;private closed=false;private abort?:AbortController;
  constructor(private store:TrashStore){migratePdfPreparation(store.db);this.timer=setInterval(()=>void this.tick(),1000);this.timer.unref();}
  private source(project:string,source:string){const record=this.store.getSource(source);if(!record||record.project_id!==project)fail('SOURCE_NOT_FOUND',404);const resolved=record!;if(resolved.material_scope==='abstract')fail('PDF_ORIGINAL_NOT_FOUND',404);return resolved;}
- private root(project:string,source:string){this.source(project,source);let path=join(this.store.root,'projects',project);for(const part of ['literature','parsed',source]){path=join(path,part);if(existsSync(path)&&lstatSync(path).isSymbolicLink())fail('PDF_PATH_INVALID',403);}mkdirSync(path,{recursive:true});return path;}
+ private root(project:string,source:string){this.source(project,source);let path=join(this.store.root,'projects',project);for(const part of projectLibraryPath(path,'literature/parsed/'+source).split('/')){path=join(path,part);if(existsSync(path)&&lstatSync(path).isSymbolicLink())fail('PDF_PATH_INVALID',403);}mkdirSync(path,{recursive:true});return path;}
  private save(job:PdfPreparation){job.updated_at=Date.now();this.store.db.prepare('UPDATE pdf_preparations SET status=?,data=? WHERE id=?').run(job.status,JSON.stringify(job),job.id);}
  status(project:string,source:string){this.source(project,source);return this.store.db.prepare('SELECT data FROM pdf_preparations WHERE project_id=? AND source_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(project,source) as {data:string}|undefined;}
  get(project:string,source:string){const row=this.status(project,source);return row?JSON.parse(row.data) as PdfPreparation:undefined;}

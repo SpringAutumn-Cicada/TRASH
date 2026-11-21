@@ -1,6 +1,6 @@
 import {existsSync,lstatSync,readFileSync} from 'node:fs';
 import {join,resolve,sep} from 'node:path';
-import type {TrashStore} from '@trash/storage';
+import {projectLibraryPath,type TrashStore} from '@trash/storage';
 import type {MarkdownDocument} from './markdown-knowledge.js';
 
 export type GroupFile={path:string;hash:string};
@@ -8,6 +8,7 @@ export type PaperGroup={version:1;source_id:string;at:string;task_id?:string;cur
 export type GroupStatus='current'|'historical'|'retained'|'unassigned';
 export const groupPath=(source:string)=>`.trash/paper-groups/${source}/current.json`;
 export function groupPhysical(root:string,path:string){
+ path=projectLibraryPath(root,path);
  const target=resolve(root,path);if(!target.startsWith(root+sep))throw new Error('Wiki组路径越界');
  let cursor=root;for(const part of path.split('/')){cursor=join(cursor,part);if(existsSync(cursor)&&lstatSync(cursor).isSymbolicLink())throw new Error('Wiki组路径不能使用符号链接');}return target;
 }

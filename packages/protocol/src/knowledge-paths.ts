@@ -34,3 +34,9 @@ export function legacyPath(path:string):string{
  if(path.includes('/abstracts/'))return 'abstract-library/'+(path.endsWith('/memory.md')?'wiki':'notes')+'/'+path.split('/')[2]+'.md';
  return (id.startsWith('card-')?'literature/cards/':'wiki/')+id+'.md';
 }
+
+/** Protocol paths retain their existing namespace when the on-disk library moves. */
+export function libraryLogicalPath(path:string):string {
+ return path.replace(/^library\/(?=(?:literature|knowledge_base|abstract_library)(?:\/|$))/,'')
+   .replace(/^abstract_library(?=\/|$)/,'abstract-library');
+}

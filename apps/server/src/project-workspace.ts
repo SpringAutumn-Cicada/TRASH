@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, readdirSync, mkdirSync, writeFileSync, renameSync, symlinkSync, rmSync, readlinkSync } from 'node:fs';
 import { mkdir, readdir, lstat, readlink, symlink, copyFile, realpath, statfs } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { TrashStore, KnowledgeStore } from '@trash/storage';
+import { TrashStore, KnowledgeStore, libraryLayoutMarker, projectLibraryPath } from '@trash/storage';
 import { z } from 'zod';
 
 export function workspaceError(error:unknown):never {
@@ -92,6 +92,8 @@ export class ProjectWorkspaces {
       const root=join(this.store.root,'workspaces');mkdirSync(root,{recursive:true});
       target=await this.destination(value??{root,name:id});this.reservations.add(target);
       mkdirSync(target);created=true;
+      mkdirSync(join(target,'.trash'));
+      json(join(target,libraryLayoutMarker),{version:1});
       this.layout(id,target);symlinkSync(target,this.anchor(id),'dir');linked=true;
       this.materialize(id);return this.state(id);
     }catch(error){
@@ -101,7 +103,7 @@ export class ProjectWorkspaces {
     }finally{this.active.delete(id);if(target)this.reservations.delete(target);}
   }
   private layout(id:string,root:string){
-    for(const dir of directories){
+    for(const dir of [...directories,'abstract-library','knowledge_base'].map(dir=>projectLibraryPath(root,dir))){
       let path=root;
       for(const part of dir.split('/')){
         path=join(path,part);
@@ -117,7 +119,7 @@ export class ProjectWorkspaces {
     const readme=join(root,'README.md');
     if(!existsSync(readme))writeFileSync(readme,`# 论文工作区
 
-文献 literature/、项目知识 knowledge_base/、代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
+文献资料库 library/ 收纳原文、摘要和项目知识。代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
 
 对话中明确要求保存的研究想法、方案和讨论笔记直接放在 research/。
 
@@ -127,13 +129,13 @@ export class ProjectWorkspaces {
 平台运行记录保存在 .trash/runtime/；旧项目内部路径继续兼容，不自动移动。子目录按需创建，数据和公共代码使用引用避免重复复制。
 `,{flag:'wx',mode:0o600});
     // Keep legacy artifact references valid while originals live in the public layout.
-    const raw=join(root,'raw'),originals=join(root,'literature','originals');
-    if(existsSync(raw)&&lstatSync(raw).isSymbolicLink()&&readlinkSync(raw)!=='literature/originals')fail('WORKSPACE_RESERVED_SYMLINK');
+    const raw=join(root,'raw'),originalsPath=projectLibraryPath(root,'literature/originals'),originals=join(root,originalsPath);
+    if(existsSync(raw)&&lstatSync(raw).isSymbolicLink()&&readlinkSync(raw)!==originalsPath)fail('WORKSPACE_RESERVED_SYMLINK');
     if(existsSync(raw)&&!lstatSync(raw).isSymbolicLink()){
       if(readdirSync(originals).length)fail('WORKSPACE_ORIGINALS_CONFLICT');
       rmSync(originals,{recursive:true});renameSync(raw,originals);
     }
-    if(!existsSync(raw))symlinkSync('literature/originals',raw,'dir');
+    if(!existsSync(raw))symlinkSync(originalsPath,raw,'dir');
     const drafts=join(root,'agent-workspace','manuscripts'),manuscript=join(root,'manuscript');
     if(existsSync(drafts)&&!lstatSync(drafts).isSymbolicLink()&&readdirSync(manuscript).length===0){
       if(lstatSync(join(root,'agent-workspace')).isSymbolicLink())fail('WORKSPACE_RESERVED_SYMLINK');
@@ -149,7 +151,7 @@ export class ProjectWorkspaces {
         this.knowledge.materializeHistory(id,history);
       }
     }
-    for(const source of this.store.listSources(id))json(join(this.anchor(id),'literature','parsed',source.source_id+'.json'),{source,segments:this.store.listSourceSegments(source.source_id)});
+    for(const source of this.store.listSources(id))json(join(this.anchor(id),projectLibraryPath(this.anchor(id),'literature/parsed'),source.source_id+'.json'),{source,segments:this.store.listSourceSegments(source.source_id)});
     const tables=['projects','sources','artifacts','knowledge_versions','knowledge_keys','knowledge_metrics','knowledge_tasks','experiment_repositories','experiment_datasets','experiment_environments','experiment_plans','experiment_runs'];
     const snapshot=Object.fromEntries(tables.map(table=>[table,this.store.db.prepare(`SELECT * FROM ${table} WHERE project_id=?`).all(id)]));
     const details={

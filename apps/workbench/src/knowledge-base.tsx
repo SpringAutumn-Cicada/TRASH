@@ -3,7 +3,7 @@ import {useWikiReadingNavigation} from './wiki-reading-navigation.js';
 import {readPreference,writePreference} from './navigation.js';
 import React,{useEffect,useRef,useState} from 'react';
 import type {Source,ProjectPage} from '@trash/protocol';
-import {knowledgeDocumentId} from '@trash/protocol/browser';
+import {knowledgeDocumentId,libraryLogicalPath} from '@trash/protocol/browser';
 import {BookOpen,Search,RefreshCw,ArrowUpRight,FolderOpen} from 'lucide-react';
 import {api,uiError} from './api.js';
 import {ErrorNotice} from './error-notice.js';
@@ -70,7 +70,7 @@ export function KnowledgeBaseWorkspace({projectId,sources,focusId,onNavigate}:{p
  const navigateLink=(event:React.MouseEvent)=>{const anchor=(event.target as HTMLElement).closest('a'),href=anchor?.getAttribute('href');if(!href||/^https?:/i.test(href))return;event.preventDefault();
   const url=new URL(href,'https://knowledge.local/'+(doc?.path??(selected==='@log'?'knowledge_base/maintenance/log.md':'knowledge_base/index.md')));
   if(url.pathname.startsWith('/api/v1/')&&url.pathname.endsWith('/pdf-view')){window.open(url.pathname+url.search+url.hash,'_blank','noopener,noreferrer');return;}
-  const path=url.pathname.slice(1),id=knowledgeDocumentId(path),original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);
+  const path=libraryLogicalPath(url.pathname.slice(1)),id=knowledgeDocumentId(path),original=path.match(/^abstract-library\/materials\/(source_[A-Za-z0-9_-]+)\.md$/);
   if(original)reading.go('@source:'+original[1],url.hash.slice(1));else if(path==='knowledge_base/index.md')reading.go('@home',url.hash.slice(1));else if(id)reading.go(id,url.hash.slice(1));else setError('此入口不属于知识文档，请到项目文件查看。');
  };
  const [explorationNotice,setExplorationNotice]=useState('');

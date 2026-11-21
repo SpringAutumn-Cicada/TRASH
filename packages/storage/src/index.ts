@@ -2,8 +2,10 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { makeId, researchProjectSchema, sourceSchema, type Artifact, type EvidencePassage, type ResearchProject, type Source, type SourceLocator } from "@trash/protocol";
+import { projectLibraryPath } from "./library-layout.js";
+export * from "./library-layout.js";
 
 export interface SourceSegmentInput {
   locator: SourceLocator;
@@ -322,7 +324,7 @@ export class TrashStore {
     for(const source of sources){
       const root=join(this.root,'projects',source.project_id);
       if(existsSync(join(root,'project.yaml'))){
-        const directory=join(root,source.material_scope==='abstract'?'abstract-library':'literature','parsed');mkdirSync(directory,{recursive:true});
+        const directory=join(root,projectLibraryPath(root,source.material_scope==='abstract'?'abstract-library/parsed':'literature/parsed'));mkdirSync(directory,{recursive:true});
         const path=join(directory,source.source_id+'.json');writeFileSync(path+'.tmp',JSON.stringify({source,segments:segmentsBySource.get(source.source_id)??[]},null,2));renameSync(path+'.tmp',path);
       }
     }
@@ -373,7 +375,11 @@ export class TrashStore {
     if (!row) return undefined;
     const artifact = JSON.parse(row.data) as Artifact;
     const managed = this.db.prepare("SELECT relative_path FROM managed_files WHERE artifact_id=?").get(artifactId) as { relative_path: string } | undefined;
-    const path = managed ? resolve(this.root, managed.relative_path) : join(this.root, "projects", projectId, "files", `${artifactId}-${artifact.name}`);
+    const projectRoot = join(this.root, "projects", projectId);
+    const recordedPath = managed ? resolve(this.root, managed.relative_path) : join(projectRoot, "files", `${artifactId}-${artifact.name}`);
+    const path = recordedPath.startsWith(projectRoot+sep)
+      ? join(projectRoot,projectLibraryPath(projectRoot,relative(projectRoot,recordedPath).split(sep).join('/')))
+      : recordedPath;
     if (!path.startsWith(`${this.root}${sep}`) || !existsSync(path)) return undefined;
     return { artifact, path };
   }

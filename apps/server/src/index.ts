@@ -26,7 +26,7 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { knowledgeTaskInputSchema, literatureSearchResultSchema, makeId, PROTOCOL_VERSION, sourceSchema, type LiteratureSearchResult, type Source } from "@trash/protocol";
 import { pdfViewerAsset, OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, type LiteratureSearchProvider, type ParsedSource } from "@trash/literature";
-import { TrashStore, KnowledgeStore } from "@trash/storage";
+import { TrashStore, KnowledgeStore, projectLibraryPath } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
 import { LiteratureAnalysis } from "./literature-analysis.js";
@@ -375,12 +375,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge/rename-summary'&&method==='POST'){const input=z.object({id:z.string(),title:z.string().trim().min(4).max(150),expected:z.string()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.renameSummary(projectId,input.id,input.title,input.expected)});return;}
       if(subpath==='markdown-knowledge/migration-preview'&&method==='GET'){sendJson(response,200,migrationPreview(markdown.root(projectId)));return;}
       if(subpath==='markdown-knowledge/home'&&method==='GET'){
-        const root=markdown.root(projectId),{archived}=exploration.topicDirectories(projectId),manifest=migrationPreview(root),file=join(root,'knowledge_base/index.md');
+        const root=markdown.root(projectId),{archived}=exploration.topicDirectories(projectId),manifest=migrationPreview(root),file=join(root,projectLibraryPath(root,'knowledge_base/index.md'));
         const oldLinks=new Set(archived.map(doc=>doc.path.replace(/^knowledge_base\//,'')));
         const text=existsSync(file)?readFileSync(file,'utf8').split('\n').filter(line=>!oldLinks.has(line.match(/^- \[.*\]\(([^)]+)\)$/)?.[1]??'')).join('\n'):'# 知识库\n请先预览并迁移到 knowledge_base/。';
         sendJson(response,200,{path:'knowledge_base/index.md',text,migration:manifest.migrated});return;
       }
-      if(subpath==='markdown-knowledge/maintenance-log'&&method==='GET'){const file=join(markdown.root(projectId),'knowledge_base/maintenance/log.md');sendJson(response,200,{text:existsSync(file)?readFileSync(file,'utf8'):'暂无维护记录。'});return;}
+      if(subpath==='markdown-knowledge/maintenance-log'&&method==='GET'){const root=markdown.root(projectId),file=join(root,projectLibraryPath(root,'knowledge_base/maintenance/log.md'));sendJson(response,200,{text:existsSync(file)?readFileSync(file,'utf8'):'暂无维护记录。'});return;}
       if(['markdown-knowledge/migrate','markdown-knowledge/rollback-migration'].includes(subpath)&&method==='POST'){
         const input=z.object({confirm:z.literal(true),expected:z.string().optional()}).strict().parse(await readJson(request));
         if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}

@@ -2,7 +2,7 @@ import {lstatSync,watch,type FSWatcher} from 'node:fs';
 import {join} from 'node:path';
 import type {ServerResponse} from 'node:http';
 import {projectStream} from './project-updates.js';
-import type {TrashStore} from '@trash/storage';
+import {projectLibraryPath,type TrashStore} from '@trash/storage';
 import type {KnowledgeAgent} from './knowledge-agent.js';
 import {currentPaperWiki,MarkdownKnowledge} from './markdown-knowledge.js';
 import {parseIdcard} from './source-bibliography.js';
@@ -92,7 +92,7 @@ function watchKnowledge(store:TrashStore,project:string,response:ServerResponse)
   const watchers:FSWatcher[]=[];
   for(const part of ['knowledge_base','wiki','literature/cards']){
    try{
-    const path=join(root,part);
+    const path=join(root,projectLibraryPath(root,part));
     if(!lstatSync(path).isDirectory())continue;
     const watcher=watch(path,{recursive:true,persistent:false},(_event,filename)=>{
      if(!filename||filename.endsWith('.md')||!filename.includes('.'))markdown.invalidate(project);

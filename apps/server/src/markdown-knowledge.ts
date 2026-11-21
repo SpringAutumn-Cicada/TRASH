@@ -4,7 +4,7 @@ import {topicGroupIssues,topicManifest,topicPaths} from './topic-wiki.js';
 import {paperMembership,groupPath,readPaperGroup,groupPhysical,classifyPaperFiles,taskGeneratedHashes,type GroupStatus,type PaperGroup} from './paper-wiki-groups.js';
 import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
 import {paperCompatibility,paperWikiIssues} from './paper-wiki.js';
-import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId} from '@trash/protocol';
+import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId,libraryLogicalPath} from '@trash/protocol';
 import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText} from './knowledge-base-migration.js';
 import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
 import {parseBasicCard,applyBasicCard,applyIdcard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
@@ -68,12 +68,11 @@ export class MarkdownKnowledge {
   invalidate(project:string){indexCaches.get(this.store)?.delete(project);invalidateSourceAnalysis(this.store,project);}
   root(project:string){if(!this.store.getProject(project))fail('PROJECT_NOT_FOUND',404);const root=join(this.store.root,'projects',project);mkdirSync(root,{recursive:true});return realpathSync(root);}
   locate(project:string,path:string){
+    path=libraryLogicalPath(path);
     if(!legacyKnowledgePath.test(path)&&!knowledgeBasePath.test(path)&&!/^abstract-library\/(notes|wiki)\/source_[A-Za-z0-9_-]+\.md$/.test(path))fail('KNOWLEDGE_PATH_INVALID',400);
-    const root=this.root(project);path=knowledgeBasePath.test(path)?path:resolveBasePath(root,path);const target=resolve(root,path);let current=root;
-    for(const part of path.split('/')){current=join(current,part);rejectSymlink(current);}
-    if(!target.startsWith(root+sep))fail('KNOWLEDGE_PATH_INVALID',403);return target;
+    const root=this.root(project);path=knowledgeBasePath.test(path)?path:resolveBasePath(root,path);return safeKnowledgeFile(root,path);
   }
-  private internal(project:string,path:string){const root=this.root(project);let current=root;for(const part of path.split('/')){current=join(current,part);rejectSymlink(current);}return current;}
+  private internal(project:string,path:string){return safeKnowledgeFile(this.root(project),path);}
   parse(project:string,path:string,text:string):MarkdownDocument{
     if(Buffer.byteLength(text)>1024*1024||text.includes('\0'))fail('KNOWLEDGE_FILE_INVALID',422,'文件超过1MB或包含空字符');
     const references=markdownReferences(text);if(references.unresolved.length)fail('KNOWLEDGE_REFERENCE_UNDEFINED',422);

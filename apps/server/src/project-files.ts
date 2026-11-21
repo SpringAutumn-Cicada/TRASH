@@ -5,7 +5,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
-import { KnowledgeStore, type TrashStore, parseKnowledgeMarkdown } from '@trash/storage';
+import { KnowledgeStore, type TrashStore, parseKnowledgeMarkdown, projectLibraryPath } from '@trash/storage';
+import { libraryLogicalPath } from '@trash/protocol';
 import { manuscriptDocument, manuscriptDraftPath, manuscriptId, manuscriptManifest, manuscriptSection, manuscriptStatus, manuscriptTitle } from './manuscript-layout.js';
 
 const textLimit=2*1024*1024,uploadLimit=50*1024*1024;
@@ -24,7 +25,7 @@ export class ProjectFiles {
   constructor(private store:TrashStore,private blocked:(id:string)=>boolean){this.knowledge=new KnowledgeStore(store.db);}
   private root(id:string){const root=join(this.store.root,'projects',id);if(!existsSync(root))fail('FILES_WORKSPACE_MISSING',404);return realpathSync(root);}
   private locate(id:string,value:string,allowMissing=false){
-    inputPath.parse(value);const root=this.root(id),path=resolve(root,value||'.');if(!inside(root,path))fail('FILES_OUTSIDE_WORKSPACE',403);
+    inputPath.parse(value);const root=this.root(id),path=resolve(root,projectLibraryPath(root,value.split('/').filter(Boolean).join('/'))||'.');if(!inside(root,path))fail('FILES_OUTSIDE_WORKSPACE',403);
     let current=root;
     for(const part of relative(root,path).split(sep).filter(Boolean)){
       current=join(current,part);
@@ -34,12 +35,15 @@ export class ProjectFiles {
     return path;
   }
   private isProtected(path:string){
+    path=path.split('/').filter(Boolean).join('/');
+    if(path==='library')return true;
+    path=libraryLogicalPath(path);
     const parts=path.split('/').filter(Boolean);
     if(parts[0]==='manuscript'&&(parts.length===1||parts.length===3&&parts[2]==='paper.yaml'))return true;
     return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
-    const match=path.match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
+    const match=libraryLogicalPath(path.split('/').filter(Boolean).join('/')).match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
     return match?{kind:match[1]==='wiki'?'wiki-page' as const:'literature-card' as const,id:match[2]}:undefined;
   }
   private writable(id:string,path:string){
@@ -59,7 +63,7 @@ export class ProjectFiles {
     return physical;
   }
   private entry(id:string,parent:string,name:string):FileEntry{
-    const path=parent?parent+'/'+name:name,stat=lstatSync(join(this.root(id),path));
+    const path=parent?parent+'/'+name:name,root=this.root(id),stat=lstatSync(join(root,projectLibraryPath(root,path)));
     return {name,path,kind:stat.isSymbolicLink()?'symlink':stat.isDirectory()?'directory':'file',size:stat.size,modified:stat.mtime.toISOString(),protected:this.isProtected(path)};
   }
   list(id:string,path:string,hidden:boolean){
