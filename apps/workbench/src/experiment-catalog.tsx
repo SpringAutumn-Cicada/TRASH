@@ -1,22 +1,25 @@
 import { useRef, useState } from "react";
 import { ChevronRight, FlaskConical, GitBranch, Plus, Trash2 } from "lucide-react";
-import type { ExperimentCatalogEntry, ReproductionCode } from "@trash/protocol";
+import type { DiscoveredExperiment, ExperimentCatalogEntry, ReproductionCode } from "@trash/protocol";
 import { ModalLayer } from "./modal-layer.js";
 
-export const experimentKeyOf = (item: ExperimentCatalogEntry) => `${item.direction_id}/${item.scheme_id}`;
+export const experimentKeyOf = (item: Pick<ExperimentCatalogEntry, "direction_id" | "scheme_id">) => `${item.direction_id}/${item.scheme_id}`;
 
-export function ExperimentCatalog({ experiments, reproductions, busy, loading, create, recycle, open, openReproduction }: {
+export function ExperimentCatalog({ experiments, discovered, reproductions, busy, loading, create, register, recycle, open, openReproduction }: {
   experiments: ExperimentCatalogEntry[];
+  discovered: DiscoveredExperiment[];
   reproductions: ReproductionCode[];
   busy: boolean;
   loading: boolean;
   create: (title: string, id: string) => Promise<boolean>;
+  register: (name: string) => Promise<boolean>;
   recycle: (item: ExperimentCatalogEntry) => Promise<boolean>;
   open: (item: ExperimentCatalogEntry) => void;
   openReproduction: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<"all" | "original" | "reproduction">("all");
   const [draft, setDraft] = useState<{ title: string; id: string }>();
+  const [registering, setRegistering] = useState<DiscoveredExperiment>();
   const [recycling, setRecycling] = useState<ExperimentCatalogEntry>();
   const submission = useRef(false);
   const [creating, setCreating] = useState(false);
@@ -25,6 +28,11 @@ export function ExperimentCatalog({ experiments, reproductions, busy, loading, c
       id: experimentKeyOf(item), title: item.title, icon: FlaskConical, kind: "自研",
       detail: item.entrypoint ?? (item.repository_id ? "已关联仓库" : "待关联代码"),
       onOpen: () => open(item), experiment: item,
+    }))),
+    ...(filter === "reproduction" ? [] : discovered.map(item => ({
+      id: item.path, title: item.name, icon: FlaskConical, kind: "自研",
+      detail: item.has_git ? "待登记" : "待初始化 Git",
+      onOpen: () => setRegistering(item), experiment: undefined,
     }))),
     ...(filter === "original" ? [] : reproductions.map(item => ({
       id: item.id, title: item.name, icon: GitBranch, kind: "复现",
@@ -56,6 +64,23 @@ export function ExperimentCatalog({ experiments, reproductions, busy, loading, c
       </article>)}
     </div>
     {!cards.length && <p className="quiet" role="status">{loading ? "正在读取实验…" : "当前分类还没有实验。"}</p>}
+    {registering && <ModalLayer><div className="modal-backdrop">
+      <div className="modal experiment-form" role="dialog" aria-modal="true" aria-labelledby="register-experiment-heading">
+        <h3 id="register-experiment-heading">登记「{registering.name}」</h3>
+        <p>代码目录 <code>{registering.path}</code></p>
+        <p>{registering.has_git ? "登记会关联原有 Git 仓库，并创建实验档案。"
+          : "登记会在原目录初始化 Git，并创建实验档案。已有文件会保留。"}</p>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" autoFocus disabled={busy} onClick={() => setRegistering(undefined)}>取消</button>
+          <button type="button" className="primary-button" disabled={busy} onClick={async () => {
+            if (submission.current) return;
+            submission.current = true;
+            try { if (await register(registering.name)) setRegistering(undefined); }
+            finally { submission.current = false; }
+          }}>{busy ? "正在登记…" : "登记实验"}</button>
+        </div>
+      </div>
+    </div></ModalLayer>}
     {recycling && <ModalLayer><div className="modal-backdrop">
       <div className="modal experiment-form" role="dialog" aria-modal="true" aria-labelledby="recycle-experiment-heading">
         <h3 id="recycle-experiment-heading">删除「{recycling.title}」？</h3>

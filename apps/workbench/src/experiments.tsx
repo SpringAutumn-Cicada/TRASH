@@ -7,7 +7,7 @@ import { AutoDlDeleteDialog } from "./autodl-delete-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ChartColumn, ClipboardList, Code2, Columns2, Database, Download, FlaskConical, FolderOpen, GitBranch, Pencil, Play, Plus, RefreshCw, Server } from "lucide-react";
-import type { ProjectPage, ExperimentCatalogEntry, ReproductionCode, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
+import type { ProjectPage, DiscoveredExperiment, ExperimentCatalogEntry, ReproductionCode, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { DatasetsPanel } from "./data.js";
 import { ExperimentalDataPanel } from "./experimental-data.js";
 import { experimentTabs, type ExperimentTab, type NavigateOptions, useUnsavedChanges } from "./navigation.js";
@@ -24,6 +24,7 @@ import { RepositoryBrowser } from "./repository-browser.js";
 
 const failures:Record<string,string>={...sshConnectionErrors,DATASET_NOT_READY:"数据集尚未就绪，请先完成上传或选择其他数据集。",SSH_CREDENTIAL_STORE_FAILED:"本机凭据读取或保存失败，请检查数据目录权限及设备密钥是否完整。",REPRODUCTION_ARCHIVE_FAILED:"复现快照生成失败，请检查 Python 3、文件权限、符号链接、敏感文件与大小。",SNAPSHOT_HASH_MISMATCH:"复现代码快照校验失败，请重新创建计划。",SNAPSHOT_NOT_FOUND:"未找到代码快照，请重新创建计划。",NOT_FOUND:"未找到接口或所请求的内容。如果刚更新了连接终端功能，请先重启 TRASH 后端服务再连接。",SSH_PROFILE_NOT_FOUND:"主机配置不存在或已被删除，请刷新实例列表后重新选择。",INTERNAL_ERROR:"服务端处理失败（INTERNAL_ERROR），无法建立此次请求，请保留错误信息以便定位。",SERVER_STOPPING:"服务正在停止，请等待后端重新启动后再连接。",TERMINAL_PROFILE_BUSY:"该主机终端已连接，请先在 AutoDL 工作区断开再编辑或删除。",TERMINAL_CONNECTING:"正在建立终端连接，请稍候。",TERMINAL_LIMIT:"终端会话已达上限，请先断开不用的会话。",SSH_TERMINAL_FAILED:"SSH 认证后无法打开交互终端，请检查远端是否允许 Shell 和 PTY。",REMOTE_DIAGNOSTICS_FAILED:"SSH 已连接，但环境诊断失败，请检查实例的 python3、远端目录权限及磁盘空间。",SSH_COMMAND_TIMEOUT:"远端诊断命令超时，请确认实例是否正常运行后重试。",SSH_LOGIN_COMMAND_INVALID:"SSH 指令格式不正确，请填写 ssh -p 端口 用户名@主机，不要附带其他选项或命令。",CODE_AGENT_BUSY:"该仓库有开发 Agent 正在执行，请先等待或取消。",REPOSITORY_NOT_BOUND:"请先绑定本地 Git 仓库。",REPOSITORY_ROOT_REQUIRED:"请选择 Git 仓库根目录。",REPOSITORY_PATH_INVALID:"文件路径越出绑定仓库，不能访问。",GIT_TREE_DIRTY:"仓库存在未提交或未跟踪文件，请先在本地整理并提交。",GIT_OPERATION_FAILED:"Git 操作失败，请检查仓库、暂存区和提交身份。",GIT_SUBMODULE_UNSUPPORTED:"首版不自动展开子模块，请先整理为可独立运行的仓库。",GIT_LFS_UNSUPPORTED:"首版不自动同步 Git LFS，请改用远端数据引用。",SSH_FINGERPRINT_REQUIRED:"请先探测并核对主机指纹。",SSH_FINGERPRINT_CHANGED:"主机指纹已变化，连接被阻止。请重新核对主机身份。",SSH_FINGERPRINT_NOT_OBSERVED:"请先获取本次连接的指纹，再确认信任。",SSH_CREDENTIAL_REQUIRED:"请重新输入本次会话的 SSH 密码。",SSH_AUTH_FAILED:"SSH 认证失败，请检查用户名和认证信息。",SSH_KEY_REQUIRED:"请填写本地私钥路径。",SSH_AGENT_UNAVAILABLE:"本地服务未检测到 SSH Agent。",SSH_CONNECTION_FAILED:"SSH 连接失败，请检查地址、端口及实例状态。",SSH_NETWORK_FAILED:"无法连接 SSH 主机，请检查网络和实例状态。",EXPERIMENT_ACTIVE:"存在未结束或远端状态未确认的实验，暂不能执行此操作。",EXPERIMENT_BUSY:"当前主机正在处理请求，请稍后重试。",PLAN_NOT_CONFIRMED:"请先检查环境并确认实验计划。",PREPARATION_REQUIRED:"该计划需要先单独授权并成功执行环境准备脚本。",REMOTE_ENVIRONMENT_INCOMPLETE:"远端需要 Linux、Python 3.9+、Git、tmux 和 Bash。",GPU_UNAVAILABLE:"所选 GPU 编号不可用。",DATASET_HASH_MISMATCH:"数据或校验清单的 SHA-256 不匹配。",REMOTE_DISK_INSUFFICIENT:"远端剩余空间不足。",CODE_BUNDLE_TOO_LARGE:"代码包超过 200 MiB，请清理代码历史和大文件。",INVALID_REQUEST:"输入内容不符合格式，请检查必填字段和 JSON。",VERSION_CONFLICT:"计划已有新版本，请重新选择。",EDITOR_NOT_CONFIGURED:"绑定仓库时请先填写编辑器配置。"};
 Object.assign(failures, {
+  EXPERIMENT_DISCOVERY_UNAVAILABLE: "目录已变化、已关联论文或实验已回收，请刷新列表后重试。",
   EXPERIMENT_NAME_INVALID: "实验名称不能用作目录名，请去掉路径符号或更换名称。",
   EXPERIMENT_CODE_EXISTS: "code/papers 下已有同名目录或仓库记录，请换一个实验名称。",
   EXPERIMENT_GIT_INIT_FAILED: "初始化 Git 仓库失败，请检查本机 Git 和工作区权限后重试。",
@@ -68,6 +69,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
   const [instanceDialog,setInstanceDialog]=useState<"add"|"edit">();
   const [error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
   const alive=useRef(true);const [repositoryList,setRepositoryList]=useState<ProjectRepository[]>([]),[defaultRepositoryId,setDefaultRepositoryId]=useState<string|null>(null),[selectedRepositoryId,setSelectedRepositoryId]=useState("");
+  const [discovered, setDiscovered] = useState<DiscoveredExperiment[]>([]);
   const [catalog, setCatalog] = useState<ExperimentCatalogEntry[]>([]);
   const [reproductions, setReproductions] = useState<ReproductionCode[]>([]);
   const reproductionScope = experimentKey?.startsWith("reproduction:") ? experimentKey.slice(13) : undefined;
@@ -91,14 +93,16 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
     });
     return recycled;
   };
-  const createCatalogExperiment = async (title: string, id: string) => {
+  const saveCatalogExperiment = async (path: string, body: object) => {
     let created = false;
     await run(async () => {
       const { experiment, repository, default_id } = await request<{
         experiment: ExperimentCatalogEntry; repository?: ProjectRepository; default_id: string | null;
-      }>(base, "/experiment-catalog", { title, id });
+      }>(base, path, body);
       if (!alive.current) return;
       if (repository) setRepositoryList(items => [...items.filter(item => item.repository_id !== repository.repository_id), repository]);
+      if (repository) setDiscovered(items => items.filter(item => item.path !== repository.path));
+      setSchemes(items => items.some(item => experimentKeyOf(item) === experimentKeyOf(experiment)) ? items : [...items, experiment]);
       setDefaultRepositoryId(default_id);
       setCodeTab(repository ? "code" : "overview");
       setCatalog(items => [...items.filter(item => experimentKeyOf(item) !== experimentKeyOf(experiment)), experiment]);
@@ -139,17 +143,25 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
     setRuns(runData.runs);
     setSchemes(schemeData.schemes);
     const [experimentData, reproductionData] = await Promise.allSettled([
-      request<{experiments: ExperimentCatalogEntry[]}>(base, "/experiment-catalog"),
+      request<{experiments: ExperimentCatalogEntry[]; discovered: DiscoveredExperiment[]}>(base, "/experiment-catalog"),
       request<{codes: ReproductionCode[]}>(base, "/reproductions"),
     ]);
     if (!alive.current) return;
-    if (experimentData.status === "fulfilled") setCatalog(experimentData.value.experiments);
+    if (experimentData.status === "fulfilled") {
+      setCatalog(experimentData.value.experiments);
+      setDiscovered(experimentData.value.discovered ?? []);
+    }
     if (reproductionData.status === "fulfilled") setReproductions(reproductionData.value.codes);
     if (experimentData.status === "rejected" || reproductionData.status === "rejected") {
       setError("部分实验列表读取失败，请刷新后重试。");
     }
   };
   useEffect(()=>{void run(load).finally(()=>{if(alive.current)setLoadingContext(false);});},[projectId]);
+  const previousSection = useRef(section);
+  useEffect(() => {
+    if (section === "catalog" && previousSection.current !== section) void run(load);
+    previousSection.current = section;
+  }, [section]);
   useEffect(()=>{
     const controller=new AbortController();
     void request<{terminals:TerminalSession[]}>(base,"/terminals",undefined,"GET",controller.signal).then(data=>{
@@ -255,8 +267,10 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
         <RefreshCw size={16} aria-hidden="true"/>
       </button>
     </header>
-    {section==="catalog" && <ExperimentCatalog experiments={catalog} reproductions={reproductions} busy={busy}
-      loading={loadingContext} create={createCatalogExperiment} recycle={recycleExperiment}
+    {section==="catalog" && <ExperimentCatalog experiments={catalog} discovered={discovered} reproductions={reproductions} busy={busy}
+      loading={loadingContext} recycle={recycleExperiment}
+      create={(title, id) => saveCatalogExperiment("/experiment-catalog", { title, id })}
+      register={name => saveCatalogExperiment("/experiment-catalog/register", { name, confirm:true })}
       open={item => onNavigate("experiments", {tab:"code", experiment:experimentKeyOf(item)})}
       openReproduction={id => onNavigate("experiments", {tab:"reproductions", focus:id, experiment:"reproduction:"+id})}/>}
     {experimentKey && <div className="experiment-detail-toolbar">

@@ -1,5 +1,5 @@
 import type { ProjectFiles } from "../project-files.js";
-import { createExperiment, discoverExperiments, experimentCatalogUpdate, listExperiments, setExperimentCode } from "./catalog.js";
+import { createExperiment, discoverExperiments, experimentCatalogUpdate, listExperiments, registerExperiment, setExperimentCode } from "./catalog.js";
 import { experimentSchemes } from './run-archive.js';
 import { startDirectoryRepair, directoryRepair, applyDirectoryRepair, stopDirectoryRepair, resumeDirectoryRepair } from './directory-repair.js';
 import { discoverComputeResources } from './compute-resources.js';
@@ -309,6 +309,12 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="GET"){send(response,200,{datasets:service.data.datasets(projectId)});return true;}
     if(parts.length===1&&method==="POST"){const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const dataset={...value,dataset_id:`dataset_${randomUUID()}`,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(dataset);send(response,201,{dataset});return true;}
     if(parts[2]==="check"&&method==="POST"){send(response,202,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
+  }
+  if (subpath === "experiment-catalog/register" && method === "POST") {
+    const root = join(service.store.root, "projects", projectId);
+    const result = await registerExperiment(root, projectId, service.data, await readJson(request), () => files.recycled(projectId).entries);
+    send(response, 201, { ...result, default_id: service.data.repository(projectId)?.repository_id ?? null });
+    return true;
   }
   if (parts[0] === "experiment-catalog" && parts.length === 1) {
     const root = join(service.store.root, "projects", projectId);

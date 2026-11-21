@@ -173,6 +173,84 @@ export async function createExperiment(root: string, projectId: string, store: E
   }
 }
 
+export async function registerExperiment(
+  root: string, projectId: string, store: ExperimentStore, input: unknown,
+  recycled: () => Parameters<typeof discoverExperiments>[3],
+) {
+  const { name } = z.object({ name: z.string().min(1).max(255).refine(value => !value.startsWith(".") && !/[\/\\\x00-\x1f\x7f]/.test(value)), confirm: z.literal(true) }).strict().parse(input);
+  const workspace = realpathSync(root);
+  const path = join(workspace, "code", "papers", name);
+  const resolveCandidate = () => {
+    const experiments = listExperiments(workspace);
+    const repositories = store.repositories(projectId);
+    const repository = repositories.find(repo => repo.path === path && !repo.paper_id);
+    const experiment = repository && experiments.find(item => item.repository_id === repository.repository_id);
+    const candidate = discoverExperiments(workspace, repositories, experiments, recycled()).find(item => item.name === name);
+    return { experiment, repository, candidate };
+  };
+  const first = resolveCandidate();
+  if (first.experiment) return { experiment: first.experiment, repository: first.repository! };
+  if (!first.candidate) return experimentError("EXPERIMENT_DISCOVERY_UNAVAILABLE", 409);
+  const hasGit = first.candidate.has_git;
+  const original = lstatSync(path);
+  const base = join(workspace, "experiments");
+  const direction_id = "unassigned";
+  const parent = join(base, direction_id);
+  ensureDirectory(base);
+  ensureDirectory(parent);
+  const scheme_id = `experiment_${randomUUID()}`;
+  const archive = join(parent, scheme_id);
+  const stage = mkdtempSync(join(parent, ".register-"));
+  const gitPath = join(path, ".git");
+  let ownsGit = false;
+  let published = false;
+  try {
+    if (hasGit) {
+      const top = await git(path, ["rev-parse", "--show-toplevel"]);
+      if (realpathSync(top.trim()) !== path) return experimentError("REPOSITORY_ROOT_REQUIRED", 422);
+    } else {
+      if (info(gitPath)) return experimentError("EXPERIMENT_DISCOVERY_UNAVAILABLE", 409);
+      try { await git(stage, ["init", "--initial-branch=main"]); }
+      catch { return experimentError("EXPERIMENT_GIT_INIT_FAILED", 422); }
+    }
+
+    const latest = resolveCandidate();
+    if (latest.experiment) return { experiment: latest.experiment, repository: latest.repository! };
+    const current = info(path);
+    if (!latest.candidate || latest.candidate.has_git !== hasGit ||
+        !current?.isDirectory() || current.dev !== original.dev || current.ino !== original.ino ||
+        realpathSync(path) !== path || (!hasGit && info(gitPath))) {
+      return experimentError("EXPERIMENT_DISCOVERY_UNAVAILABLE", 409);
+    }
+    const repository = latest.repository ?? {
+      ...repositoryInputSchema.parse({ path, name: name.trim().slice(0, 120) || undefined }),
+      repository_id: `repo_${randomUUID()}`, project_id: projectId, bound_at: new Date().toISOString(),
+    };
+    const experiment = { direction_id, scheme_id, title: name, repository_id: repository.repository_id };
+    writeFileSync(join(stage, "README.md"), `# ${name}\n`, { flag: "wx" });
+    writeFileSync(join(stage, ".experiment-code.json"),
+      JSON.stringify({ repository_id: repository.repository_id }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+    store.db.transaction(() => {
+      if (!hasGit) {
+        mkdirSync(gitPath);
+        ownsGit = true;
+        renameSync(join(stage, ".git"), gitPath);
+      }
+      if (!latest.repository) store.saveRepository(repository, false);
+      mkdirSync(archive);
+      published = true;
+      renameSync(stage, archive);
+    })();
+    return { experiment, repository };
+  } catch (error) {
+    if (published) rmSync(archive, { recursive: true });
+    if (ownsGit) rmSync(gitPath, { recursive: true });
+    throw error;
+  } finally {
+    if (info(stage)) rmSync(stage, { recursive: true });
+  }
+}
+
 export function setExperimentCode(root: string, input: z.infer<typeof experimentCatalogUpdate>) {
   assertExperimentScheme(root, input.direction_id, input.scheme_id);
   const path = join(root, "experiments", input.direction_id, input.scheme_id, ".experiment-code.json");

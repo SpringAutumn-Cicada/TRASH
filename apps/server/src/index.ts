@@ -558,7 +558,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if (codeTask[2] === "cancel") codeAgent.cancel(projectId, codeTask[1]); else codeAgent.acknowledge(projectId, codeTask[1]);
       sendJson(response, 200, { accepted: true }); return;
     }
-    if (codeAgent.busy(projectId) && ((subpath.startsWith("repository") && method !== "GET") || ((subpath === "experiment-runs" || /^experiment-runs\/[^/]+\/retry$/.test(subpath)) && method === "POST"))) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
+    if (codeAgent.busy(projectId) && (((subpath.startsWith("repository") || subpath === "experiment-catalog/register") && method !== "GET") || ((subpath === "experiment-runs" || /^experiment-runs\/[^/]+\/retry$/.test(subpath)) && method === "POST"))) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
     if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson,files)) return;
     if (subpath === "overview" && method === "GET") {
       sendJson(response, 200, projectOverview(store, projectId));
