@@ -115,6 +115,11 @@ export class KnowledgeStore {
       if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id=?").get(projectId)) fail("PROJECT_NOT_FOUND", 404);
       const content = parseKnowledge(kind, input.content);
       this.validateRefs(projectId, kind, content);
+      if (kind === "experiment-result" && "comparison" in content && content.comparison) {
+        const {object_id, version} = content.comparison;
+        if (object_id === input.object_id || !this.get(projectId, "experiment-result", object_id, version))
+          fail("COMPARISON_INVALID", 400);
+      }
       if (kind === "literature-card" && "source_id" in content) {
         const sourceRow = this.db.prepare("SELECT data FROM sources WHERE source_id=? AND project_id=?").get(content.source_id,projectId) as {data:string};
         const hash = (JSON.parse(sourceRow.data) as {imported_file_sha256?:string}).imported_file_sha256;

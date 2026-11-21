@@ -247,3 +247,6 @@
 .experiment-method .json-editor { box-sizing: border-box; width: 100%; resize: vertical; }
 .experiment-method > .knowledge-toolbar { margin-top: .75rem; }
 .experiment-method .chat-markdown, .experiment-method pre { overflow-wrap: anywhere; }
+
+.result-interpretation { display: grid; gap: .75rem; min-width: 0; border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; }
+.result-interpretation legend { padding-inline: .35rem; font-weight: 600; }

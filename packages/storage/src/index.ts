@@ -178,7 +178,7 @@ export class TrashStore {
       INSERT INTO knowledge_task_summaries(task_id,${summaryFields.join(",")})
       ${selectTaskSummary} WHERE task_id=NEW.task_id
       ON CONFLICT(task_id) DO UPDATE SET ${summaryFields.map(field => `${field}=excluded.${field}`).join(", ")};`;
-    if (version < 6) this.db.exec(`
+    if (version < 7) this.db.exec(`
       BEGIN EXCLUSIVE;
       DROP TRIGGER IF EXISTS task_summary_insert;
       DROP TRIGGER IF EXISTS task_summary_update;

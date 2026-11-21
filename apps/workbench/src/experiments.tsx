@@ -329,7 +329,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
         onPlan={snapshot=>onNavigate("experiments",{tab:"runs",action:"reproduction-plan",focus:snapshot.snapshot_id,experiment:experimentKey?"reproduction:"+snapshot.reproduction_id:undefined})}/>
     </div>}
     {section==="datasets"&&<div className="data-page"><DatasetsPanel projectId={projectId}/></div>}
-    {section==="results"&&<div className="data-page"><ExperimentalDataPanel projectId={projectId} active onNavigate={onNavigate} action={action} focusId={focusId} status={status}/></div>}
+    {section==="results"&&<div className="data-page"><ExperimentalDataPanel projectId={projectId} runs={runs} active onNavigate={onNavigate} action={action} focusId={focusId} status={status}/></div>}
     {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}{notice&&<div role="status" className="notice">{notice}</div>}
     {section==="code"&&!experimentKey&&repositoryList.length>0&&<div className="knowledge-toolbar">
       <label>代码仓库 <select aria-label="选择代码仓库" value={repo?.repository_id??""} disabled={busy} onChange={event=>{if(commitMessage&&!window.confirm("放弃未提交的说明并切换仓库吗？"))return;setSelectedRepositoryId(event.target.value);setRepoInfo(undefined);setHistory([]);setHistoryPage(1);setCommitMessage("");}}>{repositoryList.map(item=><option key={item.repository_id} value={item.repository_id}>{item.name??item.path}{item.repository_id===defaultRepositoryId?" · 默认":""}</option>)}</select></label>
