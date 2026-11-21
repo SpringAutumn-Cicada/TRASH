@@ -1,3 +1,4 @@
+import { assertExperimentScheme, saveRunArchive } from './run-archive.js';
 import { projectRuntime } from "../project-layout.js";
 import { discoverComputeResources, assertComputeSelection } from './compute-resources.js';
 import { ExperimentFailureAnalysis } from './experiment-failure-analysis.js';
@@ -43,7 +44,15 @@ export class ExperimentService {
     const current=this.data.run(run.project_id,run.run_id);
     if(current.status==="cancel_requested"&&!terminal.includes(state))state="cancel_requested";
     if(current.status!==state||current.error!==error)this.data.event(run.run_id,state,error??state);
-    run.status=state;run.error=error;this.data.saveRun(run);
+    run.status=state;run.error=error;this.saveRun(run);
+  }
+  private saveRun(run:ExperimentRun){
+    run.updated_at=new Date().toISOString();
+    try{
+      run.archive_path=saveRunArchive(join(this.store.root,'projects',run.project_id),run);
+      run.archive_error=undefined;
+    }catch(error){run.archive_error=error instanceof Error&&error.message==='RUN_ARCHIVE_CONFLICT'?'运行档案路径冲突。':'无法更新运行档案，请检查实验目录。';}
+    this.data.saveRun(run);
   }
   async diagnostics(projectId:string,profileId:string):Promise<Record<string,unknown>>{
     const profile=this.data.profile(projectId,profileId),remote=await this.ssh.connect(profile);
@@ -64,10 +73,16 @@ export class ExperimentService {
     const content=experimentPlanInputSchema.parse(input),profile=this.data.profile(projectId,content.profile_id);
     const reproduction=content.code_source==="reproduction"?this.reproductions.snapshotInfo(projectId,content.snapshot_id!):undefined;
     if(reproduction&&reproduction.reproduction_id!==content.reproduction_id)experimentError("SNAPSHOT_MISMATCH",409);
-    const repo=reproduction?{repository_id:reproduction.reproduction_id,project_id:projectId,path:"",bound_at:reproduction.created_at}:this.repository.bound(projectId);
+
     const previous=id?this.data.plans(projectId).filter(p=>p.plan_id===id).sort((a,b)=>b.version-a.version)[0]:undefined;
     if(id&&!previous)experimentError("EXPERIMENT_PLAN_NOT_FOUND",404);
     if((previous?.version??0)!==baseVersion)experimentError("VERSION_CONFLICT",409);
+    if(content.direction_id&&content.scheme_id)assertExperimentScheme(join(this.store.root,'projects',projectId),content.direction_id,content.scheme_id);
+    const repo=reproduction
+      ? {repository_id:reproduction.reproduction_id,project_id:projectId,path:"",bound_at:reproduction.created_at}
+      : this.repository.bound(projectId,content.repository_id??(previous&&!previous.reproduction?previous.repository.repository_id:undefined));
+    if(!reproduction)content.repository_id=repo.repository_id;
+
     const datasets=content.dataset_ids.map(key=>this.data.datasets(projectId).find(d=>d.dataset_id===key)??experimentError("DATASET_NOT_FOUND",404));
     if(datasets.some(d=>d.transfer_status&&d.transfer_status!=="ready"))experimentError("DATASET_NOT_READY",409);
     if(content.data_mappings?.some(mapping=>!datasets.some(dataset=>dataset.dataset_id===mapping.dataset_id)))experimentError('DATASET_MAPPING_INVALID',400);
@@ -76,8 +91,7 @@ export class ExperimentService {
   }
   async preflight(plan:ExperimentPlanVersion):Promise<Record<string,unknown>>{
     if(plan.reproduction)await this.reproductions.bundle(plan.project_id,plan.reproduction);
-    else {const bound=this.repository.bound(plan.project_id);if(bound.repository_id!==plan.repository.repository_id)experimentError("REPOSITORY_BINDING_CHANGED",409);
-    await this.repository.preflight(plan.project_id,plan.content.commit_sha);}
+    else await this.repository.preflight(plan.project_id,plan.content.commit_sha,plan.repository.repository_id);
     const profile=this.data.profile(plan.project_id,plan.profile.profile_id);
     if(JSON.stringify(profile)!==JSON.stringify(plan.profile))experimentError("SSH_PROFILE_CHANGED",409);
     const remote=await this.ssh.connect(profile);
@@ -112,7 +126,7 @@ export class ExperimentService {
     if(!input.preparation&&plan.content.preparation_script&&!this.data.runs(projectId).some(r=>r.preparation&&r.status==="completed"&&r.exit_code===0&&r.plan.plan_id===plan.plan_id&&r.plan.version===plan.version))experimentError("PREPARATION_REQUIRED",409);
     const id=`run_${randomUUID()}`,at=new Date().toISOString();
     const run:ExperimentRun={run_id:id,project_id:projectId,profile_id:plan.profile.profile_id,host_key:this.hostKey(plan.profile),plan,idempotency_key:input.idempotency_key,status:"queued",remote_dir:this.workspaces.get(projectId,plan.profile.profile_id)?posix.join(this.workspaces.get(projectId,plan.profile.profile_id)!.root,"outputs",plan.reproduction?"reproductions":"experiments",directoryLabel(plan.reproduction?.name??plan.content.method),id):posix.join(plan.profile.remote_root,projectId,id),token:randomUUID(),created_at:at,updated_at:at,artifacts:[],preparation:input.preparation,...(retryOf?{retry_of:retryOf}:{})};
-    this.data.saveRun(run);this.data.event(id,"queued",input.preparation?"已单独授权环境准备脚本":"已确认代码版本、命令、时限与同步范围");void this.tick();return run;
+    this.saveRun(run);this.data.event(id,"queued",input.preparation?"已单独授权环境准备脚本":"已确认代码版本、命令、时限与同步范围");void this.tick();return run;
   }
   private async tick():Promise<void>{
     if(this.closed)return;
@@ -130,7 +144,7 @@ export class ExperimentService {
     let remote:RemoteConnection|undefined;let bundle:Awaited<ReturnType<RepositoryService["bundle"]>>|undefined;let launchAttempted=false;
     try{
       this.mark(run,"preflight");const environment=await this.preflight(run.plan);
-      bundle=run.plan.reproduction?await this.reproductions.bundle(run.project_id,run.plan.reproduction):await this.repository.bundle(run.project_id,run.plan.content.commit_sha);
+      bundle=run.plan.reproduction?await this.reproductions.bundle(run.project_id,run.plan.reproduction):await this.repository.bundle(run.project_id,run.plan.content.commit_sha,run.plan.repository.repository_id);
       if(this.closed)return;
       remote=await this.ssh.connect(run.plan.profile);
       if(this.workspaces.get(run.project_id,run.profile_id))await ensureRemoteDirectory(remote,run.remote_dir);
@@ -140,7 +154,7 @@ export class ExperimentService {
       const manifest={run_id:run.run_id,token:run.token,runner_version:RUNNER_VERSION,bundle_sha256:bundle.sha256,...run.plan.content,...(run.plan.reproduction?{code_snapshot:run.plan.reproduction}:{}),preparation:run.preparation,datasets:run.plan.datasets};
       await remote.write(posix.join(run.remote_dir,"manifest.json"),JSON.stringify(manifest));await remote.write(posix.join(run.remote_dir,"environment.json"),JSON.stringify(environment));await remote.write(posix.join(run.remote_dir,"runner","runner.py"),REMOTE_RUNNER);
       const local=projectRuntime(this.store.root,run.project_id,'experiment-runs',run.run_id);await mkdir(local,{recursive:true});await writeFile(join(local,"manifest.json"),JSON.stringify(manifest,null,2),{mode:0o600});
-      if(this.data.run(run.project_id,run.run_id).status==="cancel_requested"){run.status="cancelled";this.data.saveRun(run);return;}
+      if(this.data.run(run.project_id,run.run_id).status==="cancel_requested"){run.status="cancelled";this.saveRun(run);return;}
       if(this.closed)return;
       // Persist before launching: a lost acknowledgement must never cause another launch.
       this.mark(run,"running");launchAttempted=true;
@@ -168,7 +182,7 @@ export class ExperimentService {
       if(terminal.includes(status.state)){
         this.mark(run,"collecting");await this.collect(run,remote);
         // Remote completion is authoritative, including a natural completion racing cancellation.
-        run.status=status.state as ExperimentRunState;run.failure_analysis=this.data.run(run.project_id,run.run_id).failure_analysis;run.error=status.reason??undefined;this.data.saveRun(run);
+        run.status=status.state as ExperimentRunState;run.failure_analysis=this.data.run(run.project_id,run.run_id).failure_analysis;run.error=status.reason??undefined;this.saveRun(run);
         this.data.event(run.run_id,run.status,run.collection_status??"运行结束");
         if(run.plan.content.execution_steps&&(run.status==='failed'||(run.status==='completed'&&!run.result_id&&run.plan.content.result_collection?.mode!=='none')))this.failureAnalyses.start(run.project_id,run.run_id);
       }else this.mark(run,current.status==="cancel_requested"?"cancel_requested":"running");
@@ -193,7 +207,7 @@ export class ExperimentService {
       return {text:redact(bytes.toString()),offset:start+bytes.length,rotated:info.rotated||start!==offset};
     }finally{remote.close();}
   }
-  async collectAgain(projectId:string,id:string):Promise<ExperimentRun>{const run=this.data.run(projectId,id);if(this.data.active(run))experimentError("EXPERIMENT_ACTIVE",409);const remote=await this.ssh.connect(run.plan.profile);try{await this.collect(run,remote);run.failure_analysis=this.data.run(projectId,id).failure_analysis;this.data.saveRun(run);return run;}finally{remote.close();}}
+  async collectAgain(projectId:string,id:string):Promise<ExperimentRun>{const run=this.data.run(projectId,id);if(this.data.active(run))experimentError("EXPERIMENT_ACTIVE",409);const remote=await this.ssh.connect(run.plan.profile);try{await this.collect(run,remote);run.failure_analysis=this.data.run(projectId,id).failure_analysis;this.saveRun(run);return run;}finally{remote.close();}}
   private async collect(run:ExperimentRun,remote:RemoteConnection):Promise<void>{
     const output=await remote.exec([run.plan.content.python,posix.join(run.remote_dir,"runner","runner.py"),"collect",run.remote_dir]);const items=artifactListSchema.parse(JSON.parse(output));let total=0;const previous=new Map(run.artifacts.map(a=>[a.path,a]));const collected:ExperimentRun["artifacts"]=[];
     for(const item of items){
@@ -204,7 +218,7 @@ export class ExperimentService {
       const bytes=await remote.read(posix.join(run.remote_dir,item.path),Math.max(1,item.size_bytes));
       if(bytes.length!==item.size_bytes||createHash("sha256").update(bytes).digest("hex")!==item.sha256)experimentError("ARTIFACT_HASH_MISMATCH",409);
       const artifact=this.store.saveArtifact(run.project_id,item.path.replace(/\//g,"-"),item.path.endsWith(".json")?"application/json":"application/octet-stream",bytes);total+=bytes.length;const saved={...item,downloaded:true,artifact_id:artifact.artifact_id};collected.push(saved);previous.set(item.path,saved);run.artifacts=[...previous.values()];
-      this.data.saveRun(run);
+      this.saveRun(run);
     }
     run.artifacts=collected;
     run.collection_status=run.artifacts.some(a=>!a.downloaded)?"部分大文件仅保留远端引用":"产物已收集";
@@ -228,8 +242,8 @@ export class ExperimentService {
     if(run.plan.reproduction)environment={...environment,code_snapshot:run.plan.reproduction};
     this.store.db.transaction(()=>{
       const knowledge=new KnowledgeStore(this.store.db);const existing=knowledge.list(run.project_id,"experiment-result").find(v=>"external_run_id" in v.content&&v.content.external_run_id===run.run_id);
-      if(existing){run.result_id=existing.object_id;run.metrics_status="已登记结果";this.data.saveRun(run);return;}
-      const result=knowledge.write(run.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:run.plan.content.title,method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(", "),dataset_version:run.plan.datasets.map(d=>d.version).join(", "),evaluation_protocol:run.plan.content.evaluation_protocol,config:{...run.plan.content.config,...(run.plan.content.execution_mode?{_trash_execution:{processing_method:run.plan.content.processing_method,mode:run.plan.content.execution_mode,model_source:run.plan.content.model_source,model_input_kind:run.plan.content.model_input_kind}}:{})},environment,...(run.started_at?{run_at:run.started_at}:{}),seed:run.plan.content.seed,...(!run.plan.reproduction?{git_commit:run.plan.content.commit_sha}:{}),plan_version:`${run.plan.plan_id}:${run.plan.version}`,external_run_id:run.run_id,metrics,...evaluationExtras,attachments:run.artifacts.map(a=>({name:a.path,uri:a.artifact_id?`/api/v1/projects/${run.project_id}/experiment-artifacts/${run.run_id}/${a.artifact_id}`:`ssh://${run.plan.profile.host}:${run.plan.profile.port}${run.remote_dir}/${a.path}`,sha256:a.sha256})),notes:"由远程实验收集，待研究者审阅"}},"agent");run.result_id=result.object_id;run.metrics_status="已登记待审结果";this.data.saveRun(run);
+      if(existing){run.result_id=existing.object_id;run.metrics_status="已登记结果";this.saveRun(run);return;}
+      const result=knowledge.write(run.project_id,"experiment-result",{base_version:0,content:{schema_version:1,title:run.plan.content.title,method:run.plan.content.method,dataset:run.plan.datasets.map(d=>d.name).join(", "),dataset_version:run.plan.datasets.map(d=>d.version).join(", "),evaluation_protocol:run.plan.content.evaluation_protocol,config:{...run.plan.content.config,...(run.plan.content.execution_mode?{_trash_execution:{processing_method:run.plan.content.processing_method,mode:run.plan.content.execution_mode,model_source:run.plan.content.model_source,model_input_kind:run.plan.content.model_input_kind}}:{})},environment,...(run.started_at?{run_at:run.started_at}:{}),seed:run.plan.content.seed,...(!run.plan.reproduction?{git_commit:run.plan.content.commit_sha}:{}),plan_version:`${run.plan.plan_id}:${run.plan.version}`,external_run_id:run.run_id,metrics,...evaluationExtras,attachments:run.artifacts.map(a=>({name:a.path,uri:a.artifact_id?`/api/v1/projects/${run.project_id}/experiment-artifacts/${run.run_id}/${a.artifact_id}`:`ssh://${run.plan.profile.host}:${run.plan.profile.port}${run.remote_dir}/${a.path}`,sha256:a.sha256})),notes:"由远程实验收集，待研究者审阅"}},"agent");run.result_id=result.object_id;run.metrics_status="已登记待审结果";this.saveRun(run);
     })();
   }
 }

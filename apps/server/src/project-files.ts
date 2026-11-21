@@ -40,6 +40,7 @@ export class ProjectFiles {
     path=libraryLogicalPath(path);
     if(path==='abstract-library')return true;
     const parts=path.split('/').filter(Boolean);
+    if(parts[0]==='experiments'&&parts[3]==='runs'&&(/^run_[a-f0-9-]+$/.test(parts[4]??''))&&[5,6,7].includes(parts.length))return parts.length===5||['run.json','run-config.json','index.json'].includes(parts.at(-1)??'');
     if(parts[0]==='manuscript'&&(parts.length===1||parts.length===3&&parts[2]==='paper.yaml'))return true;
     return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }

@@ -13,6 +13,9 @@ export const datasetInputSchema = z.object({ name: text, version: text, path: re
 export type DatasetRef = z.infer<typeof datasetInputSchema> & { dataset_id: string; project_id: string; verification_status: "unverified" | "verified"; verified_at?: string; verification_progress?: {status:"running"|"completed"|"failed"|"unavailable";checked:number;total:number;message:string}; transfer_status?:"uploading"|"ready"|"failed"|"cancelled"|"interrupted";transfer_stage?:string;transfer_request_id?:string;transfer_sent?:number;transfer_total?:number;transfer_message?:string };
 export const experimentPlanInputSchema = z.object({
   title: text, purpose: z.string().max(20000), method: text, baseline: z.string().max(2000).default(""), evaluation_protocol: z.string().max(20000),
+  repository_id:text.optional(),
+  direction_id:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
+  scheme_id:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
   code_source:z.enum(["git","reproduction"]).default("git"), reproduction_id:text.optional(), snapshot_id:text.optional(),
   deployed_directory:remotePathSchema.optional(),
   data_mappings:z.array(z.object({path:outputPathSchema,dataset_id:text,subpath:executionRelativePathSchema.optional()}).strict()).max(30).optional(),
@@ -30,6 +33,8 @@ export const experimentPlanInputSchema = z.object({
   metrics_path: outputPathSchema.default("outputs/metrics.json"), expected_metrics: z.array(z.object({ name: text, unit: z.string().max(100) }).strict()).max(100),
   artifact_paths: z.array(outputPathSchema).max(100).default([]), preparation_script: outputPathSchema.optional()
 }).strict().superRefine((input, ctx) => {
+  if(Boolean(input.direction_id)!==Boolean(input.scheme_id))ctx.addIssue({code:z.ZodIssueCode.custom,path:["scheme_id"],message:"方向及方案目录必须一同填写"});
+  if(input.code_source==="reproduction"&&input.repository_id)ctx.addIssue({code:z.ZodIssueCode.custom,path:["repository_id"],message:"复现应选择快照"});
   if(input.code_source==="git"&&!commitShaSchema.safeParse(input.commit_sha).success)ctx.addIssue({code:z.ZodIssueCode.custom,path:["commit_sha"],message:"实验代码需要完整 commit"});
   if(input.code_source==="reproduction"&&(!input.reproduction_id||!input.snapshot_id))ctx.addIssue({code:z.ZodIssueCode.custom,path:["snapshot_id"],message:"请选择复现代码快照"});
   if(input.deployed_directory&&input.code_source!=='reproduction')ctx.addIssue({code:z.ZodIssueCode.custom,path:['deployed_directory'],message:'仅复现代码可复用部署目录'});
@@ -44,7 +49,7 @@ export const experimentRunStateSchema = z.enum(["queued", "preflight", "syncing"
 export type ExperimentRunState = z.infer<typeof experimentRunStateSchema>;
 export const ACTIVE_EXPERIMENT_STATES = ["queued", "preflight", "syncing", "running", "collecting", "cancel_requested", "disconnected", "unknown_remote_state"] as const;
 export interface ExperimentArtifact { path: string; size_bytes: number; sha256: string; downloaded: boolean; artifact_id?: string; reason?: string }
-export interface ExperimentRun { failure_analysis?:{status:"analyzing"|"completed"|"failed";created_at:string;summary?:string;evidence?:string[];suggestions?:string[];uncertainties?:string[];error?:string}; run_id: string; project_id: string; profile_id: string; host_key: string; plan: ExperimentPlanVersion; idempotency_key: string; status: ExperimentRunState; remote_dir: string; token: string; created_at: string; updated_at: string; started_at?: string; finished_at?: string; exit_code?: number; error?: string; process_status?: string; collection_status?: string; metrics_status?: string; result_id?: string; artifacts: ExperimentArtifact[]; retry_of?: string; preparation: boolean; remote_status?: Record<string, unknown> }
+export interface ExperimentRun { archive_path?:string; archive_error?:string; failure_analysis?:{status:"analyzing"|"completed"|"failed";created_at:string;summary?:string;evidence?:string[];suggestions?:string[];uncertainties?:string[];error?:string}; run_id: string; project_id: string; profile_id: string; host_key: string; plan: ExperimentPlanVersion; idempotency_key: string; status: ExperimentRunState; remote_dir: string; token: string; created_at: string; updated_at: string; started_at?: string; finished_at?: string; exit_code?: number; error?: string; process_status?: string; collection_status?: string; metrics_status?: string; result_id?: string; artifacts: ExperimentArtifact[]; retry_of?: string; preparation: boolean; remote_status?: Record<string, unknown> }
 export const runSubmitSchema = z.object({ plan_id: text, version: z.number().int().positive(), idempotency_key: z.string().uuid(), confirm: z.literal(true), preparation: z.boolean().default(false) }).strict();
 
 export interface ReproductionCode {id:string;project_id:string;name:string;archive_name?:string;path:string;source_id?:string;source_url:string;notes:string;created_at:string;imported:boolean;upstream_commit?:string;uploads?:{profile_id:string;path:string;snapshot_id:string;sha256:string;at:string}[]}
