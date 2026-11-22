@@ -12,6 +12,7 @@ export async function uploadExperimentCode(service: ExperimentService, project: 
   profile_id: string;
   repository_id?: string;
   request_id: string;
+  expectedCommit?: string;
 }, notify?: UploadProgress, signal?: AbortSignal) {
   service.data.profile(project, input.profile_id);
   const workspace = service.workspaces.get(project, input.profile_id) ?? experimentError("WORKSPACE_REQUIRED", 409);
@@ -32,6 +33,7 @@ export async function uploadExperimentCode(service: ExperimentService, project: 
     report("snapshot");
     const repo = service.repository.bound(project, input.repository_id);
     const commit = (await git(repo.path, ["rev-parse", "HEAD"])).trim();
+    if(input.expectedCommit&&input.expectedCommit!==commit)experimentError("CHAT_DECISION_FILE_CHANGED",409);
     await service.repository.preflight(project, commit, repo.repository_id);
     const name = autoDLPaperDirectory(repo);
     const parent = posix.join(workspace.root, autoDLDirectories.paperCode);

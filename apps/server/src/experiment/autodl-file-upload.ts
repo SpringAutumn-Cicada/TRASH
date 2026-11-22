@@ -24,7 +24,7 @@ export function privateUploadPath(path: string) {
   );
 }
 
-function targetPath(root: string, path: string) {
+export function autoDLUploadPath(root: string, path: string) {
   const relative = path.startsWith("/") ? posix.relative(root, path) : path;
   if (!relative || privateUploadPath(relative) || path.replace(/^\//, "").split("/").some(part =>
     !part || part === "." || part === ".." || /[\\\x00-\x1f\x7f]/.test(part) || Buffer.byteLength(part) > 255
@@ -73,8 +73,8 @@ async function remoteHash(remote: RemoteConnection, path: string) {
 }
 
 export async function uploadAutoDLFile(remote: RemoteConnection, root: string, host: string, source: string,
-  destination: string, report: UploadProgress, signal: AbortSignal, checkWorkspace: () => void) {
-  const path = targetPath(root, destination);
+  destination: string, report: UploadProgress, signal: AbortSignal, checkWorkspace: () => void, expectedHash?: string) {
+  const path = autoDLUploadPath(root, destination);
   const key = host + "\0" + path;
   if (activeDestinations.has(key)) experimentError("AUTODL_UPLOAD_TARGET_BUSY", 409);
   activeDestinations.add(key);
@@ -88,6 +88,7 @@ export async function uploadAutoDLFile(remote: RemoteConnection, root: string, h
     directory = await mkdtemp(join(tmpdir(), "trash-autodl-upload-"));
     const file = join(directory, "file");
     const { sha256, size, mode } = await localSnapshot(source, file, signal);
+    if(expectedHash&&expectedHash!==sha256)experimentError("CHAT_DECISION_FILE_CHANGED",409);
     stopped();checkWorkspace();
     if (!await remoteDirectoryExists(remote, root)) experimentError("WORKSPACE_REQUIRED", 409);
     const parent = posix.dirname(path);

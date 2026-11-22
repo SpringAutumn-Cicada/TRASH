@@ -433,6 +433,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-choice"){
         sendJson(response,200,codeAgent.requestChoice(projectId,token,body));return;
       }
+      if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-git-autodl-choice"){
+        sendJson(response,200,await codeAgent.requestGitUploadChoice(projectId,token,body));return;
+      }
       if (body && typeof body === "object" && "operation" in body && body.operation === "load-chat-skill") {
         sendJson(response, 200, codeAgent.loadChatSkill(projectId, token, body)); return;
       }
