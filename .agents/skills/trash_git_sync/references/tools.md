@@ -17,7 +17,7 @@
 ```
 
 ```json
-{"operation":"git-sync-upload","profile_id":"ssh_…","commit":"完整的提交SHA","confirm":true}
+{"operation":"request-git-sync-choice","profile_id":"ssh_…","commit":"完整的提交SHA"}
 ```
 
 ```json
