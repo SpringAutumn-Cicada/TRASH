@@ -8,3 +8,8 @@
 .coord-row>div { min-width:0; overflow-wrap:anywhere; }
 .coord-row small,.coord-section>p { color:var(--muted); font-size:.8rem; }
 .coord-row small { margin-top:.25rem; }
+.coord-section form { display:grid; gap:.5rem; justify-items:end; }
+.coord-section textarea { box-sizing:border-box; width:100%; min-height:4.4rem; padding:.75rem; resize:vertical; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:.65rem; font:inherit; }
+.coord-transcript { max-height:26rem; overflow:auto; }
+.coord-transcript article { border-top:1px solid var(--line); padding:.6rem 0; }
+.coord-transcript p,.coord-row p { white-space:pre-wrap; overflow-wrap:anywhere; margin:.3rem 0 .7rem; }

@@ -11,6 +11,8 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
   const url="/projects/"+encodeURIComponent(projectId)+"/coordination";
   const [data,setData]=useState<CoordinationView>();
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[manage,setManage]=useState(false);
+  const [prompt,setPrompt]=useState("");
+  const requestId=useRef(crypto.randomUUID());
   const revision=useRef(0);
   async function refresh() {
     const version=++revision.current;
@@ -27,6 +29,21 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
   }
   return <section className="coordination-panel">
     {error&&<p className="notice error-notice" role="alert">{error}</p>}
+    <section className="coord-section"><header><h3>协调对话</h3></header>
+      <div className="coord-transcript" role="log">{data?.messages.map(m=><article key={m.id}>
+        <strong>{m.summary?"实验汇总":"你"}</strong><p>{m.prompt}</p>
+        <strong>实验协调</strong><p>{m.response||m.error||states[m.status]}</p>
+      </article>)}</div>
+      <form onSubmit={async e=>{e.preventDefault();if(!prompt.trim()||busy)return;
+        if(await act({action:"message",id:requestId.current,instructions:prompt.trim()})){setPrompt("");requestId.current=crypto.randomUUID();}
+      }}><textarea aria-label="协调指令" placeholder="安排论文实验，或询问当前进度…" maxLength={30000} value={prompt}
+        onChange={e=>{setPrompt(e.target.value);requestId.current=crypto.randomUUID();}} disabled={busy}/>
+        <button className="primary-button" disabled={busy||!data||!prompt.trim()||data.messages.some(m=>["running","queued","cancelling"].includes(m.status))}>发送</button></form>
+    </section>
+    {!!data?.jobs.length&&<section className="coord-section"><header><h3>协调任务</h3></header>{data.jobs.map(job=><div className="coord-row" key={job.id}>
+      <div><strong>{job.title}</strong><p>{job.instructions}</p><small>{job.reason||"已投递"}</small></div>
+      {job.status==="waiting"&&<button className="text-button" disabled={busy} onClick={()=>void act({action:"withdraw",id:job.id})}>撤回</button>}
+    </div>)}</section>}
     <section className="coord-section"><header><h3><MessagesSquare size={18}/>参与对话</h3>
       <button type="button" className="secondary-button" aria-expanded={manage} onClick={()=>setManage(!manage)}><Settings2 size={14}/>{manage?"完成":"管理对话"}</button></header>
       {data?.conversations.filter(s=>manage||s.joined).map(s=><div className="coord-row" key={s.id}>

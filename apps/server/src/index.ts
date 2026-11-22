@@ -434,8 +434,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
-      codeAgent.authorizeTool(projectId, token);
+      const task=codeAgent.toolTask(projectId,token);
       const body = await readJson(request);
+      const op=body&&typeof body==="object"&&"operation" in body?String(body.operation):"";
+      if(op.startsWith("coordination-") || task.coordination&&task.coordination.kind!=="assignment"){
+        sendJson(response,200,await coordination.tool(projectId,task,body)); return;
+      }
       if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-choice"){
         sendJson(response,200,codeAgent.requestChoice(projectId,token,body));return;
       }
@@ -920,9 +924,10 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
       if(tracked){const count=(workspaces.requests.get(tracked)??1)-1;if(count)workspaces.requests.set(tracked,count);else workspaces.requests.delete(tracked);}
     });
   });
+  server.on("listening",()=>{const address=server.address();if(address&&typeof address!=="string")coordination.listen(address.port);});
   // Streaming datasets can reach 5 GiB; retain a bounded receive deadline for slow uploads.
   server.requestTimeout = 2 * 60 * 60 * 1000;
-  server.on("close", () => { closeTaskStreams(store);closeProjectStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
-  return { server, store, closeConnections: () => {closeTaskStreams(store);closeProjectStreams(store);workspaces.close();experiments.terminals.close();} };
+  server.on("close", () => { coordination.close();closeTaskStreams(store);closeProjectStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
+  return { server, store, closeConnections: () => {coordination.close();closeTaskStreams(store);closeProjectStreams(store);workspaces.close();experiments.terminals.close();} };
 }
 
