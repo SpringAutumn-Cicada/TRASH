@@ -191,6 +191,12 @@ export class CodeAgent {
     const input=z.object({operation:z.enum(['paper-code-list','paper-code-read']),paper_id:manuscriptId.optional(),path:z.string().max(4096).optional()}).strict().parse(body);
     if(input.operation==='paper-code-list'&&!input.paper_id&&!input.path)
       return {papers:this.writeTargets(project,this.files).papers.filter(paper=>paper.repository_path)};
+    if(!input.paper_id&&input.path){
+      const path=input.path;
+      if(!(path==='code/papers'||path.startsWith('code/papers/'))||path.split('/').includes('.git'))
+        experimentError('REPOSITORY_PATH_INVALID',403);
+      return input.operation==='paper-code-list'?this.files.list(project,path,false):this.files.preview(project,path);
+    }
     if(!input.paper_id||input.operation==='paper-code-read'&&!input.path)experimentError('INVALID_REQUEST',400);
     this.files.manuscriptPath(project,input.paper_id);
     const repo=this.experiments.repository.forPaper(project,input.paper_id);
