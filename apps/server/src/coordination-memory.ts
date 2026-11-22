@@ -37,6 +37,9 @@ export class CoordinationMemory {
       CREATE TABLE IF NOT EXISTS coordination_page_versions (
       project TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,data TEXT NOT NULL,
       PRIMARY KEY(project,id,revision),FOREIGN KEY(project,id) REFERENCES coordination_pages(project,id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS coordination_notes (
+      project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,origin TEXT NOT NULL,key TEXT NOT NULL,
+      id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(project,origin,key));
       CREATE TABLE IF NOT EXISTS coordination_evidence (
       project TEXT NOT NULL,page TEXT NOT NULL,receipt TEXT NOT NULL,job TEXT NOT NULL,turn TEXT,observed TEXT NOT NULL,
       note TEXT NOT NULL,PRIMARY KEY(project,receipt),FOREIGN KEY(project,page) REFERENCES coordination_pages(project,id) ON DELETE CASCADE);
@@ -47,8 +50,9 @@ export class CoordinationMemory {
   }
   list(project:string,q="",offset=0){
     const rows=this.store.db.prepare(`SELECT ${header} FROM coordination_pages WHERE project=? AND
-      instr(lower(title||' '||body||' '||source||' '||id||' '||coalesce(repository,'')),lower(?))>0
-      ORDER BY archived,updated DESC,id LIMIT 31 OFFSET ?`).all(project,q,offset) as CoordinationMemoryHeader[];
+      (instr(lower(title||' '||body||' '||source||' '||id||' '||coalesce(repository,'')),lower(?))>0 OR EXISTS
+      (SELECT 1 FROM coordination_evidence e WHERE e.project=coordination_pages.project AND e.page=coordination_pages.id AND instr(lower(e.note||' '||e.job||' '||e.turn),lower(?))>0))
+      ORDER BY archived,updated DESC,id LIMIT 31 OFFSET ?`).all(project,q,q,offset) as CoordinationMemoryHeader[];
     return {pages:rows.slice(0,30).map(r=>({...r,archived:!!r.archived})),next_offset:rows.length>30?offset+30:null};
   }
   page(project:string,id:string,revision?:number):CoordinationMemoryPage{
@@ -81,6 +85,24 @@ export class CoordinationMemory {
       this.enqueue(project,"index.md","# 协调项目记忆\n\n"+links.join("\n")+"\n");
     }).immediate();
     return this.page(project,id);
+  }
+  record(project:string,origin:string,body:unknown,job?:CoordinationJob){
+    const input=z.object({kind:z.enum(["decision","lesson"]),key:z.string().trim().min(1).max(100),
+      title:memoryEdit.shape.title,observation:z.string().trim().min(1).max(2200),scope:z.string().trim().min(1).max(1000),
+      limitation:z.string().trim().min(1).max(1000),supersedes:z.string().uuid().optional()}).parse(body);
+    const fingerprint=digest(JSON.stringify([input,job?.id]));
+    return this.store.db.transaction(()=>{
+      const old=this.store.db.prepare("SELECT id,fingerprint FROM coordination_notes WHERE project=? AND origin=? AND key=?").get(project,origin,input.key) as {id:string;fingerprint:string}|undefined;
+      if(old){if(old.fingerprint!==fingerprint)experimentError("IDEMPOTENCY_CONFLICT",409);return {id:old.id};}
+      if(input.supersedes)this.page(project,input.supersedes);
+      const id=randomUUID(),source="协调请求 "+origin+(job?" · 成员任务 "+job.id+" · "+(job.reply_task_id??job.task_id):"");
+      const sections=[input.kind==="decision"?"## 决策建议":"## 实验经验",input.observation,"## 适用范围",input.scope,"## 局限与反例",input.limitation];
+      if(input.supersedes)sections.push("## 替代的记录",input.supersedes);
+      this.save(project,{id,expected:0,title:input.title,archived:false,body:sections.join("\n\n")},input.kind,source,
+        job?{id:job.conversation,repository_id:job.repository_id}:undefined);
+      this.store.db.prepare("INSERT INTO coordination_notes VALUES (?,?,?,?,?)").run(project,origin,input.key,id,fingerprint);
+      return {id};
+    }).immediate();
   }
   evidence(project:string,id:string,offset=0){
     const rows=this.store.db.prepare("SELECT receipt,job,turn,observed,note FROM coordination_evidence WHERE project=? AND page=? ORDER BY observed DESC,rowid DESC LIMIT 11 OFFSET ?").all(project,id,offset) as {receipt:string;job:string;turn:string|null;observed:string;note:string}[];

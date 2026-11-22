@@ -341,6 +341,12 @@ export class ExperimentCoordination {
     const view=this.view(project);
     const root=task.coordination.origin??task.task_id;
     const scoped=task.coordination.origin?view.jobs.filter(job=>job.origin===root):view.jobs;
+    if(operation==="coordination-note"){
+      const {job_id}=z.object({job_id:z.string().uuid().optional()}).parse(body);
+      const job=job_id?scoped.find(j=>j.id===job_id):undefined;
+      if(job_id&&!job||!job&&task.coordination.kind==="summary")experimentError("COORDINATION_SOURCE_REQUIRED",422);
+      return this.memory.record(project,root,body,job);
+    }
     if(operation==="coordination-status"||operation==="coordination-jobs"){
       const {offset,origin,conversation}=z.object({offset:z.number().int().nonnegative().default(0),origin:z.string().optional(),conversation:z.string().optional()}).parse(body);
       const jobs=scoped.filter(j=>(operation==="coordination-jobs"||!j.finished)&&(!origin||j.origin===origin)&&(!conversation||j.conversation===conversation));
@@ -486,8 +492,11 @@ export class ExperimentCoordination {
     if(action==="memory-save"){
       const edit=memoryEdit.parse(body);
       const member=edit.conversation?this.view(project).conversations.find(m=>m.id===edit.conversation&&m.joined):undefined;
-      if(!edit.expected&&!member)experimentError("COORDINATION_TARGET_CHANGED",409);
-      const page=this.memory.save(project,edit,"direction","用户编辑",member);
+      const {kind,confirm_decision}=z.object({kind:z.enum(["direction","decision","lesson"]).default("direction"),confirm_decision:z.boolean().default(false)}).parse(body);
+      const type=edit.expected?this.memory.page(project,edit.id).kind:kind;
+      if(confirm_decision&&type!=="decision")experimentError("INVALID_REQUEST",400);
+      if(!edit.expected&&type==="direction"&&!member)experimentError("COORDINATION_TARGET_CHANGED",409);
+      const page=this.memory.save(project,edit,type,confirm_decision?"用户在项目记忆确认此版本":"用户编辑",member);
       return {page,conflicts:this.memory.flush(project)};
     }
     if(action==="message"){

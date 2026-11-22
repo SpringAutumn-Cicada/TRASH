@@ -1,5 +1,5 @@
 import { useEffect,useState } from "react";
-import type { CoordinationMemoryPage,CoordinationMemoryHeader,CoordinationMember } from "@trash/protocol";
+import type { CoordinationMemoryKind,CoordinationMemoryPage,CoordinationMemoryHeader,CoordinationMember } from "@trash/protocol";
 import { ChatMarkdown } from "./chat-markdown.js";
 import { api,uiError } from "./api.js";
 
@@ -10,26 +10,29 @@ export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:str
   const [q,query]=useState(""),[offset,setOffset]=useState(0),[index,setIndex]=useState<Index>();
   const [id,select]=useState(initialId??""),[detail,setDetail]=useState<Detail>(),[rev,setRev]=useState(0);
   const [edit,setEdit]=useState<CoordinationMemoryPage>(),[busy,setBusy]=useState(false),[error,setError]=useState(""),[tick,refresh]=useState(0);
+  const [kind,setKind]=useState<CoordinationMemoryKind>("direction");
+  const [compare,setCompare]=useState<CoordinationMemoryPage>();
+  const names={direction:"方向档案",decision:"决策记录",lesson:"实验经验"};
   const [member,setMember]=useState("");
   const base=url+"/memory",joined=members.filter(m=>m.joined);
   useEffect(()=>{let alive=true;
     api<Index>(base+"?"+new URLSearchParams({q,offset:String(offset)})).then(value=>{if(alive)setIndex(value);}).catch(e=>{if(alive)setError(uiError(e,"读取索引失败"));});
     return()=>{alive=false;};
   },[base,q,offset,tick]);
-  useEffect(()=>{let alive=true;setDetail(undefined);
+  useEffect(()=>{let alive=true;setDetail(undefined);setCompare(undefined);
     if(id)api<Detail>(base+"?id="+id+(rev?"&revision="+rev:"")).then(value=>{if(alive)setDetail(value);}).catch(e=>{if(alive)setError(uiError(e,"读取档案失败"));});
     return()=>{alive=false;};
   },[base,id,rev,tick]);
   const page=detail?.page;
   function create(){
     const m=joined.find(m=>m.id===member);
-    if(!m)return;
-    setEdit({id:crypto.randomUUID(),kind:"direction",conversation:m.id,repository:m.repository_id,title:m.title,revision:0,archived:false,body:"## 研究问题\n\n## 当前结论与依据\n\n## 待解决问题",source:"",updated:""});
+    if(kind==="direction"&&!m)return;
+    setEdit({id:crypto.randomUUID(),kind,conversation:m?.id??null,repository:m?.repository_id??null,title:kind==="direction"?m!.title:"",revision:0,archived:false,body:kind!=="direction"?"## 依据与结论\n\n## 适用范围\n\n## 局限与反例":"## 研究问题\n\n## 当前结论与依据\n\n## 待解决问题",source:"",updated:""});
   }
-  async function save(p:CoordinationMemoryPage){
+  async function save(p:CoordinationMemoryPage,confirmDecision=false){
     setBusy(true);setError("");
     try{
-      const result=await api<{page:CoordinationMemoryPage;conflicts:string[]}>(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"memory-save",id:p.id,title:p.title,expected:p.revision,archived:p.archived,conversation:p.conversation??undefined,body:p.body})});
+      const result=await api<{page:CoordinationMemoryPage;conflicts:string[]}>(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"memory-save",kind:p.kind,confirm_decision:confirmDecision,id:p.id,title:p.title,expected:p.revision,archived:p.archived,conversation:p.conversation??undefined,body:p.body})});
       if(result.conflicts.length)setError("版本已保存。以下 Markdown 有独立修改，已保留原文件："+result.conflicts.join("、"));
       setEdit(undefined);select(p.id);setRev(0);refresh(n=>n+1);
     }catch(e){setError(uiError(e,"保存失败，请核对当前版本"));}finally{setBusy(false);}
@@ -39,11 +42,12 @@ export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:str
     <aside className="coord-section"><header><h3>记忆索引</h3></header>
       <input aria-label="搜索项目记忆" placeholder="搜索方向、结论或来源" maxLength={300} value={q} onChange={e=>{query(e.target.value);setOffset(0);}}/>
       {index?.pages.map(p=><button className="memory-entry" key={p.id} disabled={!!edit} aria-current={id===p.id?"page":undefined} onClick={()=>{select(p.id);setRev(0);}}>
-        <strong>{p.title}</strong><small>{p.archived?"已归档":"方向档案"} · v{p.revision}</small></button>)}
+        <strong>{p.title}</strong><small>{p.archived?"已归档":names[p.kind]} · v{p.revision}</small></button>)}
       {index&&!index.pages.length&&<p>暂无匹配档案</p>}
       <div><button className="text-button" disabled={!offset} onClick={()=>setOffset(offset-30)}>上一页</button><button className="text-button" disabled={index?.next_offset==null} onClick={()=>setOffset(offset+30)}>下一页</button></div>
+      <select aria-label="新建记忆类型" value={kind} onChange={e=>setKind(e.target.value as CoordinationMemoryKind)}>{Object.entries(names).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>
       <select aria-label="参与对话" value={member} onChange={e=>setMember(e.target.value)}><option value="">选择参与对话</option>{joined.map(m=><option key={m.id} value={m.id}>{m.title} · {m.repository}</option>)}</select>
-      <button className="secondary-button" disabled={!member||!!edit} onClick={create}>建立方向档案</button>
+      <button className="secondary-button" disabled={kind==="direction"&&!member||!!edit} onClick={create}>建立{names[kind]}</button>
     </aside>
     <section className="coord-section">{edit?<form onSubmit={e=>{e.preventDefault();void save(edit);}}>
       <label>标题<input required maxLength={180} value={edit.title} onChange={e=>setEdit({...edit,title:e.target.value})}/></label>
@@ -59,7 +63,10 @@ export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:str
       <div className="memory-actions"><button className="secondary-button" disabled={busy||!!rev} onClick={()=>setEdit(page)}>修订</button>
       <button className="text-button" disabled={busy||!!rev} onClick={()=>void save({...page,archived:!page.archived})}>{page.archived?"恢复档案":"归档"}</button>
       <button className="text-button" disabled={page.revision<2} onClick={()=>setRev(page.revision-1)}>上一版本</button>
+      {page.kind==="decision"&&!rev&&!page.archived&&page.source!=="用户在项目记忆确认此版本"&&<button className="text-button" disabled={busy} onClick={()=>void save(page,true)}>确认此决策版本</button>}
+      {page.revision>1&&<button className="text-button" onClick={()=>{if(compare)setCompare(undefined);else void api<Detail>(base+"?id="+id+"&revision="+(page.revision-1)).then(r=>setCompare(r.page)).catch(e=>setError(uiError(e,"读取旧版失败")));}}>{compare?"收起对照":"与上一版对照"}</button>}
       {!!rev&&<button className="text-button" onClick={()=>setRev(0)}>返回当前版本</button>}</div>
+      {compare&&compare.id===page.id&&compare.revision===page.revision-1&&<details open><summary>v{compare.revision} · {compare.title} · {compare.source}</summary><ChatMarkdown text={compare.body}/></details>}
     </>:<p>选择档案查看正文和来源，或从参与对话建立方向档案。</p>}</section>
   </div>;
 }

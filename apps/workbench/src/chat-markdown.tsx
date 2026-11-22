@@ -9,7 +9,7 @@ function inline(text:string,allowRelativeLinks=false,onOpenResearch?:(path:strin
     if(part.startsWith('`')&&part.endsWith('`'))return <code key={index}>{part.slice(1,-1)}</code>;
     if(part.startsWith('**')&&part.endsWith('**'))return <strong key={index}>{part.slice(2,-2)}</strong>;
     const link=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if(link&&(/^(https?:\/\/|#)/i.test(link[2])||/^\/api\/v1\/projects\/[^/]+\/sources\/[^/]+\/pdf-view(?:[?#]|$)/.test(link[2])||(allowRelativeLinks&&!/^[a-z][a-z0-9+.-]*:/i.test(link[2])&&!link[2].startsWith('//'))))return <a key={index} href={link[2]} target={/^(https?:|\/api\/)/i.test(link[2])?'_blank':undefined} rel="noopener noreferrer">{link[1]}</a>;
+    if(link&&(/^\/projects\/[\w-]+\/coordination\?action=memory&focus=[a-f\d-]{36}$/i.test(link[2])||/^(https?:\/\/|#)/i.test(link[2])||/^\/api\/v1\/projects\/[^/]+\/sources\/[^/]+\/pdf-view(?:[?#]|$)/.test(link[2])||(allowRelativeLinks&&!/^[a-z][a-z0-9+.-]*:/i.test(link[2])&&!link[2].startsWith('//'))))return <a key={index} href={link[2]} target={/^(https?:|\/api\/)/i.test(link[2])?'_blank':undefined} rel="noopener noreferrer">{link[1]}</a>;
     return part;
   });
 }
