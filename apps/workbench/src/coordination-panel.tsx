@@ -58,7 +58,7 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
   const scroll=useChatScroll(projectId+tab,JSON.stringify([messages.length,last?.response,last?.status]));
   const members=data?.conversations??[];
   const decisions=members.filter(s=>s.joined&&["pending","selected"].includes(s.decision?.status??""));
-  const pending=decisions.length+(data?.jobs.reduce((count,job)=>count+(job.plans?.filter(plan=>plan.status==="pending").length??0),0)??0);
+  const pending=decisions.length;
 
   async function refresh() {
     const version=++revision.current;

@@ -206,17 +206,17 @@ export class ExperimentCoordination {
       break;
     }
   }
-  private manifest(project:string,plan:ExperimentPlanVersion,preparation:boolean){
+  private executionHash(project:string,plan:ExperimentPlanVersion,preparation:boolean){
     const profile=this.experiments.data.profile(project,plan.profile.profile_id);
     const workspace=this.experiments.workspaces.get(project,profile.profile_id);
     if(plan.profile.host!==profile.host||plan.profile.port!==profile.port||plan.profile.username!==profile.username)
-      experimentError("COORDINATION_APPROVAL_CHANGED",409);
+      experimentError("COORDINATION_PLAN_CHANGED",409);
     const manifest={plan_id:plan.plan_id,title:plan.content.title,version:plan.version,repository:plan.repository.path,
       host:profile.username+"@"+profile.host+":"+profile.port,fingerprint:profile.fingerprint,
       remote_root:workspace?.root??plan.profile.remote_root,preparation,content:plan.content,
       source_config_sha256:plan.source_config_sha256,
       datasets:plan.datasets.map(d=>({name:d.name,path:d.path,version:d.version}))};
-    return {manifest,hash:createHash("sha256").update(JSON.stringify(manifest)).digest("hex")};
+    return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
   }
   private dependency(job:CoordinationJob,jobs:CoordinationJob[]){
     if(!job.after)return "";
@@ -226,11 +226,12 @@ export class ExperimentCoordination {
     return "";
   }
   private schedule(project:string,view:CoordinationView){
+    const turns=this.agent.coordinationTurns(project).reverse();
     for(const snapshot of view.jobs.filter(j=>j.status==="delivered")){
       const job=this.jobs(project).find(j=>j.id===snapshot.id)!;
       const member=view.conversations.find(m=>m.id===job.conversation);
       if(!member?.joined||member.repository_id!==job.repository_id){
-        for(const p of job.plans??[])if(p.status==="authorized"||p.status==="pending"){
+        for(const p of job.plans??[])if(["pending","queued","authorized"].includes(p.status)){
           p.status="blocked";p.info="对话或仓库已变更，请重新派单";
         }
         job.status="withdrawn";job.reason="对话或仓库已变更";this.save(job);continue;
@@ -242,23 +243,39 @@ export class ExperimentCoordination {
         }
         job.status="settled";this.save(job);continue;
       }
+      const worker=turns.find(t=>t.coordination?.kind==="assignment"&&t.coordination.id===job.id);
       for(const p of job.plans??[]){
-        if(p.status!=="authorized")continue;
+        if(p.status!=="queued"&&p.status!=="authorized")continue;
         const priorRun=this.experiments.data.runs(project).find(r=>r.idempotency_key===p.id);
         if(priorRun){p.status="submitted";p.run_id=priorRun.run_id;this.save(job);continue;}
+        if(p.status==="queued"){
+          if(["pending","selected"].includes(worker?.decision?.status??""))continue;
+          if(worker?.status==="failed"||worker?.status==="cancelled"||worker?.status==="completed"&&job.report_status==="blocked"){
+            p.status="blocked";p.info=job.report_status==="blocked"?"成员回报缺少运行条件":"成员未完成实验方案准备";this.save(job);continue;
+          }
+          if(worker?.status!=="completed")continue;
+        }
         let wait=this.dependency(job,view.jobs);
         try{
           const plan=this.experiments.data.plan(project,p.plan_id,p.version);
-          if(this.manifest(project,plan,p.preparation).hash!==p.approval_hash)experimentError("COORDINATION_APPROVAL_CHANGED",409);
-          if(plan.status!=="confirmed"||this.experiments.data.plans(project).some(other=>other.plan_id===p.plan_id&&other.version>p.version))
+          if(this.executionHash(project,plan,p.preparation)!==(p.execution_hash??p.approval_hash))experimentError("COORDINATION_PLAN_CHANGED",409);
+          if(plan.status==="superseded"||p.status==="authorized"&&plan.status!=="confirmed"||
+            this.experiments.data.plans(project).some(other=>other.plan_id===p.plan_id&&other.version>p.version))
             experimentError("VERSION_CONFLICT",409);
-          if(!p.preparation&&plan.content.preparation_script&&!this.experiments.data.runs(project).some(r=>r.preparation&&r.plan.plan_id===p.plan_id&&r.plan.version===p.version&&r.status==="completed"&&r.exit_code===0))
-            wait="等待环境准备成功";
+          if(!p.preparation&&plan.content.preparation_script&&!this.experiments.data.runs(project).some(r=>r.preparation&&r.plan.plan_id===p.plan_id&&r.plan.version===p.version&&r.status==="completed"&&r.exit_code===0)){
+            const prep=job.plans?.find(ref=>ref.preparation&&ref.plan_id===p.plan_id&&ref.version===p.version);
+            const prepStatus=prep&&snapshot.plans?.find(ref=>ref.id===prep.id)?.run_status;
+            if(prep?.status==="blocked"||prep?.status==="skipped"||prepStatus==="failed"||prepStatus==="cancelled")
+              experimentError("PREPARATION_REQUIRED",409);
+            wait||="等待环境准备成功";
+          }
           const occupied=this.experiments.data.runs().find(r=>this.experiments.data.active(r)&&r.plan.profile.host.toLowerCase()===plan.profile.host.toLowerCase()&&r.plan.profile.port===plan.profile.port);
           if(!wait&&occupied)wait=occupied.project_id===project?"等待 "+occupied.plan.content.title+" 释放 AutoDL":"等待其他项目释放 AutoDL";
           if(!wait&&!this.experiments.ssh.hasCredential(plan.profile))wait="等待主机连接凭据";
           if(!wait){
-            const run=this.experiments.submit(project,{plan_id:p.plan_id,version:p.version,idempotency_key:p.id,preparation:p.preparation});
+            const run=p.status==="queued"
+              ?this.experiments.submitCoordinated(plan,p.id,p.preparation)
+              :this.experiments.submit(project,{plan_id:p.plan_id,version:p.version,idempotency_key:p.id,preparation:p.preparation});
             p.status="submitted";p.run_id=run.run_id;delete p.info;this.save(job);continue;
           }
         }catch(cause){
@@ -276,7 +293,8 @@ export class ExperimentCoordination {
     if(existing)return existing;
     const ref:CoordinationPlan={id:randomUUID(),key,plan_id:plan.plan_id,version:plan.version,title:plan.content.title,
       commit:plan.content.commit_sha,host:plan.profile.name,repository:plan.repository.name??plan.repository.path,
-      command:plan.content.command,gpu:plan.content.gpu,datasets:plan.datasets.map(d=>d.name),preparation,status:"pending"};
+      command:plan.content.command,gpu:plan.content.gpu,datasets:plan.datasets.map(d=>d.name),preparation,status:"queued",
+      execution_hash:this.executionHash(project,plan,preparation)};
     job.plans=[...(job.plans??[]),ref];this.save(job);
     if(plan.content.preparation_script&&!preparation)this.attachPlan(project,job,plan,key+"-prepare",true);
     return ref;
@@ -288,7 +306,7 @@ export class ExperimentCoordination {
       experimentError("COORDINATION_TARGET_CHANGED",409);
     const op=z.object({operation:z.string()}).parse(body).operation;
     if(op==="coordination-context")return {
-      assignment:job.id,instructions:job.instructions,report:job.report,after:job.after?this.details(project,this.jobs(project).filter(j=>j.id===job.after))[0]:undefined,
+      assignment:job.id,instructions:job.instructions,expects_runs:job.expects_runs,report:job.report,after:job.after?this.details(project,this.jobs(project).filter(j=>j.id===job.after))[0]:undefined,
       repository:job.repository_id,
       plans:this.experiments.data.plans(project).filter(p=>p.repository.repository_id===job.repository_id).map(p=>({id:p.plan_id,version:p.version,title:p.content.title,status:p.status})),
       hosts:this.experiments.data.profiles(project).map(p=>({id:p.profile_id,name:p.name})),
@@ -298,13 +316,17 @@ export class ExperimentCoordination {
       job.report_status=input.status;job.report=input.report;this.save(job);return {saved:true};
     }
     if(job.consultation)experimentError("AGENT_TOOL_READONLY",403);
+    if(op==="coordination-plan"||op==="coordination-draft"){
+      if(task.sandbox==="read-only")experimentError("AGENT_TOOL_READONLY",403);
+      if(!job.expects_runs)experimentError("COORDINATION_RUN_NOT_REQUESTED",409);
+    }
     if(op==="coordination-plan"){
       const input=z.object({plan_id:z.string(),version:z.number().int().positive()}).parse(body);
       const plan=this.experiments.data.plan(project,input.plan_id,input.version);
-      return this.attachPlan(project,job,plan,plan.plan_id+":"+plan.version);
+      return this.store.db.transaction(()=>this.attachPlan(project,job,plan,plan.plan_id+":"+plan.version)).immediate();
     }
     if(op==="coordination-draft"){
-      if(task.sandbox==="read-only"||!job.repository_id)experimentError("AGENT_TOOL_READONLY",403);
+      if(!job.repository_id)experimentError("AGENT_TOOL_READONLY",403);
       const input=z.object({key:z.string().trim().min(1).max(80),content:z.record(z.unknown())}).parse(body);
       const payloadHash=createHash("sha256").update(JSON.stringify(input.content)).digest("hex");
       const existing=job.plans?.find(p=>p.key===input.key);
@@ -355,9 +377,10 @@ export class ExperimentCoordination {
       });
       const activePlans=plans?.filter(p=>p.status!=="skipped"&&(job.status!=="withdrawn"||!!p.run_id))??[];
       const turnDone=!!turn?.finished_at&&!["pending","selected"].includes(turn.decision?.status??"")&&turn.status!=="interrupted";
-      const runsDone=activePlans.every(p=>["completed","cancelled","failed"].includes(p.run_status??""));
+      const runsDone=activePlans.every(p=>["completed","cancelled","failed"].includes(p.run_status??"")||p.status==="blocked"&&!!p.execution_hash&&!p.run_id);
       const finished=runsDone&&(job.status==="failed"||job.status==="withdrawn"||!!(turnDone&&
-        (turn?.status!=="completed"||job.report_status!=="blocked"&&(!job.expects_runs||plans?.length))));
+        (turn?.status!=="completed"||job.report_status!=="blocked"&&(!job.expects_runs||plans?.length)||
+          activePlans.some(p=>p.status==="blocked"&&!!p.execution_hash))));
       const successful=finished&&turn?.status==="completed"&&job.status!=="withdrawn"&&job.report_status!=="blocked"&&
         (!job.expects_runs||activePlans.some(p=>!p.preparation))&&activePlans.every(p=>p.run_status==="completed"&&p.has_result);
       return {...job,plans,finished,successful,worker_status:turn?.status,worker_response:turn?.response.slice(-5000)};
@@ -631,37 +654,31 @@ export class ExperimentCoordination {
       this.store.db.transaction(()=>{for(const raw of this.jobs(project)){const i=ids.indexOf(raw.id);if(i>=0){raw.priority=i;this.save(raw);}}}).immediate();
       return {ok:true};
     }
-    if(action==="review"){
-      const input=z.object({id:z.string().uuid(),ref:z.string().uuid()}).parse(body);
-      const ref=this.jobs(project).find(j=>j.id===input.id)?.plans?.find(p=>p.id===input.ref);
-      if(!ref)experimentError("COORDINATION_TARGET_CHANGED",409);
-      const plan=this.experiments.data.plan(project,ref.plan_id,ref.version);
-      const script=ref.preparation?await this.experiments.repository.preparation(project,plan.content.commit_sha,plan.content.preparation_script!,plan.repository.repository_id):undefined;
-      return {...this.manifest(project,plan,ref.preparation),script};
-    }
-    if(action==="authorize"||action==="skip"){
-      const {id,ref,version}=z.object({id:z.string().uuid(),ref:z.string().uuid(),version:z.number().int(),confirm:z.literal(true)}).parse(body);
-      const read=()=>{
-        const job=this.jobs(project).find(j=>j.id===id);
-        const p=job?.plans?.find(p=>p.id===ref);
-        const member=this.view(project).conversations.find(s=>s.id===job?.conversation);
-        if(!job||!p||!member?.joined||member.repository_id!==job.repository_id||job.status!=="delivered"||p.version!==version)
-          experimentError("COORDINATION_TARGET_CHANGED",409);
-        return {job,p};
-      };
-      let {job,p}=read();
+    if(action==="queue-run"||action==="skip"){
+      const {id,ref,version}=z.object({id:z.string().uuid(),ref:z.string().uuid(),version:z.number().int()}).parse(body);
+      const view=this.view(project);
+      const job=this.jobs(project).find(j=>j.id===id);
+      const p=job?.plans?.find(p=>p.id===ref);
+      const member=view.conversations.find(s=>s.id===job?.conversation);
+      if(!job||!p||!member?.joined||member.repository_id!==job.repository_id||job.status!=="delivered"||p.version!==version)
+        experimentError("COORDINATION_TARGET_CHANGED",409);
+      const snapshot=view.jobs.find(j=>j.id===id);
+      if(snapshot?.plans?.some(plan=>plan.id===ref&&plan.run_id)){
+        if(action==="queue-run")return {ok:true};
+        experimentError("COORDINATION_TARGET_CHANGED",409);
+      }
       if(action==="skip"){
-        if(p.run_id)experimentError("COORDINATION_TARGET_CHANGED",409);
         p.status="skipped";this.save(job);return {ok:true};
       }
-      if(p.status==="submitted"||p.status==="authorized")return {ok:true};
+      if(p.status==="queued"||p.status==="authorized")return {ok:true};
       if(p.status!=="pending")experimentError("COORDINATION_TARGET_CHANGED",409);
-      const {hash}=z.object({hash:z.string().length(64)}).parse(body);
-      if(this.manifest(project,this.experiments.data.plan(project,p.plan_id,version),p.preparation).hash!==hash)experimentError("COORDINATION_APPROVAL_CHANGED",409);
-      const plan=await this.experiments.confirmPlan(project,p.plan_id,version);
-      if(this.manifest(project,plan,p.preparation).hash!==hash)experimentError("COORDINATION_APPROVAL_CHANGED",409);
-      ({job,p}=read());
-      if(p.status==="pending"){p.status="authorized";p.approval_hash=hash;this.save(job);}
+      const plan=this.experiments.data.plan(project,p.plan_id,version);
+      const related=job.plans!.filter(item=>item.plan_id===p.plan_id&&item.version===version&&item.status==="pending"&&(item.id===p.id||!p.preparation&&item.preparation));
+      for(const item of related){
+        item.execution_hash=this.executionHash(project,plan,item.preparation);
+        item.status="queued";
+      }
+      this.save(job);
       return {ok:true};
     }
     if(action==="withdraw"){

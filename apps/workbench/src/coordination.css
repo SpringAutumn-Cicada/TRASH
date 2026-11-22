@@ -30,10 +30,6 @@
 .coord-job { margin-top:.85rem; padding:.85rem 1rem; border:1px solid var(--line); border-radius:.75rem; }
 .coord-job>small,.coord-job>p { color:var(--muted); }
 .coord-job a { display:inline-block; max-width:100%; overflow-wrap:anywhere; }
-.modal.coord-approval { width:min(640px,94vw); max-height:86dvh; overflow:auto; }
-.coord-approval pre { overflow:auto; max-height:36dvh; padding:.75rem; border-radius:.5rem; background:var(--green-soft); }
-.coord-approval label { display:flex; align-items:flex-start; gap:.5rem; }
-.coord-approval input { width:auto; }
 @media(max-width:600px){.coord-section {padding:.85rem}.coord-job {padding:.65rem}.coord-section .coord-row {align-items:flex-start}}
 .coord-follow { flex-basis:100%; }
 .consult-feedback { margin-block:1rem; border:1px solid var(--chat-line); border-radius:12px; overflow:hidden; }

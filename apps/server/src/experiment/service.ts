@@ -147,6 +147,10 @@ export class ExperimentService {
     if(plan.status==="superseded" || this.data.plans(projectId).some(p=>p.plan_id===id&&p.version>version))experimentError("VERSION_CONFLICT",409);
     if (plan.status === "confirmed") return plan;
     await this.preflight(plan);
+    return this.freezePlan(plan);
+  }
+  private freezePlan(plan:ExperimentPlanVersion):ExperimentPlanVersion{
+    const {project_id:projectId,plan_id:id,version}=plan;
     return this.store.db.transaction(()=>{
       const latest = this.data.plans(projectId).find(item => item.plan_id === id);
       if (!latest || latest.version !== version || latest.status === "superseded") experimentError("VERSION_CONFLICT",409);
@@ -166,7 +170,11 @@ export class ExperimentService {
       const confirmed={...plan,method_sha256,status:"confirmed" as const,confirmed_at:new Date().toISOString()};this.data.savePlan(confirmed);return confirmed;
     }).immediate();
   }
-  submit(projectId:string,input:{plan_id:string;version:number;idempotency_key:string;preparation:boolean},retryOf?:string):ExperimentRun{
+  submitCoordinated(plan:ExperimentPlanVersion,idempotency_key:string,preparation:boolean):ExperimentRun{
+    this.freezePlan(plan);
+    return this.submit(plan.project_id,{plan_id:plan.plan_id,version:plan.version,idempotency_key,preparation},undefined,true);
+  }
+  submit(projectId:string,input:{plan_id:string;version:number;idempotency_key:string;preparation:boolean},retryOf?:string,coordinated=false):ExperimentRun{
     const duplicate=this.data.runs(projectId).find(run=>run.idempotency_key===input.idempotency_key);if(duplicate){if(duplicate.plan.plan_id!==input.plan_id||duplicate.plan.version!==input.version||duplicate.preparation!==input.preparation)experimentError("IDEMPOTENCY_CONFLICT",409);return duplicate;}
     const plan=this.data.plan(projectId,input.plan_id,input.version);if(plan.status!=="confirmed"&&!(retryOf&&plan.status==="superseded"))experimentError("PLAN_NOT_CONFIRMED",409);
     if(this.runWriteConflict?.(plan.repository.path))experimentError("CODE_AGENT_BUSY",409);
@@ -189,7 +197,7 @@ export class ExperimentService {
       }
     }
     const run:ExperimentRun={run_id:id,project_id:projectId,profile_id:plan.profile.profile_id,host_key:this.hostKey(plan.profile),plan,idempotency_key:input.idempotency_key,status:"queued",remote_dir:remoteDir,token:randomUUID(),created_at:at,updated_at:at,artifacts:[],preparation:input.preparation,...(retryOf?{retry_of:retryOf}:{})};
-    this.saveRun(run);this.data.event(id,"queued",input.preparation?"已单独授权环境准备脚本":"已确认代码版本、命令、时限与同步范围");void this.tick();return run;
+    this.saveRun(run);this.data.event(id,"queued",coordinated?"协调派单已排队，等待执行预检查":input.preparation?"已单独授权环境准备脚本":"已确认代码版本、命令、时限与同步范围");void this.tick();return run;
   }
   private async tick():Promise<void>{
     if(this.closed)return;

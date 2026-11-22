@@ -1,7 +1,7 @@
 const API = "/api/v1";
 const errorMessages: Record<string, string> = {
   COORDINATION_TARGET_CHANGED:"对话、仓库或计划已经变化，请重新查看任务。",
-  COORDINATION_APPROVAL_CHANGED:"主机、工作区或计划内容已有变化，请重新核对。",
+  COORDINATION_PLAN_CHANGED:"主机、工作区或实验方案已变化，请重新安排运行。",
   COORDINATION_ORDER_CONFLICT:"前置任务需排在依赖它的任务之前。",
   CHAT_NOT_READY:"当前对话正在处理，请稍后再发送。",
   CODE_AGENT_RECOVERY_REQUIRED:"请先核对中断的对话，再继续派单。",
