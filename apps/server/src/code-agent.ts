@@ -8,7 +8,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { homedir } from "node:os";
 import { realpath } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
@@ -232,7 +232,8 @@ export class CodeAgent {
   }
   private async runRepositoryOperation(item:ActiveCodeTask,repo:ProjectRepository,input:{argv:string[];stdin?:string;timeout_seconds:number},signal:AbortSignal){
     const {task}=item;
-    const roots=[repo.path];
+    const gitDirectory=await this.linkedWorktreeMetadata(repo);
+    const roots=gitDirectory?[repo.path,gitDirectory]:[repo.path];
     const deadline=Date.now()+300000;
     let ownsRepository=false;
     try{
@@ -248,7 +249,9 @@ export class CodeAgent {
         });
       }
       this.boundChatRepository(item);
-      const args=[...this.managedMounts(task,repo.path),'--chdir',repo.path,'--',...input.argv];
+      if(gitDirectory&&(!existsSync(gitDirectory)||realpathSync(gitDirectory)!==gitDirectory))
+        experimentError('CHAT_PAPER_LAYOUT_CONFLICT',409);
+      const args=[...this.managedMounts(task,repo.path,gitDirectory),'--chdir',repo.path,'--',...input.argv];
       delete task.waiting_for;
       item.writableRoots=task.write_roots=roots;
       ownsRepository=true;
@@ -262,6 +265,19 @@ export class CodeAgent {
         this.pump();
       }
     }
+  }
+  private async linkedWorktreeMetadata(repo:ProjectRepository){
+    if(lstatSync(join(repo.path,'.git')).isDirectory())return;
+    const base=this.paperCodeBase(repo.project_id);
+    if(!base)experimentError('CHAT_PAPER_LAYOUT_CONFLICT',409);
+    try{
+      const {stdout}=await execute('git',['-C',repo.path,'rev-parse','--show-toplevel','--absolute-git-dir','--path-format=absolute','--git-common-dir'],{timeout:5000,maxBuffer:65536});
+      const [root,gitDir,commonDir]=stdout.trimEnd().split('\n').map(path=>realpathSync(path));
+      const worktrees=join(commonDir,'worktrees');
+      if(root===repo.path&&basename(commonDir)==='.git'&&contains(base,commonDir)&&gitDir!==worktrees&&contains(worktrees,gitDir))
+        return commonDir;
+    }catch{/* Keep repository operations scoped to known worktree metadata. */}
+    experimentError('CHAT_PAPER_LAYOUT_CONFLICT',409);
   }
   private async executeRepositoryCommand(item:ActiveCodeTask,cwd:string,args:string[],input:{stdin?:string;timeout_seconds:number},signal:AbortSignal){
     const child=spawn('bwrap',args,{cwd,detached:true,stdio:['pipe','pipe','pipe'],
@@ -388,7 +404,7 @@ export class CodeAgent {
     }
     return [...roots].sort((a,b)=>a.localeCompare(b));
   }
-  private managedMounts(task:CodeTask,repository?:string){
+  private managedMounts(task:CodeTask,repository?:string,gitDirectory?:string){
     if(process.platform!=='linux')experimentError('CHAT_PAPER_SANDBOX_UNAVAILABLE',503);
     const codexHome=process.env.CODEX_HOME||join(homedir(),'.codex');
     const privateRoots=[task.path,codexHome,realpathSync('/tmp'),...(repository?[repository]:[])];
@@ -404,6 +420,7 @@ export class CodeAgent {
     return ['--die-with-parent','--unshare-pid','--ro-bind','/','/','--dev','/dev','--proc','/proc','--tmpfs','/tmp',
       ...(repository?[]:['--bind-try',codexHome,codexHome]),'--bind',task.path,task.path,...mounts,
       ...(repository?['--bind',repository,repository]:[]),
+      ...(gitDirectory?['--bind',gitDirectory,gitDirectory]:[]),
       ...(existsSync('/run/WSL')?['--tmpfs','/run/WSL']:[]),'--unsetenv','WSL_INTEROP'];
   }
   private blockerLabel(blocker:CodeTask, project:string) {
