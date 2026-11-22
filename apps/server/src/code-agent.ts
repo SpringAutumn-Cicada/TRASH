@@ -62,7 +62,7 @@ const gitUploadChoiceInput=z.object({
   data_files:z.array(z.object({source:autoDLSource,destination:z.string().min(1).max(4096)}).strict()).max(10).default([]),
 }).strict();
 type GitUploadDecision={
-  repository_id:string;repository_path:string;message:string;head:string;fingerprint:string;worktree:string;
+  repository_id:string;repository_path:string;message:string;head:string;ref:string;fingerprint:string;worktree:string;
   target:{profile_id:string;name:string;root:string;host:string;port:number;fingerprint?:string};
   data:{path:string;destination:string;sha256:string}[];
 };
@@ -272,7 +272,9 @@ export class CodeAgent {
       title:'确认提交并上传',
       description:'确认后提交下列文件，并将该提交上传到 AutoDL。',
       details:[
-        {label:'仓库',value:repo.name||basename(repo.path)},{label:'提交信息',value:message},
+        {label:'仓库',value:repo.name||basename(repo.path)},
+        {label:'分支',value:baseline.ref==='HEAD'?baseline.head.slice(0,12):baseline.ref.replace(/^refs\/heads\//,'')},
+        {label:'提交信息',value:message},
         {label:'目标实例',value:target.name},{label:'代码目录',value:remoteDirectory},...dataDetails,
       ],
       files:baseline.files,
@@ -281,7 +283,7 @@ export class CodeAgent {
         destinations.length?{id:'data-only',label:'这次只上传数据',detail:`上传 ${destinations.length} 个已列出的文件`}:{id:'skip',label:'暂不提交'},
       ],
     },{
-      repository_id:repo.repository_id,repository_path:repo.path,message,head:baseline.head,
+      repository_id:repo.repository_id,repository_path:repo.path,message,head:baseline.head,ref:baseline.ref,
       fingerprint:baseline.fingerprint,worktree:baseline.worktree,
       target:{...target,host:profile.host,port:profile.port,fingerprint:profile.fingerprint},data,
     });
@@ -589,7 +591,7 @@ export class CodeAgent {
           await git(['add','-A','--pathspec-from-file=-','--pathspec-file-nul'],baseline.files.join('\0')+'\0');
           staged=(await readGitIndex(repo.path)).bytes;
           const check=await gitUploadBaseline(repo.path).catch(()=>undefined);
-          if(check?.worktree!==approval.worktree||check.head!==approval.head)
+          if(check?.worktree!==approval.worktree||check.head!==approval.head||check.ref!==approval.ref)
             experimentError('CHAT_DECISION_FILE_CHANGED',409);
           expectedTree=await git(['write-tree']);
           staged=(await readGitIndex(repo.path)).bytes;
@@ -597,8 +599,10 @@ export class CodeAgent {
           committing=true;
           await git(['commit','-m',approval.message]);
           committed=(await gitRead(repo.path,['rev-parse','HEAD'])).trim();
-          this.recordChoiceOperation(task,'Git 提交',approval.message+'\n'+committed,'completed');
-          if((await gitRead(repo.path,['rev-parse','HEAD^','HEAD^{tree}'])).trim()!==approval.head+'\n'+expectedTree)
+          const actualMessage=(await gitRead(repo.path,['log','-1','--format=%s'])).trim();
+          this.recordChoiceOperation(task,'Git 提交',actualMessage+'\n'+committed,'completed');
+          if((await gitRead(repo.path,['rev-parse','HEAD^','HEAD^{tree}'])).trim()!==approval.head+'\n'+expectedTree||
+            (await gitRead(repo.path,['rev-parse','--symbolic-full-name','HEAD'])).trim()!==approval.ref||actualMessage!==approval.message)
             experimentError('CHAT_DECISION_COMMIT_CHANGED',409);
           return committed;
         }catch(error){

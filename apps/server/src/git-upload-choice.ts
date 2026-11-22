@@ -34,6 +34,7 @@ export async function decisionFileHash(path:string){
 
 export async function gitUploadBaseline(path:string){
   const head=(await gitRead(path,["rev-parse","HEAD"])).trim();
+  const ref=(await gitRead(path,["rev-parse","--symbolic-full-name","HEAD"])).trim();
   const gitDir=(await gitRead(path,["rev-parse","--absolute-git-dir"])).trim();
   for(const state of ["MERGE_HEAD","CHERRY_PICK_HEAD","REVERT_HEAD","rebase-apply","rebase-merge"]){
     if(await lstat(join(gitDir,state)).catch(error=>{if(!missing(error))throw error;}))
@@ -56,11 +57,12 @@ export async function gitUploadBaseline(path:string){
     if(stat&&(!stat.isFile()||await realpath(target)!==target))experimentError("CHAT_DECISION_FILE_INVALID",409);
     checks.push(stat?await decisionFileHash(target):null);
   }
-  if((await gitRead(path,["rev-parse","HEAD"])).trim()!==head||await gitRead(path,statusArgs)!==status||
+  if((await gitRead(path,["rev-parse","HEAD"])).trim()!==head||
+    (await gitRead(path,["rev-parse","--symbolic-full-name","HEAD"])).trim()!==ref||await gitRead(path,statusArgs)!==status||
     await gitRead(path,indexArgs)!==staged)
     experimentError("CHAT_DECISION_FILE_CHANGED",409);
   const worktree=createHash("sha256").update(JSON.stringify({files,checks})).digest("hex");
-  return {head,files,worktree,fingerprint:createHash("sha256").update(JSON.stringify({head,status,staged,worktree})).digest("hex")};
+  return {head,ref,files,worktree,fingerprint:createHash("sha256").update(JSON.stringify({head,ref,status,staged,worktree})).digest("hex")};
 }
 
 export async function readGitIndex(path:string){
