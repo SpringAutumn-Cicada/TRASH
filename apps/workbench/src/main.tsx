@@ -14,13 +14,14 @@ import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, GitBranch, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, BookText, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, GitBranch, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, BookText, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Settings, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { KnowledgePanel, RestoreKnowledge } from "./knowledge.js";
 import { LiteraturePage } from "./literature.js";
 import { ExperimentsPage } from "./experiments.js";
 import { ProjectChat } from "./project-chat.js";
+import { GitIdentityDialog, gitIdentityOpenEvent } from "./git-identity-dialog.js";
 import { OverviewPage } from "./overview.js";
 import { CreateProjectDialog, DeleteProjectDialog } from "./project-dialogs.js";
 import { DirtyContext, parseProjectRoute, projectPages, projectPath, projectSidebarPage, projectSidebarPages, type NavigateOptions, readPreference, useWorkspaceNavigation, writePreference } from "./navigation.js";
@@ -88,6 +89,7 @@ function App() {
   const route=parseProjectRoute(path);
   const [projects,setProjects]=useState<ResearchProject[]>([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");const [notice,setNotice]=useState("");
   const [workspaceOpen,setWorkspaceOpen]=useState(false);
+  const [gitIdentityOpen,setGitIdentityOpen]=useState(false);
   const [autoDlOpen,setAutoDlOpen]=useState(false);
   const [autoDlProfile,setAutoDlProfile]=useState<string>();
   const [query,setQuery]=useState("");const [createOpen,setCreateOpen]=useState(false);const [deleteTarget,setDeleteTarget]=useState<ResearchProject>();
@@ -121,9 +123,15 @@ function App() {
   },[project?.project_id,route?.page,route?.tab]);
   const closeDrawer=useCallback(()=>{setDrawer(false);requestAnimationFrame(()=>toggleRef.current?.focus());},[]);
   useEffect(()=>{
+    const open=()=>setGitIdentityOpen(true);
+    window.addEventListener(gitIdentityOpenEvent,open);
+    return()=>window.removeEventListener(gitIdentityOpenEvent,open);
+  },[]);
+  useEffect(()=>{
     if(!narrow||!drawer)return;
     sidebarRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const trap=(event:KeyboardEvent)=>{
+      if(document.querySelector(".git-identity-dialog"))return;
       if(event.key==="Escape"){closeDrawer();return;}
       if(event.key!=="Tab")return;
       const controls=Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input,select,a[href]')??[]).filter(el=>el.getClientRects().length);
@@ -180,7 +188,13 @@ function App() {
         <div className="sidebar-list-heading"><span>研究项目</span><span>{projects.length}</span><button className="icon-button" title="刷新项目" aria-label="刷新项目" disabled={loading} onClick={()=>void refresh()}><RefreshCw size={13} className={loading?"spin":""}/></button></div>
         <nav className="sidebar-project-list" aria-label="研究项目">{(compact?projects:filtered).map(item=><button key={item.project_id} className={`sidebar-project-link ${project?.project_id===item.project_id?"selected":""}`} aria-current={project?.project_id===item.project_id?"page":undefined} aria-label={item.title} title={item.title} onClick={()=>go(item.project_id)}>{compact?<span className="sidebar-project-glyph" aria-hidden="true">{item.title.slice(0,1)}</span>:<FolderOpen size={16}/>}<span className="sidebar-project-name">{item.title}</span></button>)}{!loading&&!(compact?projects:filtered).length&&<p className="sidebar-empty">{query&&!compact?"没有匹配的项目":"还没有研究项目"}</p>}</nav>
       </>}
-      <div className="sidebar-footer">{compact?<button type="button" className="icon-button" title="展开导航以设置主题" aria-label="展开导航以设置主题" onClick={()=>setHidden(false)}><Palette size={17}/></button>:<><ThemeControl/><span className="local-indicator"><i/>本地工作区</span></>}</div>
+      <div className="sidebar-footer">
+        {compact?<button type="button" className="icon-button" title="展开导航以设置主题" aria-label="展开导航以设置主题" onClick={()=>setHidden(false)}><Palette size={17}/></button>:<ThemeControl/>}
+        <div className="sidebar-platform-settings">
+          {!compact&&<span className="local-indicator"><i/>本地工作区</span>}
+          <button type="button" className="icon-button" aria-label="平台设置" title="平台设置" aria-haspopup="dialog" onClick={()=>setGitIdentityOpen(true)}><Settings size={17}/></button>
+        </div>
+      </div>
     </aside>}
     <div className="workspace-main">
       <header className="workspace-header"><button ref={toggleRef} className="icon-button" title={visible?"隐藏导航":"展开导航"} aria-label={visible?"隐藏导航":"展开导航"} aria-expanded={visible} aria-controls="project-navigation" onClick={()=>narrow?drawer?closeDrawer():setDrawer(true):setHidden(!hidden)}><Menu size={19}/></button>
@@ -198,6 +212,7 @@ function App() {
     </div>
     <BackgroundDatasetTransfers/>
     {leaveDialog}
+    {gitIdentityOpen&&<GitIdentityDialog onClose={()=>setGitIdentityOpen(false)}/>}
     {autoDlOpen&&project&&<AutoDlConnectionDialog key={project.project_id} projectId={project.project_id} initialProfileId={autoDlProfile} onClose={()=>setAutoDlOpen(false)}/>}
     {workspaceOpen&&project&&<ProjectWorkspaceDialog key={project.project_id} projectId={project.project_id} projectTitle={project.title} projectQuestion={project.research_question} projectArea={project.research_area} projectInterests={project.research_interests} projectStage={project.research_stage} projectConstraints={project.research_constraints} onUpdated={updated=>setProjects(previous=>previous.map(item=>item.project_id===updated.project_id?updated:item))} onClose={()=>setWorkspaceOpen(false)} onBrowse={directory=>{const proceed=()=>{setWorkspaceOpen(false);goPage("files",directory?{action:"directory",focus:directory}:undefined);};if(canLeave(proceed))proceed();}}/>}
     {createOpen&&<CreateProjectDialog onClose={()=>setCreateOpen(false)} onCreated={created}/>}

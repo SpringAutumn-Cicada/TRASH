@@ -1,5 +1,9 @@
 const API = "/api/v1";
 const errorMessages: Record<string, string> = {
+  GIT_IDENTITY_INVALID: "请填写有效的提交者姓名和邮箱。",
+  GIT_IDENTITY_SETTINGS_UNAVAILABLE: "平台 Git 身份暂时无法读取或保存，请检查本地设置目录。",
+  GIT_IDENTITY_UNAVAILABLE: "无法读取仓库的 Git 身份，请检查仓库配置。",
+  GIT_IDENTITY_REQUIRED: "当前仓库缺少 Git 署名。请先在平台设置中配置默认 Git 身份。",
   DIRECTION_NOT_FOUND: "请先建立对应的研究方向，方向 ID 必须一致。",
   SCHEME_NOT_FOUND: "请先在该方向下建立对应的实验方案。",
   FILES_WORKSPACE_MISSING: "项目目录尚不存在，请先在本地工作区中设置目录。",

@@ -1,0 +1,67 @@
+.modal.git-identity-dialog {
+  width: min(100%, 470px);
+  padding: 23px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.git-identity-dialog .git-identity-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+}
+.git-identity-heading h2 { margin: 0; font-size: 19px; }
+.git-identity-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.git-identity-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--green-soft);
+  color: var(--green);
+}
+.git-identity-fields { display: grid; gap: 13px; }
+.git-identity-dialog .git-identity-fields label { display: grid; gap: 6px; margin: 0; color: var(--ink); font-size: 12px; font-weight: 600; }
+.git-identity-dialog .git-identity-fields input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+}
+.git-identity-scope {
+  margin: 14px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--green-soft);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.git-identity-notice { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; }
+.git-identity-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.git-identity-clear { margin-right: auto; }
+.sidebar-platform-settings { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.project-sidebar .sidebar-platform-settings > button { color: var(--nav-muted, var(--muted)); border-radius: 8px; }
+.project-sidebar .sidebar-platform-settings > button:hover {
+  background: var(--nav-hover);
+  color: var(--nav-ink, var(--ink));
+}
+.compact .sidebar-platform-settings { justify-content: center; }
+.chat-git-identity-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-top: 12px; }
+.chat-git-identity-notice .error-notice { flex: 1 1 210px; margin: 0; }
+@media (max-width: 460px) {
+  .modal.git-identity-dialog { padding: 16px; }
+  .git-identity-dialog .git-identity-heading { gap: 8px; }
+}
