@@ -17,14 +17,14 @@
 ```
 
 ```json
-{"operation":"request-git-sync-choice","profile_id":"ssh_…","commit":"完整的提交SHA"}
+{"operation":"git-sync-upload","profile_id":"ssh_…","root":"/root/autodl-tmp/project","commit":"完整的提交SHA","confirm":true}
 ```
 
 ```json
 {"operation":"git-sync-versions"}
 ```
 
-回执中的 `id` 用于导回远端修复，`path` 可用于人工运行。若同版本检出已存在但有跟踪文件改动，报告冲突，保留该目录。
+`profile_id` 和 `root` 用主机查询返回值。`confirm:true` 表示 Agent 已核对用户指定的同步内容。回执中的 `id` 用于导回远端修复，`path` 可用于人工运行。若同版本检出已存在但有跟踪文件改动，报告冲突，保留该目录。
 
 ## 计划与结果
 

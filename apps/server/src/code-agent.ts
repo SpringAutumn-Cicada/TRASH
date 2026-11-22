@@ -14,7 +14,7 @@ import { realpath } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import type { TrashStore } from "@trash/storage";
-import { autoDLDirectories, autoDLPaperDirectory, commitShaSchema, type ChatDecision, type ProjectRepository } from "@trash/protocol";
+import { autoDLDirectories, autoDLPaperDirectory, commitShaSchema, remotePathSchema, type ChatDecision, type ProjectRepository } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import type { ExperimentService } from "./experiment/service.js";
 import { redact } from "./experiment/ssh.js";
@@ -57,6 +57,8 @@ const autoDLToolInput=z.discriminatedUnion('operation',[
   z.object({operation:z.literal('autodl-upload-file'),source:autoDLSource,destination:z.string().min(1).max(4096),...autoDLUploadOptions}).strict(),
   z.object({operation:z.literal('autodl-upload-code'),...autoDLUploadOptions}).strict(),
   z.object({operation:z.literal('git-sync-versions')}).strict(),
+  z.object({operation:z.literal('git-sync-upload'),commit:commitShaSchema,root:remotePathSchema,
+    profile_id:autoDLUploadOptions.profile_id.unwrap(),confirm:z.literal(true)}).strict(),
 ]);
 const gitUploadChoiceInput=z.object({
   operation:z.literal('request-git-autodl-choice'),
@@ -291,26 +293,13 @@ export class CodeAgent {
     this.save(task);
     return {decision_id:task.decision.id,waiting_for_user:true};
   }
-  async requestGitBundleChoice(project:string,token:string,body:unknown){
+  requestGitImportChoice(project:string,token:string,body:unknown){
     const item=this.activeTool(project,token);
     if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
-    const input=z.discriminatedUnion('operation',[
-      z.object({operation:z.literal('request-git-sync-choice'),profile_id:autoDLUploadOptions.profile_id,commit:commitShaSchema}).strict(),
-      z.object({operation:z.literal('request-git-import-choice'),version_id:z.string().uuid(),commit:commitShaSchema}).strict(),
-    ]).parse(body);
+    const {commit,version_id}=z.object({
+      operation:z.literal('request-git-import-choice'),version_id:z.string().uuid(),commit:commitShaSchema
+    }).strict().parse(body);
     const repo=this.boundChatRepository(item);
-    const {commit}=input;
-    if(input.operation==='request-git-sync-choice'){
-      const {target,profile}=this.pickAutoDLTarget(project,input.profile_id);
-      await this.experiments.repository.preflight(project,commit,repo.repository_id,false);
-      return this.saveChoice(item,{
-        title:'确认同步 Git 版本',description:'把指定提交及其可达的 Git 历史打包到目标主机。',
-        details:[{label:'仓库',value:repo.name||basename(repo.path)},{label:'完整 SHA',value:commit},
-          {label:'目标实例',value:target.name},{label:'远端工作区',value:target.root}],
-        options:[{id:'sync',label:'确认同步',primary:true},{id:'skip',label:'暂不同步'}],
-      },undefined,{kind:'sync',target:syncIdentity(profile),root:target.root,commit});
-    }
-    const {version_id}=input;
     const version=this.experiments.gitSync.version(project,repo,version_id);
     if(commit===version.commit)experimentError('GIT_SYNC_NO_REMOTE_CHANGES',409);
     return this.saveChoice(item,{
@@ -327,6 +316,7 @@ export class CodeAgent {
     try{
       const project=item.task.project_id;
       const repo=this.boundChatRepository(item);
+      // Previously saved sync cards still have a valid continuation.
       if(approval.kind==='sync'){
         const {target,profile}=this.pickAutoDLTarget(project,approval.target.profile_id);
         if(target.root!==approval.root||JSON.stringify(syncIdentity(profile))!==JSON.stringify(approval.target))
@@ -506,11 +496,14 @@ export class CodeAgent {
     if(item.autoDLUpload)experimentError('AUTODL_UPLOAD_ACTIVE',409);
     const {target,profile}=this.pickAutoDLTarget(project,input.profile_id);
     const {root}=target;
+    if(input.operation==='git-sync-upload'&&input.root!==root)experimentError('WORKSPACE_CHANGED',409);
     const requestId=randomUUID();
     const controller=new AbortController();
     const uploadSignal=AbortSignal.any([signal,controller.signal]);
     const remote=this.experiments.terminals.connection(project,target.profile_id);
-    const transfer:(report:UploadProgress)=>Promise<AutoDLReceipt>=input.operation==='autodl-upload-code'
+    const transfer:(report:UploadProgress)=>Promise<AutoDLReceipt>=input.operation==='git-sync-upload'
+      ? report=>this.experiments.gitSync.sync(project,this.boundChatRepository(item),profile,root,input.commit,report,uploadSignal)
+      : input.operation==='autodl-upload-code'
       ? async report=>{
         const repo=this.boundChatRepository(item);
         const {snapshot,...result}=await uploadExperimentCode(this.experiments,project,{profile_id:target.profile_id,repository_id:repo.repository_id,request_id:requestId},report,uploadSignal);

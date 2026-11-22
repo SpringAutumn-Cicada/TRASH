@@ -440,8 +440,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(op.startsWith("coordination-") || task.coordination&&task.coordination.kind!=="assignment"){
         sendJson(response,200,await coordination.tool(projectId,task,body)); return;
       }
-      if(op==="request-git-import-choice"||op==="request-git-sync-choice"){
-        sendJson(response,200,await codeAgent.requestGitBundleChoice(projectId,token,body));return;
+      if(op==="request-git-import-choice"){
+        sendJson(response,200,codeAgent.requestGitImportChoice(projectId,token,body));return;
       }
       if(op==="git-sync-plan"||op==="git-sync-runs"){
         sendJson(response,200,codeAgent.gitExperimentTool(projectId,token,body));return;
@@ -464,7 +464,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
       }
       if(body&&typeof body==="object"&&"operation" in body&&
-        ["paper-code-run","autodl-targets","autodl-upload-file","autodl-upload-code","git-sync-versions"].includes(String(body.operation))){
+        ["paper-code-run","autodl-targets","autodl-upload-file","autodl-upload-code","git-sync-versions","git-sync-upload"].includes(String(body.operation))){
         const controller=new AbortController();
         const disconnect=()=>controller.abort();
         response.once('close',disconnect);

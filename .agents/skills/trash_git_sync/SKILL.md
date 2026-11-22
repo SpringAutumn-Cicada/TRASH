@@ -8,7 +8,7 @@ description: 在 TRASH 中对绑定的自研实验仓库按文件确认 Git 提�
 先确认当前对话绑定的仓库和用户要求的操作范围。用本轮工作目录的 `python3 project_tool.py` 调用平台工具，通过 stdin 传入 JSON。按需读取 [工具参数与结果](references/tools.md)。
 
 - **只提交。** 核对本地基线和目标文件差异，调用 `request-git-commit-choice`。只列出需要提交的相对路径。收到 `waiting_for_user` 时结束本轮。平台处理选择后，读取已产生的提交 SHA 和基线。记录写入成功但后续步骤失败时，沿用已记录的 SHA。
-- **只同步或需要固定远端检出。** 调用 `autodl-targets` 核对主机和项目工作区，使用 `request-git-sync-choice` 发起指定 SHA 的同步确认。用户确认后由平台传输。平台核验 bundle 和 Git 检出，返回检出目录、版本记录 ID 和校验信息。已登记的版本用 `git-sync-versions` 查询。完整 SHA 是本次同步的目标，不随本地 HEAD 变化。
+- **只同步或需要固定远端检出。** 用户已要求同步时，调用 `autodl-targets` 核对主机和项目工作区，Agent 确认绑定仓库和目标完整 SHA 后直接调用 `git-sync-upload`。若有多个可用主机且无法确定目标，先请用户指定。平台核验 bundle 和 Git 检出，返回检出目录、版本记录 ID 和校验信息。已登记的版本用 `git-sync-versions` 查询。完整 SHA 是本次同步的目标，不随本地 HEAD 变化。
 - **按版本运行。** 读取用户指定的项目配置，核对主机、数据集和启动参数。调用 `git-sync-plan` 创建草稿，协调派单中用 `coordination-draft`。正式运行由平台授权并用 Runner 在运行目录打包、上传和检出。准备计划时无需另传常驻检出。用 `git-sync-runs` 查看已发起的运行，报告实际状态、完整提交、配置哈希、运行编号和产物路径。标注缺失的预检或回执。
 - **导回远端提交。** 从 `git-sync-versions` 获取已有的版本记录 ID，使用用户指定的远端完整 SHA 发起 `request-git-import-choice`。确认后平台核验部署基线和 bundle，将原始 SHA 导入独立审查分支。向用户报告分支、基线和差异摘要。
 
