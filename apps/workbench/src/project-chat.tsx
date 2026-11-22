@@ -15,7 +15,7 @@ import { ChatAssistantMessage, ChatComposer, ChatSendButton, ChatTranscript, Cha
 type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string;progress?:{label:string;sent:number;total:number}};
 type WriteTargets={repositories:{id:string;name:string;path:string}[]};
 const nextSandbox=(sandbox:unknown)=>sandbox==='read-only'||sandbox==='danger-full-access'?sandbox:'workspace-write';
-type Turn={coordination?:{kind:string};decision?:ChatDecision;git_identity_required?:boolean;finished_at?:string;repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
+type Turn={coordination?:{kind:string;consultation?:boolean};decision?:ChatDecision;git_identity_required?:boolean;finished_at?:string;repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>;repository_bindings:Record<string,string|null>};
 type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
@@ -160,7 +160,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
           const latest=selected===undefined?data.tasks[0]:data.tasks.find(turn=>turn.conversation_id===selected);
           if(latest){
             if(selected===undefined)draftStore.choose(latest.conversation_id);
-            setLastSandbox(latest.sandbox);setModel(latest.model);setEffort(latest.reasoning_effort??'');
+            setLastSandbox(data.tasks.find(t=>t.conversation_id===latest.conversation_id&&!t.coordination?.consultation)?.sandbox??latest.sandbox);setModel(latest.model);setEffort(latest.reasoning_effort??'');
           }
         }
       }catch{if(mounted)setConnected(false);}finally{polling=false;if(mounted)setLoading(false);}
@@ -193,7 +193,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     if(acting.current)return;
     initial.current=true;
     draftStore.choose(session?.id??'');setOpenLogs({});setError('');setIndexOpen(false);
-    setLastSandbox(session?.latest.sandbox??'workspace-write');
+    setLastSandbox(turns.find(t=>t.conversation_id===session?.id&&!t.coordination?.consultation)?.sandbox??'workspace-write');
     setModel(session?.latest.model??'');setEffort(session?.latest.reasoning_effort??'');
     input.current?.focus();
   };

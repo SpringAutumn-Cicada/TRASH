@@ -437,6 +437,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const task=codeAgent.toolTask(projectId,token);
       const body = await readJson(request);
       const op=body&&typeof body==="object"&&"operation" in body?String(body.operation):"";
+      if(task.coordination?.consultation&&op.startsWith("request-")){sendJson(response,403,{error:"AGENT_TOOL_READONLY"});return;}
       if(op.startsWith("coordination-") || task.coordination&&task.coordination.kind!=="assignment"){
         sendJson(response,200,await coordination.tool(projectId,task,body)); return;
       }

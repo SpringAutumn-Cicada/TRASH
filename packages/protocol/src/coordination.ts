@@ -14,6 +14,7 @@ export interface CoordinationPlan {
 }
 export interface CoordinationJob {
   id:string; conversation:string; repository_id:string|null; title:string; instructions:string;
+  consultation?:boolean; parent_question?:string; target?:string; candidates?:string[];
   priority?:number; finished?:boolean; successful?:boolean;
   report?:string; report_status?:"progress"|"blocked"|"ready"; plans?:CoordinationPlan[]; worker_status?:string; worker_response?:string;
   expects_runs:boolean; after?:string; gate:"finish"|"success";
