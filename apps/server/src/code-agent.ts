@@ -100,6 +100,8 @@ type AutoDLReceipt={id?:string;path:string;reused:boolean;verified:boolean;sha25
 export type CoordinationTurn = { kind:"coordinator"|"assignment"|"summary"; id:string; consultation?:boolean; origin?:string; receipts?:string[] };
 export interface CodeTask {
   coordination?:CoordinationTurn;
+  handoff_id?:string;
+  context_input_tokens?:number;
   experiment?: Input["experiment"];
   method_draft?: MethodDraft;
   purpose?: "project-chat" | "experiment-method"; conversation_id?: string; session_id?: string; repository_path?: string; repository_id?: string;
@@ -142,6 +144,7 @@ const contains = (parent:string, path:string) => {
 };
 const conversationKey=(project:string,id:string)=>project+'/'+id;
 
+function coreTurn(task:CodeTask){return task.coordination?.kind==="coordinator"||task.coordination?.kind==="summary";}
 function coordinationTurn(task: CodeTask) {
   const {task_id,conversation_id,purpose,coordination,status,created_at,finished_at,decision,model,sandbox,reasoning_effort,error}=task;
   const core=coordination&&coordination.kind!=="assignment";
@@ -156,6 +159,7 @@ export class CodeAgent {
   private queued = new Map<string,{item:ActiveCodeTask; input:Input}>();
   private readonly queueTimer: ReturnType<typeof setInterval>;
   onSettled?: () => void;
+  prepareCoordinationHandoff?:(project:string,task:CodeTask,previous:CodeTask)=>string;
   isCoordinationThread?: (project:string,id:string)=>boolean;
   private closed = false;
   private files: ProjectFiles;
@@ -1091,7 +1095,8 @@ export class CodeAgent {
     const core=coord?.kind==="coordinator"||coord?.kind==="summary";
     if(conversation&&!core&&this.isCoordinationThread?.(project,conversation))
       experimentError("COORDINATOR_ONLY",403);
-    const previous=selection?.source??(chatUrl&&input.conversation_id?this.list(project).find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined);
+    const history=chatUrl&&input.conversation_id?this.list(project):[];
+    const previous=selection?.source??(chatUrl&&input.conversation_id?history.find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined);
 
     if(coord?.consultation&&!previous?.session_id)experimentError("CONSULTATION_SESSION_UNAVAILABLE",409);
     const method = input.method ? readMethodContext(this.store, this.experiments, project, input.method) : undefined;
@@ -1140,6 +1145,18 @@ export class CodeAgent {
       task.purpose = "project-chat"; task.conversation_id = conversation; task.repository_path=repositoryPath;task.repository_id=binding??undefined;
       task.write_roots=writableRoots;
       task.session_id = previous?.session_id;
+      if(core&&previous?.session_id&&this.prepareCoordinationHandoff){
+        // Older CLI versions omit usage. Bound their retained text independently of model tokenization.
+        const turns=history.filter(t=>t.conversation_id===conversation&&t.session_id===previous.session_id);
+        const chars=turns.reduce((n,t)=>n+t.instructions.length+t.response.length+t.logs.length,0);
+        if((previous.context_input_tokens??0)>=48000||chars>=96000){
+          try{
+            const handoff=this.prepareCoordinationHandoff(project,task,previous);
+            task.handoff_id=handoff;
+            delete task.session_id;
+          }catch(error){console.warn("协调交接单未就绪，沿用原会话",(error as Error).message);}
+        }
+      }
     }
     const item={task,methodContext:method,previousChatPath:previous?.path,selection:selection?.source,writableRoots,sharedVersions:new Map<string,string|null>(),...(chatUrl?{toolToken:randomUUID(),toolUrl:chatUrl}:{})};
     const blocked=this.conflict(item);
@@ -1254,7 +1271,7 @@ ${input.instructions}`;
         let newline: number;
         while ((newline = pending.indexOf("\n")) >= 0) {
           const line = pending.slice(0, newline); pending = pending.slice(newline + 1);
-          try { const event = JSON.parse(line); if(chat){task.output=readChatOutput(event,task.output??[],text=>redact(item.toolToken?text.replaceAll(item.toolToken,"[REDACTED]"):text));this.save(task);}  if (event.type === "thread.started" && typeof event.thread_id === "string" && /^[a-f0-9-]{36}$/i.test(event.thread_id)) { task.session_id = event.thread_id; this.save(task); } if (event.type === "turn.failed") reportedFailure = redact(String(event.error?.message ?? "Codex 任务失败")); if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") { task.response = redact(item.toolToken ? event.item.text.replaceAll(item.toolToken, "[REDACTED]") : event.item.text).slice(0, 1024 * 1024); this.save(task); } } catch { /* Preserve unknown events in bounded logs. */ }
+          try { const event = JSON.parse(line); if(chat){task.output=readChatOutput(event,task.output??[],text=>redact(item.toolToken?text.replaceAll(item.toolToken,"[REDACTED]"):text));this.save(task);}  if(coreTurn(task)&&event.type==="turn.completed"&&Number.isSafeInteger(event.usage?.input_tokens)){task.context_input_tokens=event.usage.input_tokens;this.save(task);} if (event.type === "thread.started" && typeof event.thread_id === "string" && /^[a-f0-9-]{36}$/i.test(event.thread_id)) { task.session_id = event.thread_id; this.save(task); } if (event.type === "turn.failed") reportedFailure = redact(String(event.error?.message ?? "Codex 任务失败")); if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") { task.response = redact(item.toolToken ? event.item.text.replaceAll(item.toolToken, "[REDACTED]") : event.item.text).slice(0, 1024 * 1024); this.save(task); } } catch { /* Preserve unknown events in bounded logs. */ }
         }
         if (pending.length > 1024 * 1024) pending = "";
       });
@@ -1271,7 +1288,7 @@ ${input.instructions}`;
         "来自实验协调的只读咨询。依据本对话历史及可读的项目资料回答下述问题，给出事实依据和仍缺的信息。可用 coordination-context 查看咨询上下文，使用 coordination-report 报告进度、答复或阻塞。无需创建计划或运行实验。\n" : task.coordination?.kind==="assignment"?
         `来自实验协调的论文任务。只处理下述派单。通过 python3 project_tool.py 的 stdin JSON 使用 coordination-context 获取资源与前置结果。使用 {"operation":"coordination-report","status":"progress|ready|blocked","report":"实际进展或缺少的材料"} 回报。每个需运行的实验必须关联具体计划：已有计划调用 {"operation":"coordination-plan","plan_id":"…","version":1}，准备新计划用 {"operation":"coordination-draft","key":"同任务内稳定短键","content":{...}}。content 使用 experimentPlanInputSchema：title,purpose,method,evaluation_protocol,commit_sha（绑定仓库完整提交）,profile_id,dataset_ids,python（远端绝对路径）,command（参数数组）,metrics_path,expected_metrics（name/unit）；gpu（cpu 或 GPU 编号）必填，timeout_seconds 可选。仅准备草稿，待用户在协调页授权。缺少必要信息先回报。\n`: "";
       const memoryTools="长期事实要注明来源、版本和适用范围。可用 coordination-memory 检索（q）和阅读（id、revision、offset）；coordination-evidence（id、offset）取回报。引用格式 [标题](/projects/"+encodeURIComponent(task.project_id)+"/coordination?action=memory&focus=档案UUID)。有可复用决策建议、负面结果或经验时调用 coordination-note（kind: decision 或 lesson，key、title、observation、scope、limitation，来源成员任务 job_id，可选 supersedes 旧记录 ID）。无新依据勿重复记录。成员自述与用户确认分别标明，记忆仅供参考。";
-      child.stdin?.end((coordinatorPrompt?memoryTools+"\n"+coordinatorPrompt:undefined) ?? methodPrompt ?? (chatPrompt ? assignmentPrompt+chatPrompt : undefined) ?? `你是 TRASH 项目的本机开发 Agent。工作目录是用户选择的仓库。先阅读适用的 AGENTS.md，保留已有改动。遵守：未经本次任务明确要求，不运行 lint、类型检查、测试、构建或浏览器验证；不修改全局配置、不推送、不合并、不自动发起 SSH 实验。除非任务明确要求，不暂存或提交代码。完成后说明修改、验证状态和遗留问题。${methodContext}用户任务：\n${input.instructions}`);
+      child.stdin?.end((coordinatorPrompt?memoryTools+(task.handoff_id?"\n当前为交接后的首轮。先调用 coordination-handoff 取持久交接单，核对已完成动作和待处理回报，仅按当前用户请求续办。":"")+"\n"+coordinatorPrompt:undefined) ?? methodPrompt ?? (chatPrompt ? assignmentPrompt+chatPrompt : undefined) ?? `你是 TRASH 项目的本机开发 Agent。工作目录是用户选择的仓库。先阅读适用的 AGENTS.md，保留已有改动。遵守：未经本次任务明确要求，不运行 lint、类型检查、测试、构建或浏览器验证；不修改全局配置、不推送、不合并、不自动发起 SSH 实验。除非任务明确要求，不暂存或提交代码。完成后说明修改、验证状态和遗留问题。${methodContext}用户任务：\n${input.instructions}`);
       task.exit_code = await completion; task.after = await status();
       task.status = item.stop === "cancelled" ? "cancelled" : item.stop === "interrupted" ? "interrupted" : task.exit_code === 0 && !item.stop && !reportedFailure ? "completed" : "failed";
       if (method && task.status === "completed") {

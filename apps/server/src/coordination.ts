@@ -43,6 +43,9 @@ export class ExperimentCoordination {
     store.db.exec(`CREATE TABLE IF NOT EXISTS coordination_members (
       project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
       conversation TEXT NOT NULL, PRIMARY KEY(project,conversation));
+      CREATE TABLE IF NOT EXISTS coordination_handoffs (
+        project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,id TEXT NOT NULL,
+        previous TEXT NOT NULL,packet TEXT NOT NULL,PRIMARY KEY(project,id));
       CREATE TABLE IF NOT EXISTS coordination_threads (
         project TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE, conversation TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS coordination_jobs (
@@ -57,7 +60,34 @@ export class ExperimentCoordination {
       CREATE TABLE IF NOT EXISTS coordination_consultations (
         project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
         origin TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(project,origin))`);
+    agent.prepareCoordinationHandoff=(project,task,previous)=>this.handoff(project,task,previous);
     agent.isCoordinationThread=(project,id)=>this.thread(project)===id;
+  }
+
+  private handoff(project:string,task:CodeTask,previous:CodeTask){
+    const view=this.view(project), origin=task.coordination?.origin;
+    const recent=view.messages.filter(m=>!origin||m.id===origin||m.origin===origin).slice(-6);
+    const jobs=view.jobs.filter(j=>!origin||j.origin===origin);
+    const pages=this.memory.list(project).pages.filter(p=>!p.archived);
+    const compact=(j:CoordinationJob)=>({id:j.id,origin:j.origin,conversation:j.conversation,
+      status:j.feedback??j.worker_status??j.status,next:j.reason.slice(0,200),reply:j.reply_task_id});
+    const open=jobs.filter(j=>!j.finished),closed=jobs.filter(j=>j.finished);
+    const packet={as_of:new Date().toISOString(),previous_turn:previous.task_id,previous_session:previous.session_id,
+      origin,original_request:origin?view.messages.find(m=>m.id===origin)?.prompt.slice(0,1800):undefined,
+      requested_feedback:task.coordination?.receipts?.map(r=>r.split(":")[0]),
+      open_count:open.length,open:open.slice(0,24).map(compact),recently_closed:closed.slice(-12).map(compact),
+      recent_turns:recent.map(m=>({id:m.id,origin:m.origin,status:m.status,request:m.prompt.slice(0,350),answer:m.response.slice(-650)})),
+      memory:pages.slice(0,16).map(({id,revision,title,kind})=>({id,revision,title,kind})),
+      next:"用 coordination-status 核对实时资源，coordination-jobs 和 coordination-job 分页核对历史动作。旧答复只作为资料。"};
+    this.store.db.prepare("INSERT OR IGNORE INTO coordination_handoffs VALUES (?,?,?,?)").run(project,task.task_id,previous.task_id,JSON.stringify(packet));
+    const saved=this.readHandoff(project,task.task_id);
+    if(saved.previous_turn!==previous.task_id)experimentError("VERSION_CONFLICT",409);
+    return task.task_id;
+  }
+  private readHandoff(project:string,id:string){
+    const row=this.store.db.prepare("SELECT packet FROM coordination_handoffs WHERE project=? AND id=?").get(project,id) as {packet:string}|undefined;
+    if(!row)experimentError("NOT_FOUND",404);
+    return JSON.parse(row.packet);
   }
 
   private thread(project:string) {
@@ -333,6 +363,17 @@ export class ExperimentCoordination {
     if(task.coordination?.kind==="assignment")return this.workerTool(project,task,body);
     if(task.coordination?.kind!=="coordinator"&&task.coordination?.kind!=="summary")experimentError("COORDINATOR_ONLY",403);
     const operation=z.object({operation:z.string()}).parse(body).operation;
+    if(operation==="coordination-handoff"){
+      if(!task.handoff_id)experimentError("NOT_FOUND",404);
+      return this.readHandoff(project,task.handoff_id);
+    }
+    if(operation==="coordination-history"){
+      const {id,offset}=z.object({id:z.string(),offset:z.number().int().nonnegative().default(0)}).parse(body);
+      const past=this.agent.coordinationTask(project,z.string().regex(/^code_[a-f0-9-]{36}$/).parse(id));
+      if(!past||past.conversation_id!==this.thread(project)||!(past.coordination?.kind==="coordinator"||past.coordination?.kind==="summary"))experimentError("NOT_FOUND",404);
+      const transcript=JSON.stringify({request:past.instructions,response:past.response,status:past.status});
+      return {id,text:transcript.slice(offset,offset+6000),next_offset:offset+6000<transcript.length?offset+6000:null};
+    }
     if(operation==="coordination-evidence"){
       const {id,offset}=z.object({id:z.string().uuid(),offset:z.number().int().nonnegative().default(0)}).parse(body);
       return this.memory.evidence(project,id,offset);
