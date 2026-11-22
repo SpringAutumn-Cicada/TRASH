@@ -641,7 +641,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if (codeTask[2] === "cancel") codeAgent.cancel(projectId, codeTask[1]); else codeAgent.acknowledge(projectId, codeTask[1]);
       sendJson(response, 200, { accepted: true }); return;
     }
-    if (codeAgent.busy(projectId) && (((subpath.startsWith("repository") || subpath === "experiment-catalog/register") && method !== "GET") || ((subpath === "experiment-runs" || /^experiment-runs\/[^/]+\/retry$/.test(subpath)) && method === "POST"))) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
+    if ((subpath.startsWith("repository") || subpath === "experiment-catalog/register") && method !== "GET" && codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
     if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson,files)) return;
     if (subpath === "overview" && method === "GET") {
       sendJson(response, 200, projectOverview(store, projectId));
@@ -888,6 +888,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
   const codeAgent = new CodeAgent(store, experiments,()=>agent.hasRunningTasks());
+  experiments.runWriteConflict=path=>codeAgent.runWriteConflict(path);
   const coordination = new ExperimentCoordination(store,codeAgent,experiments);
   agent.canStart=()=>!codeAgent.hasUnrestrictedWriter();
   codeAgent.onSettled=()=>{for(const project of store.listProjects())agent.resumeQueued(project.project_id);};

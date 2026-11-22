@@ -1,5 +1,10 @@
 const API = "/api/v1";
 const errorMessages: Record<string, string> = {
+  COORDINATION_TARGET_CHANGED:"对话、仓库或计划已经变化，请重新查看任务。",
+  COORDINATION_APPROVAL_CHANGED:"主机、工作区或计划内容已有变化，请重新核对。",
+  COORDINATION_ORDER_CONFLICT:"前置任务需排在依赖它的任务之前。",
+  CHAT_NOT_READY:"当前对话正在处理，请稍后再发送。",
+  CODE_AGENT_RECOVERY_REQUIRED:"请先核对中断的对话，再继续派单。",
   GIT_IDENTITY_INVALID: "请填写有效的提交者姓名和邮箱。",
   GIT_IDENTITY_SETTINGS_UNAVAILABLE: "平台 Git 身份暂时无法读取或保存，请检查本地设置目录。",
   GIT_IDENTITY_UNAVAILABLE: "无法读取仓库的 Git 身份，请检查仓库配置。",

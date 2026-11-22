@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { GitBranch, MessagesSquare, Settings2 } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
 import type { NavigateOptions } from "./navigation.js";
+import { CoordinationQueue } from "./coordination-queue.js";
 import { ChatDecisionCard } from "./chat-decision-card.js";
 import { api, uiError } from "./api.js";
 import { chatDraftStore } from "./chat-drafts.js";
@@ -48,6 +49,7 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
       </div>
       {job.status==="waiting"&&<button className="text-button" disabled={busy} onClick={()=>void act({action:"withdraw",id:job.id})}>撤回</button>}
     </div>)}</section>}
+    {data&&<CoordinationQueue data={data} project={projectId} busy={busy} act={act} openRun={id=>onNavigate("experiments",{tab:"runs",action:"runs",focus:id})}/>}
     {data?.conversations.some(s=>s.joined&&s.decision?.status==="pending")&&<section className="coord-section"><header><h3>待你处理</h3></header>
       {data.conversations.filter(s=>s.joined&&s.decision?.status==="pending").map(s=><div key={s.task_id}><small>{s.title} · {s.repository}</small>
         <ChatDecisionCard decision={s.decision!} disabled={busy||["queued","running","cancelling","interrupted"].includes(s.status)} continued={false}

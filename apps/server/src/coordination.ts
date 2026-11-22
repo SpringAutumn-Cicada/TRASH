@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { experimentError, type TrashStore } from "@trash/storage";
 import type { CoordinationMember, CoordinationView, CoordinationJob, CoordinationPlan, ExperimentPlanVersion } from "@trash/protocol";
@@ -44,11 +44,14 @@ export class ExperimentCoordination {
     if(!this.port||this.working)return;
     this.working=true;
     try {
-      const projects=this.store.db.prepare("SELECT DISTINCT project FROM coordination_jobs WHERE status='waiting'").all() as {project:string}[];
+      const projects=this.store.db.prepare("SELECT DISTINCT project FROM coordination_jobs WHERE status IN ('waiting','delivered')").all() as {project:string}[];
       for(const {project} of projects){
         if(!this.port)return;
         const view=this.view(project);
-        for(const job of view.jobs.filter(j=>j.status==="waiting")){
+        this.schedule(project,view);
+        for(const snapshot of view.jobs.filter(j=>j.status==="waiting")){
+          const job=this.jobs(project).find(j=>j.id===snapshot.id)!;
+          if(job.status!=="waiting")continue;
           const member=view.conversations.find(m=>m.id===job.conversation);
           const existing=this.agent.coordinationTask(project,job.task_id);
           if(existing){job.status="delivered";job.reason="";this.save(job);continue;}
@@ -60,6 +63,7 @@ export class ExperimentCoordination {
           if(["running","queued","cancelling"].includes(last.status))reason="等待对话空闲";
           else if(last.status==="interrupted")reason="等待核对中断的对话";
           else if(last.decision?.status==="pending"||last.decision?.status==="selected"&&!last.decision.continuation_task_id)reason="等待处理原对话的确认";
+          if(!reason&&job.after&&job.gate==="success")reason=this.dependency(job,view.jobs);
           if(reason){if(job.reason!==reason){job.reason=reason;this.save(job);}continue;}
           try{
             await this.agent.start(project,{conversation_id:member.id,repository_id:job.repository_id,confirm:true,
@@ -74,6 +78,67 @@ export class ExperimentCoordination {
       }
     }finally{this.working=false;}
   }
+  private manifest(project:string,plan:ExperimentPlanVersion,preparation:boolean){
+    const profile=this.experiments.data.profile(project,plan.profile.profile_id);
+    const workspace=this.experiments.workspaces.get(project,profile.profile_id);
+    const manifest={title:plan.content.title,version:plan.version,repository:plan.repository.path,
+      host:profile.username+"@"+profile.host+":"+profile.port,fingerprint:profile.fingerprint,
+      remote_root:workspace?.root??profile.remote_root,preparation,content:plan.content,
+      datasets:plan.datasets.map(d=>({name:d.name,path:d.path,version:d.version}))};
+    return {manifest,hash:createHash("sha256").update(JSON.stringify(manifest)).digest("hex")};
+  }
+  private dependency(job:CoordinationJob,jobs:CoordinationJob[]){
+    if(!job.after)return "";
+    const prior=jobs.find(j=>j.id===job.after);
+    if(!prior?.finished)return "等待前置任务结束 · "+(prior?.title??"原任务");
+    if(job.gate==="success"&&!prior.successful)return "前置任务缺少有效结果 · "+prior.title;
+    return "";
+  }
+  private schedule(project:string,view:CoordinationView){
+    for(const snapshot of view.jobs.filter(j=>j.status==="delivered")){
+      const job=this.jobs(project).find(j=>j.id===snapshot.id)!;
+      const member=view.conversations.find(m=>m.id===job.conversation);
+      if(!member?.joined||member.repository_id!==job.repository_id){
+        for(const p of job.plans??[])if(p.status==="authorized"||p.status==="pending"){
+          p.status="blocked";p.info="对话或仓库已变更，请重新派单";
+        }
+        job.status="withdrawn";job.reason="对话或仓库已变更";this.save(job);continue;
+      }
+      if(snapshot.finished){
+        for(const p of job.plans??[]){
+          const run=snapshot.plans?.find(ref=>ref.id===p.id)?.run_id;
+          if(run){p.run_id=run;p.status="submitted";}
+        }
+        job.status="settled";this.save(job);continue;
+      }
+      for(const p of job.plans??[]){
+        if(p.status!=="authorized")continue;
+        const priorRun=this.experiments.data.runs(project).find(r=>r.idempotency_key===p.id);
+        if(priorRun){p.status="submitted";p.run_id=priorRun.run_id;this.save(job);continue;}
+        let wait=this.dependency(job,view.jobs);
+        try{
+          const plan=this.experiments.data.plan(project,p.plan_id,p.version);
+          if(this.manifest(project,plan,p.preparation).hash!==p.approval_hash)experimentError("COORDINATION_APPROVAL_CHANGED",409);
+          if(plan.status!=="confirmed"||this.experiments.data.plans(project).some(other=>other.plan_id===p.plan_id&&other.version>p.version))
+            experimentError("VERSION_CONFLICT",409);
+          if(!p.preparation&&plan.content.preparation_script&&!this.experiments.data.runs(project).some(r=>r.preparation&&r.plan.plan_id===p.plan_id&&r.plan.version===p.version&&r.status==="completed"&&r.exit_code===0))
+            wait="等待环境准备成功";
+          const occupied=this.experiments.data.runs().find(r=>this.experiments.data.active(r)&&r.plan.profile.host.toLowerCase()===plan.profile.host.toLowerCase()&&r.plan.profile.port===plan.profile.port);
+          if(!wait&&occupied)wait=occupied.project_id===project?"等待 "+occupied.plan.content.title+" 释放 AutoDL":"等待其他项目释放 AutoDL";
+          if(!wait&&!this.experiments.ssh.hasCredential(plan.profile))wait="等待主机连接凭据";
+          if(!wait){
+            const run=this.experiments.submit(project,{plan_id:p.plan_id,version:p.version,idempotency_key:p.id,preparation:p.preparation});
+            p.status="submitted";p.run_id=run.run_id;delete p.info;this.save(job);continue;
+          }
+        }catch(cause){
+          const error=(cause as Error).message;
+          if(error==="CODE_AGENT_BUSY")wait="等待仓库写入结束";
+          else{p.status="blocked";p.info=error;this.save(job);continue;}
+        }
+        if(p.info!==wait){p.info=wait;this.save(job);}
+      }
+    }
+  }
   private attachPlan(project:string,job:CoordinationJob,plan:ExperimentPlanVersion,key:string,preparation=false){
     if(!job.repository_id||plan.repository.repository_id!==job.repository_id||plan.reproduction)experimentError("COORDINATION_TARGET_CHANGED",409);
     const existing=job.plans?.find(p=>p.plan_id===plan.plan_id&&p.version===plan.version&&p.preparation===preparation);
@@ -81,7 +146,9 @@ export class ExperimentCoordination {
     const ref:CoordinationPlan={id:randomUUID(),key,plan_id:plan.plan_id,version:plan.version,title:plan.content.title,
       commit:plan.content.commit_sha,host:plan.profile.name,repository:plan.repository.name??plan.repository.path,
       command:plan.content.command,gpu:plan.content.gpu,datasets:plan.datasets.map(d=>d.name),preparation,status:"pending"};
-    job.plans=[...(job.plans??[]),ref];this.save(job);return ref;
+    job.plans=[...(job.plans??[]),ref];this.save(job);
+    if(plan.content.preparation_script&&!preparation)this.attachPlan(project,job,plan,key+"-prepare",true);
+    return ref;
   }
   private workerTool(project:string,task:CodeTask,body:unknown){
     const job=this.jobs(project).find(j=>j.id===task.coordination?.id);
@@ -117,6 +184,7 @@ export class ExperimentCoordination {
     experimentError("COORDINATOR_ONLY",403);
   }
   private details(project:string,jobs:CoordinationJob[]){
+    const runs=this.experiments.data.runs(project);
     return jobs.map(job=>{
       let turn=this.agent.coordinationTask(project,job.task_id);
       const visited=new Set<string>();
@@ -125,7 +193,26 @@ export class ExperimentCoordination {
         const next=this.agent.coordinationTask(project,turn.decision.continuation_task_id);
         if(!next)break;turn=next;
       }
-      return {...job,worker_status:turn?.status,worker_response:turn?.response.slice(-5000)};
+      const plans=job.plans?.map(p=>{
+        const run=runs.find(r=>r.run_id===p.run_id||r.idempotency_key===p.id);
+        if(!run)return p;
+        const expected=run.plan.content.artifact_paths;
+        const result=run.result_id?this.store.db.prepare(
+          "SELECT json_extract(data,'$.content.metrics') AS metrics FROM knowledge_versions WHERE project_id=? AND object_id=? AND kind='experiment-result' ORDER BY version DESC LIMIT 1"
+        ).get(project,run.result_id) as {metrics:string|null}|undefined:undefined;
+        const hasResult=run.exit_code===0&&(p.preparation||!!result||(!run.plan.content.expected_metrics.length&&expected.length>0&&
+          expected.every(path=>run.artifacts.some(a=>a.downloaded&&a.artifact_id&&a.path===path))));
+        return {...p,run_id:run.run_id,run_status:run.status,result_id:run.result_id,metrics:run.metrics_status,metric_values:result?.metrics?JSON.parse(result.metrics):undefined,has_result:hasResult,exit_code:run.exit_code,
+          artifacts:run.artifacts.map(a=>({path:a.path,id:a.downloaded?a.artifact_id:undefined}))};
+      });
+      const activePlans=plans?.filter(p=>p.status!=="skipped"&&(job.status!=="withdrawn"||!!p.run_id))??[];
+      const turnDone=!!turn?.finished_at&&turn.decision?.status!=="pending"&&turn.status!=="interrupted";
+      const runsDone=activePlans.every(p=>["completed","cancelled","failed"].includes(p.run_status??""));
+      const finished=runsDone&&(job.status==="failed"||job.status==="withdrawn"||!!(turnDone&&
+        (turn?.status!=="completed"||job.report_status!=="blocked"&&(!job.expects_runs||plans?.length))));
+      const successful=finished&&turn?.status==="completed"&&job.status!=="withdrawn"&&job.report_status!=="blocked"&&
+        (!job.expects_runs||activePlans.some(p=>!p.preparation))&&activePlans.every(p=>p.run_status==="completed"&&p.has_result);
+      return {...job,plans,finished,successful,worker_status:turn?.status,worker_response:turn?.response.slice(-5000)};
     });
   }
   async tool(project:string,task:CodeTask,body:unknown){
@@ -185,7 +272,11 @@ export class ExperimentCoordination {
     const messages=core?this.agent.list(project).filter(t=>t.conversation_id===core).reverse().map(t=>({
       id:t.task_id,prompt:t.instructions,response:t.response,status:t.status,error:t.error,summary:t.coordination?.kind==="summary"
     })):[];
-    return {conversations:[...sessions.values()],jobs:this.details(project,this.jobs(project)),messages};
+    const queue=this.experiments.data.runs(project).filter(r=>this.experiments.data.active(r)).sort((a,b)=>a.created_at.localeCompare(b.created_at)).map(r=>({
+      id:r.run_id,title:r.plan.content.title,host:r.plan.profile.name,status:r.status,created_at:r.created_at}));
+    const connected=new Set(this.experiments.terminals.list(project).map(t=>t.profile_id));
+    const hosts=this.experiments.data.profiles(project).map(p=>({id:p.profile_id,name:p.name,connected:connected.has(p.profile_id)}));
+    return {conversations:[...sessions.values()],jobs:this.details(project,this.jobs(project)).sort((a,b)=>(a.priority??Date.parse(a.created_at))-(b.priority??Date.parse(b.created_at))),messages,hosts,queue};
   }
 
   async action(project:string,body:unknown) {
@@ -193,6 +284,49 @@ export class ExperimentCoordination {
     if(action==="message"){
       const input=z.object({id:z.string().uuid(),instructions:z.string().trim().min(1).max(30000)}).parse(body);
       return this.message(project,input.id,input.instructions);
+    }
+    if(action==="move"){
+      const {id,before}=z.object({id:z.string().uuid(),before:z.string().uuid()}).parse(body);
+      const queue=this.view(project).jobs.filter(j=>!j.finished&&!j.plans?.some(p=>p.run_id));
+      const job=queue.find(j=>j.id===id);
+      if(!job||!queue.some(j=>j.id===before)||id===before)experimentError("COORDINATION_TARGET_CHANGED",409);
+      const ids=queue.filter(j=>j.id!==id).map(j=>j.id);ids.splice(ids.indexOf(before),0,id);
+      if(queue.some(j=>j.after&&ids.includes(j.after)&&ids.indexOf(j.after)>ids.indexOf(j.id)))experimentError("COORDINATION_ORDER_CONFLICT",409);
+      this.store.db.transaction(()=>{for(const raw of this.jobs(project)){const i=ids.indexOf(raw.id);if(i>=0){raw.priority=i;this.save(raw);}}}).immediate();
+      return {ok:true};
+    }
+    if(action==="review"){
+      const input=z.object({id:z.string().uuid(),ref:z.string().uuid()}).parse(body);
+      const ref=this.jobs(project).find(j=>j.id===input.id)?.plans?.find(p=>p.id===input.ref);
+      if(!ref)experimentError("COORDINATION_TARGET_CHANGED",409);
+      const plan=this.experiments.data.plan(project,ref.plan_id,ref.version);
+      const script=ref.preparation?await this.experiments.repository.preparation(project,plan.content.commit_sha,plan.content.preparation_script!,plan.repository.repository_id):undefined;
+      return {...this.manifest(project,plan,ref.preparation),script};
+    }
+    if(action==="authorize"||action==="skip"){
+      const {id,ref,version}=z.object({id:z.string().uuid(),ref:z.string().uuid(),version:z.number().int(),confirm:z.literal(true)}).parse(body);
+      const read=()=>{
+        const job=this.jobs(project).find(j=>j.id===id);
+        const p=job?.plans?.find(p=>p.id===ref);
+        const member=this.view(project).conversations.find(s=>s.id===job?.conversation);
+        if(!job||!p||!member?.joined||member.repository_id!==job.repository_id||job.status!=="delivered"||p.version!==version)
+          experimentError("COORDINATION_TARGET_CHANGED",409);
+        return {job,p};
+      };
+      let {job,p}=read();
+      if(action==="skip"){
+        if(p.run_id)experimentError("COORDINATION_TARGET_CHANGED",409);
+        p.status="skipped";this.save(job);return {ok:true};
+      }
+      if(p.status==="submitted"||p.status==="authorized")return {ok:true};
+      if(p.status!=="pending")experimentError("COORDINATION_TARGET_CHANGED",409);
+      const {hash}=z.object({hash:z.string().length(64)}).parse(body);
+      if(this.manifest(project,this.experiments.data.plan(project,p.plan_id,version),p.preparation).hash!==hash)experimentError("COORDINATION_APPROVAL_CHANGED",409);
+      const plan=await this.experiments.confirmPlan(project,p.plan_id,version);
+      if(this.manifest(project,plan,p.preparation).hash!==hash)experimentError("COORDINATION_APPROVAL_CHANGED",409);
+      ({job,p}=read());
+      if(p.status==="pending"){p.status="authorized";p.approval_hash=hash;this.save(job);}
+      return {ok:true};
     }
     if(action==="withdraw"){
       const {id}=z.object({id:z.string().uuid()}).parse(body);

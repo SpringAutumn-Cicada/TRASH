@@ -778,6 +778,15 @@ export class CodeAgent {
       item.task.logs = (item.task.logs + `\n[平台记录] ${String(record.object_id)} 版本 ${String(record.version)}\n`).slice(-1024 * 1024); this.save(item.task);
     }
   }
+  runWriteConflict(path:string) {
+    const covers=(task:CodeTask,roots:string[])=>task.sandbox==="danger-full-access"||
+      (task.sandbox!=="read-only"&&!!path&&roots.some(root=>contains(root,path)||contains(path,root)));
+    for(const {task,writableRoots} of this.active.values())if(covers(task,writableRoots))return true;
+    for(const project of this.store.listProjects())for(const task of this.list(project.project_id)){
+      if(task.status==="interrupted"&&covers(task,task.write_roots??[task.repository_path??task.path]))return true;
+    }
+    return false;
+  }
   hasUnrestrictedWriter() {
     return [...this.active.values()].some(({task})=>task.sandbox==='danger-full-access')||
       this.store.listProjects().some(project=>this.list(project.project_id).some(task=>task.status==='interrupted'&&task.sandbox==='danger-full-access'));

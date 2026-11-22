@@ -42,6 +42,7 @@ export class ExperimentService {
   }
   close():void{this.closed=true;this.failureAnalyses.close();this.reproductionQueues.close();this.datasetUploads.close();clearInterval(this.timer);this.deployments.close();this.environmentAnalysis.close();this.terminals.close();this.ssh.close();}
   busyProject(projectId:string):boolean{return this.failureAnalyses.busy(projectId)||this.datasetUploadSessions.busy(projectId)||this.reproductionQueues.list(projectId).some(queue=>queue.status==='running'||queue.status==='paused')||this.datasetUploads.busy(projectId)||this.deployments.busyProject(projectId)||this.environmentAnalysis.busy(projectId)||this.reproductions.busy(projectId)||this.terminals.hasProject(projectId)||this.data.runs(projectId).some(run=>this.data.active(run));}
+  runWriteConflict?:(path:string)=>boolean;
   private hostKey(profile:SshProfile):string{return `${profile.host.toLowerCase()}:${profile.port}:${profile.username}`;}
   private mark(run:ExperimentRun,state:ExperimentRunState,error?:string):void{
     if(this.closed)return;
@@ -141,6 +142,7 @@ export class ExperimentService {
   submit(projectId:string,input:{plan_id:string;version:number;idempotency_key:string;preparation:boolean},retryOf?:string):ExperimentRun{
     const duplicate=this.data.runs(projectId).find(run=>run.idempotency_key===input.idempotency_key);if(duplicate){if(duplicate.plan.plan_id!==input.plan_id||duplicate.plan.version!==input.version||duplicate.preparation!==input.preparation)experimentError("IDEMPOTENCY_CONFLICT",409);return duplicate;}
     const plan=this.data.plan(projectId,input.plan_id,input.version);if(plan.status!=="confirmed"&&!(retryOf&&plan.status==="superseded"))experimentError("PLAN_NOT_CONFIRMED",409);
+    if(this.runWriteConflict?.(plan.repository.path))experimentError("CODE_AGENT_BUSY",409);
     const {direction_id,scheme_id}=plan.content;
     if(direction_id&&scheme_id)assertExperimentScheme(join(this.store.root,'projects',projectId),direction_id,scheme_id);
     if(input.preparation&&!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");
