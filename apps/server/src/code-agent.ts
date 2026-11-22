@@ -26,6 +26,7 @@ import { autoDLUploadPath, privateUploadPath, uploadAutoDLFile } from "./experim
 import { uploadExperimentCode, type UploadProgress } from "./experiment/experiment-code-upload.js";
 import { chatChoiceInput, choiceOptionId } from "./chat-decision.js";
 import { decisionFileHash, gitRead, gitUploadBaseline, readGitIndex, restoreGitIndex } from "./git-upload-choice.js";
+import { gitIdentityEnv, type ResolvedGitIdentity } from "./git-identity.js";
 
 const execute = promisify(execFile);
 export const chatRepositoryId=z.string().min(1).max(128);
@@ -63,6 +64,7 @@ const gitUploadChoiceInput=z.object({
 }).strict();
 type GitUploadDecision={
   repository_id:string;repository_path:string;message:string;head:string;ref:string;fingerprint:string;worktree:string;
+  identity?:ResolvedGitIdentity;
   target:{profile_id:string;name:string;root:string;host:string;port:number;fingerprint?:string};
   data:{path:string;destination:string;sha256:string}[];
 };
@@ -96,6 +98,7 @@ export interface CodeTask {
   skill_origin?:"auto";
   output?: ChatOutput[];
   decision?: ChatDecision;
+  git_identity_required?: boolean;
   git_upload_decision?: GitUploadDecision;
   logs: string; response: string; before?: string; after?: string; truncated?: boolean;
 }
@@ -251,6 +254,7 @@ export class CodeAgent {
     if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
     const input=gitUploadChoiceInput.parse(body);
     const repo=this.boundChatRepository(item);
+    const identity=await this.requireGitIdentity(item,repo.path);
     const {target,profile}=this.pickAutoDLTarget(project,input.profile_id);
     const message=input.message.replace(/^([a-z][a-z-]*)[：:]\s*/,'$1：');
     const baseline=await gitUploadBaseline(repo.path);
@@ -275,6 +279,9 @@ export class CodeAgent {
         {label:'仓库',value:repo.name||basename(repo.path)},
         {label:'分支',value:baseline.ref==='HEAD'?baseline.head.slice(0,12):baseline.ref.replace(/^refs\/heads\//,'')},
         {label:'提交信息',value:message},
+        {label:'署名',value:`${identity.author.name} <${identity.author.email}>`},
+        ...(identity.author.name!==identity.committer.name||identity.author.email!==identity.committer.email
+          ?[{label:'提交者',value:`${identity.committer.name} <${identity.committer.email}>`}]:[]),
         {label:'目标实例',value:target.name},{label:'代码目录',value:remoteDirectory},...dataDetails,
       ],
       files:baseline.files,
@@ -284,9 +291,25 @@ export class CodeAgent {
       ],
     },{
       repository_id:repo.repository_id,repository_path:repo.path,message,head:baseline.head,ref:baseline.ref,
-      fingerprint:baseline.fingerprint,worktree:baseline.worktree,
+      fingerprint:baseline.fingerprint,worktree:baseline.worktree,identity,
       target:{...target,host:profile.host,port:profile.port,fingerprint:profile.fingerprint},data,
     });
+  }
+  private flagMissingGitIdentity(task:CodeTask){
+    task.git_identity_required=true;
+    this.save(task);
+  }
+  private async requireGitIdentity(item:ActiveCodeTask,path:string){
+    const identity=await this.experiments.repository.gitIdentity.resolve(path);
+    if(!identity){
+      this.flagMissingGitIdentity(item.task);
+      experimentError('GIT_IDENTITY_REQUIRED',409);
+    }
+    if(item.task.git_identity_required){
+      delete item.task.git_identity_required;
+      this.save(item.task);
+    }
+    return identity;
   }
   async choose(project:string,sourceId:string,decisionId:string,body:unknown,chatUrl:string){
     const {option_id}=z.object({option_id:choiceOptionId}).strict().parse(body);
@@ -481,8 +504,13 @@ export class CodeAgent {
     try{return await operation;}finally{item.repositoryOperation=undefined;}
   }
   private async runRepositoryOperation(item:ActiveCodeTask,repo:ProjectRepository,input:{argv:string[];stdin?:string;timeout_seconds:number},signal:AbortSignal){
-    return this.withRepositoryLock(item,repo,signal,mounts=>
-      this.executeRepositoryCommand(item,repo.path,[...mounts,'--chdir',repo.path,'--',...input.argv],input,signal));
+    return this.withRepositoryLock(item,repo,signal,async mounts=>{
+      const identity=await this.experiments.repository.gitIdentity.resolve(repo.path).catch(()=>undefined);
+      const result=await this.executeRepositoryCommand(item,repo.path,[...mounts,'--chdir',repo.path,'--',...input.argv],input,signal,identity);
+      if(!identity&&result.exit_code!==0&&/identity unknown|no email was given|no name was given|unable to auto-detect email/i.test(result.stderr))
+        this.flagMissingGitIdentity(item.task);
+      return result;
+    });
   }
   private async withRepositoryLock<T>(item:ActiveCodeTask,repo:ProjectRepository,signal:AbortSignal,run:(mounts:string[])=>Promise<T>){
     const {task}=item;
@@ -573,6 +601,14 @@ export class CodeAgent {
         experimentError('CHAT_DECISION_TARGET_CHANGED',409);
       const commit=await this.withRepositoryLock(item,repo,signal,async mounts=>{
         checkTarget();
+        const checkIdentity=async ()=>{
+          if(!approval.identity)experimentError('GIT_IDENTITY_CHANGED',409);
+          const current=await this.requireGitIdentity(item,repo.path);
+          const expected=gitIdentityEnv(approval.identity);
+          if(JSON.stringify(gitIdentityEnv(current))!==JSON.stringify(expected))experimentError('GIT_IDENTITY_CHANGED',409);
+          return current;
+        };
+        const identity=await checkIdentity();
         const baseline=await gitUploadBaseline(repo.path).catch(()=>undefined);
         if(baseline?.fingerprint!==approval.fingerprint)experimentError('CHAT_DECISION_FILE_CHANGED',409);
         const original=await readGitIndex(repo.path);
@@ -580,7 +616,7 @@ export class CodeAgent {
           if(signal.aborted)experimentError('CHAT_REPOSITORY_OPERATION_CANCELLED',409);
           const result=await this.executeRepositoryCommand(item,repo.path,
             [...mounts,'--chdir',repo.path,'--','git','--literal-pathspecs','-c','core.fsmonitor=false',...args],
-            {stdin,timeout_seconds:120},signal);
+            {stdin,timeout_seconds:120},signal,identity);
           if(result.exit_code!==0)experimentError('CHAT_GIT_COMMIT_FAILED',409);
           return result.stdout.trim();
         };
@@ -596,13 +632,16 @@ export class CodeAgent {
           expectedTree=await git(['write-tree']);
           staged=(await readGitIndex(repo.path)).bytes;
           checkTarget();
+          await checkIdentity();
           committing=true;
           await git(['commit','-m',approval.message]);
           committed=(await gitRead(repo.path,['rev-parse','HEAD'])).trim();
           const actualMessage=(await gitRead(repo.path,['log','-1','--format=%s'])).trim();
+          const actualIdentity=(await gitRead(repo.path,['log','-1','--format=%an%x00%ae%x00%cn%x00%ce'])).trim();
           this.recordChoiceOperation(task,'Git 提交',actualMessage+'\n'+committed,'completed');
           if((await gitRead(repo.path,['rev-parse','HEAD^','HEAD^{tree}'])).trim()!==approval.head+'\n'+expectedTree||
-            (await gitRead(repo.path,['rev-parse','--symbolic-full-name','HEAD'])).trim()!==approval.ref||actualMessage!==approval.message)
+            (await gitRead(repo.path,['rev-parse','--symbolic-full-name','HEAD'])).trim()!==approval.ref||actualMessage!==approval.message||
+            actualIdentity!==Object.values(gitIdentityEnv(identity)).join('\0'))
             experimentError('CHAT_DECISION_COMMIT_CHANGED',409);
           return committed;
         }catch(error){
@@ -631,10 +670,16 @@ export class CodeAgent {
       return '已提交 '+commit+'，并上传至 '+result.path+'，校验一致。';
     }catch(error){
       const code=error instanceof Error?redact(error.message):'CHAT_DECISION_OPERATION_FAILED';
-      const changed=code==='CHAT_DECISION_FILE_CHANGED'||code==='CHAT_DECISION_TARGET_CHANGED';
-      if(changed&&!committed){
+      const changes:Record<string,string>={
+        CHAT_DECISION_FILE_CHANGED:'待处理文件或 Git 状态已变化，请重新确认。',
+        CHAT_DECISION_TARGET_CHANGED:'绑定仓库或 AutoDL 目标已变化，请重新确认。',
+        GIT_IDENTITY_CHANGED:'Git 署名已变化或未包含在原确认中，请重新确认。',
+        GIT_IDENTITY_REQUIRED:'请先设置 Git 身份，再重新发起确认。',
+      };
+      const reason=changes[code];
+      if(reason&&!committed){
         decision.status='stale';
-        decision.reason=code==='CHAT_DECISION_TARGET_CHANGED'?'绑定仓库或 AutoDL 目标已变化，请重新确认。':'待处理文件或 Git 状态已变化，请重新确认。';
+        decision.reason=reason;
         this.save(source);
       }
       const text=committed?`已提交 ${committed}，上传未完成（${code}）。`:decision.reason??`选择操作未完成（${code}）。`;
@@ -642,9 +687,10 @@ export class CodeAgent {
       return text;
     }
   }
-  private async executeRepositoryCommand(item:ActiveCodeTask,cwd:string,args:string[],input:{stdin?:string;timeout_seconds:number},signal:AbortSignal){
+  private async executeRepositoryCommand(item:ActiveCodeTask,cwd:string,args:string[],input:{stdin?:string;timeout_seconds:number},signal:AbortSignal,identity?:ResolvedGitIdentity){
     const child=spawn('bwrap',args,{cwd,detached:true,stdio:['pipe','pipe','pipe'],
-      env:{PATH:process.env.PATH,HOME:homedir(),LANG:process.env.LANG??'C.UTF-8',GIT_TERMINAL_PROMPT:'0'}});
+      env:{PATH:process.env.PATH,HOME:homedir(),LANG:process.env.LANG??'C.UTF-8',GIT_TERMINAL_PROMPT:'0',
+        GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'user.useConfigOnly',GIT_CONFIG_VALUE_0:'true',...(identity?gitIdentityEnv(identity):{})}});
     item.repositoryChild=child;
     const output={stdout:'',stderr:''};
     let timedOut=false,truncated=false;
