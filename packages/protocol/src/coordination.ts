@@ -20,7 +20,7 @@ export interface CoordinationJob {
   status:"waiting"|"delivered"|"withdrawn"|"failed"|"settled"; reason:string;
   task_id:string; origin:string; key:string; created_at:string;
 }
-export interface CoordinationMessage {id:string;prompt:string;response:string;status:string;error?:string;summary:boolean}
+export interface CoordinationMessage {id:string;prompt:string;response:string;status:string;created_at:string;error?:string;summary:boolean}
 export interface CoordinationView {
   hosts:{id:string;name:string;connected:boolean}[]; queue:CoordinationRun[];
   messages:CoordinationMessage[]; jobs:CoordinationJob[];

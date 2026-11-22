@@ -562,6 +562,12 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
+    const coordinationProcess = subpath.match(/^coordination\/messages\/(code_[a-f0-9-]+)\/process$/);
+    if (coordinationProcess && method === "GET") {
+      response.setHeader("cache-control","no-store");
+      sendJson(response,200,coordination.messageProcess(projectId,coordinationProcess[1]));
+      return;
+    }
     if (subpath === "coordination") {
       response.setHeader("cache-control","no-store");
       if (method === "GET") { sendJson(response,200,coordination.view(projectId)); return; }

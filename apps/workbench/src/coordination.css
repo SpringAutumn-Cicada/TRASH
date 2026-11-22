@@ -1,3 +1,20 @@
+.coord-tabs {
+  display:flex; flex-wrap:wrap; gap:5px; width:fit-content; margin-bottom:14px; padding:4px;
+  border:1px solid var(--chat-line); border-radius:12px; background:var(--chat-canvas);
+}
+.coord-tabs button {
+  display:inline-flex; align-items:center; gap:7px; padding:7px 12px;
+  border:1px solid transparent; border-radius:8px; background:transparent; color:var(--muted); font:inherit; cursor:pointer;
+}
+.coord-tabs button:hover {color:var(--green);}
+.coord-tabs button[aria-selected="true"] {color:var(--green); background:var(--chat-paper); border-color:var(--chat-line); font-weight:600;}
+.coord-tab-count {min-width:1.3em; padding:0 4px; border-radius:12px; background:var(--green-soft); color:var(--green); font-size:11px;}
+.coord-member-tools {display:flex; align-items:center; gap:4px;}
+.coord-member-tools button[aria-pressed="true"] {color:var(--green); border-color:var(--chat-line); background:var(--green-soft);}
+.coord-member-card .coord-member-repository {overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.coord-member-card .chat-session-title {padding-inline-end:0;}
+.coord-member-card:has(.coord-member-check) .chat-session-title {padding-inline-end:24px;}
+.coord-member-card .coord-member-check {padding-right:6px;}
 .coordination-panel { display:grid; gap:1rem; min-width:0; margin-block:1rem; }
 .coord-section { min-width:0; padding:1rem 1.2rem; background:var(--surface); border:1px solid var(--line); border-radius:.85rem; }
 .coord-section header,.coord-row { display:flex; align-items:center; flex-wrap:wrap; justify-content:space-between; gap:.65rem; }
@@ -10,9 +27,6 @@
 .coord-row small { margin-top:.25rem; }
 .coord-section form { display:grid; gap:.5rem; justify-items:end; }
 .coord-section textarea { box-sizing:border-box; width:100%; min-height:4.4rem; padding:.75rem; resize:vertical; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:.65rem; font:inherit; }
-.coord-transcript { max-height:26rem; overflow:auto; }
-.coord-transcript article { border-top:1px solid var(--line); padding:.6rem 0; }
-.coord-transcript p,.coord-row p { white-space:pre-wrap; overflow-wrap:anywhere; margin:.3rem 0 .7rem; }
 .coord-job { margin-top:.85rem; padding:.85rem 1rem; border:1px solid var(--line); border-radius:.75rem; }
 .coord-job>small,.coord-job>p { color:var(--muted); }
 .coord-job a { display:inline-block; max-width:100%; overflow-wrap:anywhere; }

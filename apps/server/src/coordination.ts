@@ -297,13 +297,20 @@ export class ExperimentCoordination {
     }
     const core=this.thread(project);
     const messages=core?turns.filter(t=>t.conversation_id===core).map(t=>({
-      id:t.task_id,prompt:t.instructions,response:t.response,status:t.status,error:t.error,summary:t.coordination?.kind==="summary"
+      id:t.task_id,prompt:t.instructions,response:t.response,status:t.status,created_at:t.created_at,error:t.error,summary:t.coordination?.kind==="summary"
     })):[];
     const queue=this.experiments.data.runs(project).filter(r=>this.experiments.data.active(r)).sort((a,b)=>a.created_at.localeCompare(b.created_at)).map(r=>({
       id:r.run_id,title:r.plan.content.title,host:r.plan.profile.name,status:r.status,created_at:r.created_at}));
     const connected=new Set(this.experiments.terminals.list(project).map(t=>t.profile_id));
     const hosts=this.experiments.data.profiles(project).map(p=>({id:p.profile_id,name:p.name,connected:connected.has(p.profile_id)}));
     return {conversations:[...sessions.values()],jobs:this.details(project,this.jobs(project)).sort((a,b)=>(a.priority??Date.parse(a.created_at))-(b.priority??Date.parse(b.created_at))),messages,hosts,queue};
+  }
+
+  messageProcess(project:string,id:string) {
+    const task=this.agent.coordinationTask(project,id);
+    if(!task||task.conversation_id!==this.thread(project)||!task.coordination||task.coordination.kind==="assignment")
+      experimentError("NOT_FOUND",404);
+    return {logs:task.logs};
   }
 
   async action(project:string,body:unknown) {

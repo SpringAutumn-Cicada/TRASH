@@ -1,11 +1,10 @@
 import type { ChatAttachment } from './chat-attachments.js';
 
-type ChatDraft = { text?: string; skill?: string; attachments?: ChatAttachment[]; sandbox?:string; repositoryId?:string };
+type ChatDraft = { text?: string; requestId?:string; skill?: string; attachments?: ChatAttachment[]; sandbox?:string; repositoryId?:string };
 type SavedDrafts = { conversation?: string; messages: Record<string, ChatDraft> };
 type DraftState = SavedDrafts & { uploading: Record<string,true|undefined>; sending: Record<string,true|undefined> };
 
-function createDraftStore(projectId: string) {
-  const key = `trash.chat-drafts:${projectId}`;
+function createDraftStore(key: string) {
   const listeners = new Set<() => void>();
   let saved: SavedDrafts = { messages: {} };
   try {
@@ -59,11 +58,12 @@ function createDraftStore(projectId: string) {
 export type ChatDraftStore = ReturnType<typeof createDraftStore>;
 const projects = new Map<string, ChatDraftStore>();
 
-export function chatDraftStore(projectId: string): ChatDraftStore {
-  let store = projects.get(projectId);
+export function chatDraftStore(projectId: string, scope: "chat"|"coordination" = "chat"): ChatDraftStore {
+  const key = scope === "chat" ? `trash.chat-drafts:${projectId}` : `trash.coordination-drafts:${projectId}`;
+  let store = projects.get(key);
   if (!store) {
-    store = createDraftStore(projectId);
-    projects.set(projectId, store);
+    store = createDraftStore(key);
+    projects.set(key, store);
   }
   return store;
 }
