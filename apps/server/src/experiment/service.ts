@@ -14,6 +14,7 @@ import { z } from "zod";
 import { ExperimentStore, KnowledgeStore, experimentError, type TrashStore } from "@trash/storage";
 import { autoDLDirectories, autoDLPaperDirectory, autoDLReproductionDirectory, experimentPlanInputSchema, experimentResultSchema, metricSchema, evaluationMetrics, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
 import { RepositoryService } from "./repository.js";
+import { GitIdentitySettings } from "../git-identity.js";
 import { SshService, RemoteConnection, redact } from "./ssh.js";
 import { DIAGNOSTICS, REMOTE_RUNNER, RUNNER_VERSION } from "./runner.js";
 import { ReproductionService } from "./reproduction.js";
@@ -32,7 +33,7 @@ export class ExperimentService {
   private readonly files: ProjectFiles;
   constructor(readonly store:TrashStore){
     this.files = new ProjectFiles(store, id => this.busyProject(id));
-    this.workspaces=new WorkspaceService(store);this.reproductions=new ReproductionService(store);this.data=new ExperimentStore(store.db);this.datasetUploads=new DatasetUploadService(this.data,store.listProjects().map(item=>item.project_id),store.root);this.repository=new RepositoryService(this.data);this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);this.environmentAnalysis=new EnvironmentAnalysisService(store,this.reproductions);this.deployments=new EnvironmentDeploymentService(store,this.reproductions,this.workspaces);
+    this.workspaces=new WorkspaceService(store);this.reproductions=new ReproductionService(store);this.data=new ExperimentStore(store.db);this.datasetUploads=new DatasetUploadService(this.data,store.listProjects().map(item=>item.project_id),store.root);this.repository=new RepositoryService(this.data,new GitIdentitySettings(store.root));this.ssh=new SshService(this.data,store.root);this.terminals=new TerminalService(this.ssh);this.environmentAnalysis=new EnvironmentAnalysisService(store,this.reproductions);this.deployments=new EnvironmentDeploymentService(store,this.reproductions,this.workspaces);
     for(const run of this.data.runs())if(["preflight","syncing"].includes(run.status)){run.status="disconnected";run.error="本地服务已重启，请重新连接确认远端状态。";this.data.saveRun(run);}
     this.failureAnalyses=new ExperimentFailureAnalysis(this);
     this.datasetUploadSessions=new DatasetUploadSessions(this);

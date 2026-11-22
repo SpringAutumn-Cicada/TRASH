@@ -154,6 +154,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     sendJson(response, 200, { name: "trash", status: "ready", protocol_version: PROTOCOL_VERSION });
     return;
   }
+  if(url.pathname==="/api/v1/settings/git-identity"){
+    response.setHeader("cache-control","no-store");
+    if(method==="GET"){sendJson(response,200,{identity:experiments.repository.gitIdentity.get()});return;}
+    if(method==="PUT"){sendJson(response,200,{identity:experiments.repository.gitIdentity.save(await readJson(request))});return;}
+  }
   if (url.pathname === "/api/v1/projects" && method === "GET") {
     sendJson(response, 200, { projects: store.listProjects() });
     return;

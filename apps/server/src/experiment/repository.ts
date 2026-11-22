@@ -6,13 +6,14 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { ExperimentStore, experimentError } from "@trash/storage";
 import { commitShaSchema, repositoryInputSchema, type ProjectRepository } from "@trash/protocol";
+import { GitIdentitySettings, gitIdentityEnv } from "../git-identity.js";
 const execute = promisify(execFile);
-export async function git(path:string,args:string[],maxBuffer=4*1024*1024):Promise<string> {
-  try {return (await execute("git",["-C",path,...args],{encoding:"utf8",maxBuffer,timeout:60000})).stdout;}
+export async function git(path:string,args:string[],maxBuffer=4*1024*1024,env?:NodeJS.ProcessEnv):Promise<string> {
+  try {return (await execute("git",["-C",path,...args],{encoding:"utf8",maxBuffer,timeout:60000,env})).stdout;}
   catch {return experimentError("GIT_OPERATION_FAILED",422);}
 }
 export class RepositoryService {
-  constructor(readonly store:ExperimentStore) {}
+  constructor(readonly store:ExperimentStore,readonly gitIdentity=new GitIdentitySettings()) {}
   async bind(projectId:string,value:unknown,makeDefault=true):Promise<ProjectRepository> {
     if(this.store.runs(projectId).some(run=>this.store.active(run)))experimentError("EXPERIMENT_ACTIVE",409);
     const input=repositoryInputSchema.parse(value);const path=await realpath(input.path);
@@ -68,7 +69,13 @@ export class RepositoryService {
   }
   async status(projectId:string,id?:string) {const repo=this.bound(projectId,id);const status=await git(repo.path,["status","--porcelain=v1","--untracked-files=all"]);let head="";try{head=(await git(repo.path,["rev-parse","HEAD"])).trim();}catch{/* New repository. */}return {repository:repo,head,clean:!status,status,diff:await git(repo.path,["diff","--no-ext-diff","--no-textconv"]),staged_diff:await git(repo.path,["diff","--cached","--no-ext-diff","--no-textconv"])};}
   async history(projectId:string,page:number,id?:string) {const repo=this.bound(projectId,id);return (await git(repo.path,["log","-50",`--skip=${(page-1)*50}`,"--format=%H%x09%aI%x09%s"])).trim().split("\n").filter(Boolean).map(row=>{const [sha,at,...title]=row.split("\t");return {sha,at,title:title.join("\t")};});}
-  async commit(projectId:string,message:string,id?:string) {const repo=this.bound(projectId,id);if(this.store.runs(projectId).some(run=>this.store.active(run)))experimentError("EXPERIMENT_ACTIVE",409);await git(repo.path,["commit","-m",message]);return this.status(projectId,id);}
+  async commit(projectId:string,message:string,id?:string) {
+    const repo=this.bound(projectId,id);
+    if(this.store.runs(projectId).some(run=>this.store.active(run)))experimentError("EXPERIMENT_ACTIVE",409);
+    const identity=await this.gitIdentity.require(repo.path);
+    await git(repo.path,["commit","-m",message],undefined,{...process.env,...gitIdentityEnv(identity)});
+    return this.status(projectId,id);
+  }
   async editor(projectId:string,id?:string):Promise<void> {const repo=this.bound(projectId,id);if(!repo.editor)experimentError("EDITOR_NOT_CONFIGURED");const child=spawn(repo.editor.executable,[...repo.editor.args,repo.path],{cwd:repo.path,detached:true,stdio:"ignore",shell:false});await new Promise<void>((resolve,reject)=>{child.once("error",()=>reject(Object.assign(new Error("EDITOR_START_FAILED"),{statusCode:422})));child.once("spawn",resolve);});child.unref();}
   async preflight(projectId:string,sha:string,id?:string):Promise<void> {
     commitShaSchema.parse(sha);const repo=this.bound(projectId,id);
