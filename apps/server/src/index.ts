@@ -1,4 +1,3 @@
-import { manuscriptId } from "./manuscript-layout.js";
 import { methodDraftInput } from "./experiment/method-agent.js";
 import { CodeDirectoryMigration, codeMigrationPending } from './code-directory-migration.js';
 import { ManuscriptEvidence } from './manuscript-evidence.js';
@@ -36,7 +35,7 @@ import { TrashStore, KnowledgeStore, projectLibraryPath } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
 import { LiteratureAnalysis } from "./literature-analysis.js";
-import { CodeAgent } from "./code-agent.js";
+import { CodeAgent, chatRepositoryId } from "./code-agent.js";
 import { projectChatTool } from "./project-chat-tools.js";
 import { ExperimentService } from "./experiment/service.js";
 import { experimentRoute } from "./experiment/routes.js";
@@ -537,21 +536,21 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (subpath === "chat/tasks" && method === "GET") { sendJson(response,200,codeAgent.chatHistory(projectId)); return; }
     if (subpath === "chat/write-targets" && method === "GET") {
       response.setHeader("cache-control","no-store");
-      sendJson(response,200,codeAgent.writeTargets(projectId,files));return;
+      sendJson(response,200,codeAgent.writeTargets(projectId));return;
     }
     if (subpath === "chat/skills" && method === "GET") { sendJson(response,200,{skills:chatSkills}); return; }
     if (subpath === "chat/model-config" && method === "GET") {
       sendJson(response,200,await codeAgent.chatModelConfig(projectId));return;
     }
-    const conversationRoute=subpath.match(/^chat\/conversations\/([^/]+)\/(rename|delete|paper)$/);
+    const conversationRoute=subpath.match(/^chat\/conversations\/([^/]+)\/(rename|delete|repository)$/);
     if(conversationRoute&&method==='POST'){
       const [,id,action]=conversationRoute;
       const body=await readJson(request);
       if(action==='rename'){
         const {title}=z.object({title:z.string().trim().min(1).max(120)}).strict().parse(body);
         codeAgent.changeConversation(projectId,id,{title});
-      }else if(action==='paper'){
-        const input=z.object({paper_id:manuscriptId.nullable()}).strict().parse(body);
+      }else if(action==='repository'){
+        const input=z.object({repository_id:chatRepositoryId.nullable()}).strict().parse(body);
         codeAgent.changeConversation(projectId,id,input);
       }else{
         z.object({confirm:z.literal(true)}).strict().parse(body);
