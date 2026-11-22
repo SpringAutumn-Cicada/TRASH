@@ -66,7 +66,8 @@ export function prepareChatWorkspace(store: TrashStore, projectId: string, taskI
 payload=json.load(sys.stdin)
 request=urllib.request.Request(os.environ['TRASH_PROJECT_TOOL_URL'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+os.environ['TRASH_PROJECT_TOOL_TOKEN']},method='POST')
 try:
- with urllib.request.urlopen(request,timeout=30) as response: print(response.read().decode())
+ timeout=910 if payload.get('operation')=='paper-code-run' else 30
+ with urllib.request.urlopen(request,timeout=timeout) as response: print(response.read().decode())
 except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
 `);
@@ -77,8 +78,8 @@ except urllib.error.HTTPError as error:
 用户明确要求起草或修订某个自研实验的方法设计时，读取 method-skill/SKILL.md。调用 {"operation":"method-experiments"} 确认当前项目中的目标，不凭实验名猜测目录 ID。匹配多个或无法定位时向用户确认。
 使用 {"operation":"method-context","direction_id":"方向ID","scheme_id":"方案ID"} 获取方法正文和对应仓库。可选 source 为用户选定的 research/ 直属 Markdown 相对路径。按需阅读仓库。使用 {"operation":"method-draft","markdown":"完整候选正文","summary":"修改摘要","questions":[]} 将草稿送到该实验的方法设计页。该操作只保存候选正文，正式正文由用户审阅采用。需要先问关键问题时，直接在本轮回复中提出。普通方法讨论直接回复。
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
-普通共享文件用 {"operation":"stage-shared-file","path":"research/方案.md"} 获取本轮独立草稿，编辑返回的 draft，再用 {"operation":"publish-shared-file","path":"research/方案.md"} 发布。已有文件保留原内容，新文件使用已有目录。相同路径各轮可以同时起草，发布会核对起草时的版本。收到 VERSION_CONFLICT 时保留草稿并报告路径，本轮不重复覆盖。后续合并先读取最新正式文件，再与冲突草稿对照。稿件和其他共享文件也使用此流程。
-用 {"operation":"paper-code-list"} 获取可绑定的论文代码 Git 仓库。传入 repository_id 和可选的仓库相对 path 列目录，或用 {"operation":"paper-code-read","repository_id":"仓库ID","path":"src/main.py"} 按需读源码。也可省略 repository_id，直接传入项目相对路径 code/papers 或其下的目录和文件，读取尚未登记的本地代码。直接写入和执行仓库代码仅限本轮授予的绑定仓库。
+code/papers/ 外的普通共享文件（包括 code/reproductions/ 下的复现代码）可以并行读取。写入用 {"operation":"stage-shared-file","path":"research/方案.md"} 获取本轮独立草稿，编辑返回的 draft，再用 {"operation":"publish-shared-file","path":"research/方案.md"} 发布。相同路径各轮可以同时起草，发布会核对起草时的版本。收到 VERSION_CONFLICT 时保留草稿并报告路径，本轮不重复覆盖。后续合并先读取最新正式文件，再与冲突草稿对照。稿件和其他共享文件也使用此流程。
+code/papers/ 下的 Git 仓库按会话绑定。用 {"operation":"paper-code-list","path":"src"} 列出绑定仓库内目录，用 {"operation":"paper-code-read","path":"src/main.py"} 读其中源码，读取不占仓库锁。允许写入时，用 {"operation":"paper-code-run","argv":["git","apply","-"],"stdin":"补丁正文","timeout_seconds":120} 在绑定仓库内修改文件或执行命令。命令结束后释放仓库锁。同一仓库有其他写入或执行操作时，请等待工具返回。查看和编辑内容时可先在本轮目录准备补丁，命令也可读取本轮目录中的文件；执行结果中的退出码和错误需要核对。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
 navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。evidence/get读取独立依据时附带同版本公共范围（最多16000字符）与verification声明；范围缺失、版本不同或超限时根据scope_status和scope_document另行读取，不能推定范围。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。

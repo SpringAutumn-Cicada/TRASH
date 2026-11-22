@@ -441,6 +441,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         (body.operation === "paper-code-list" || body.operation === "paper-code-read")) {
         sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
       }
+      if(body&&typeof body==="object"&&"operation" in body&&body.operation==="paper-code-run"){
+        const controller=new AbortController();
+        const disconnect=()=>controller.abort();
+        response.once('close',disconnect);
+        try{
+          const result=await codeAgent.paperCodeRun(projectId,token,body,controller.signal);
+          if(!response.destroyed)sendJson(response,200,result);
+        }finally{response.off('close',disconnect);}
+        return;
+      }
       if (body && typeof body === "object" && "operation" in body &&
         ["method-experiments", "method-context", "method-draft"].includes(String(body.operation))) {
         sendJson(response, 200, codeAgent.methodChatTool(projectId, token, body as Record<string,unknown>)); return;
