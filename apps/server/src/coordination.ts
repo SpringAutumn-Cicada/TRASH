@@ -103,6 +103,7 @@ export class ExperimentCoordination {
     const manifest={plan_id:plan.plan_id,title:plan.content.title,version:plan.version,repository:plan.repository.path,
       host:profile.username+"@"+profile.host+":"+profile.port,fingerprint:profile.fingerprint,
       remote_root:workspace?.root??plan.profile.remote_root,preparation,content:plan.content,
+      source_config_sha256:plan.source_config_sha256,
       datasets:plan.datasets.map(d=>({name:d.name,path:d.path,version:d.version}))};
     return {manifest,hash:createHash("sha256").update(JSON.stringify(manifest)).digest("hex")};
   }

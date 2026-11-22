@@ -24,7 +24,9 @@ import { EnvironmentDeploymentService } from "./environment-deployment.js";
 import { TerminalService } from "./terminal.js";
 const terminal=["completed","failed","cancelled"];
 const artifactListSchema=z.array(z.object({path:z.string(),size_bytes:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)})).max(200);
-const remoteStatusSchema=z.object({run_id:z.string(),token:z.string(),state:z.string(),at:z.number(),exit_code:z.number().int().nullable().optional(),reason:z.string().nullable().optional(),started_at:z.number().optional(),finished_at:z.number().optional()}).passthrough();
+const sha256=z.string().regex(/^[a-f0-9]{64}$/);
+const versionReceiptSchema=z.object({commit_sha:z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).optional(),config_sha256:sha256,bundle_sha256:sha256});
+const remoteStatusSchema=z.object({run_id:z.string(),token:z.string(),state:z.string(),at:z.number(),version_receipt:versionReceiptSchema.optional(),exit_code:z.number().int().nullable().optional(),reason:z.string().nullable().optional(),started_at:z.number().optional(),finished_at:z.number().optional()}).passthrough();
 export class ExperimentService {
   readonly datasetUploads:DatasetUploadService;readonly workspaces:WorkspaceService;readonly deployments:EnvironmentDeploymentService;readonly environmentAnalysis:EnvironmentAnalysisService;readonly reproductions:ReproductionService;readonly data:ExperimentStore;readonly repository:RepositoryService;readonly ssh:SshService;readonly terminals:TerminalService;
   readonly gitSync:GitSyncService;
@@ -77,7 +79,7 @@ export class ExperimentService {
     return this.data.datasets(projectId).find(item=>item.dataset_id===id)!;
   }
 
-  createPlan(projectId:string,input:unknown,id?:string,baseVersion=0):ExperimentPlanVersion{
+  createPlan(projectId:string,input:unknown,id?:string,baseVersion=0,draft?:{id:string;hash:string}):ExperimentPlanVersion{
     const content=experimentPlanInputSchema.parse(input),profile=this.data.profile(projectId,content.profile_id);
     const reproduction=content.code_source==="reproduction"?this.reproductions.snapshotInfo(projectId,content.snapshot_id!):undefined;
     if(reproduction&&reproduction.reproduction_id!==content.reproduction_id)experimentError("SNAPSHOT_MISMATCH",409);
@@ -95,11 +97,33 @@ export class ExperimentService {
     if(datasets.some(d=>d.transfer_status&&d.transfer_status!=="ready"))experimentError("DATASET_NOT_READY",409);
     if(content.data_mappings?.some(mapping=>!datasets.some(dataset=>dataset.dataset_id===mapping.dataset_id)))experimentError('DATASET_MAPPING_INVALID',400);
     if(datasets.some(d=>d.profile_id!==profile.profile_id))experimentError("DATASET_HOST_MISMATCH");
-    const plan:ExperimentPlanVersion={plan_id:id??`plan_${randomUUID()}`,project_id:projectId,version:(previous?.version??0)+1,status:"draft",repository:repo,...(reproduction?{reproduction}:{}),profile,datasets,content,created_at:new Date().toISOString()};this.data.savePlan(plan);return plan;
+    const source_config_sha256=content.source_config_path?this.configHash(projectId,content.source_config_path):undefined;
+    const plan:ExperimentPlanVersion={source_config_sha256,draft_request_sha256:draft?.hash,plan_id:id??draft?.id??`plan_${randomUUID()}`,project_id:projectId,version:(previous?.version??0)+1,status:"draft",repository:repo,...(reproduction?{reproduction}:{}),profile,datasets,content,created_at:new Date().toISOString()};this.data.savePlan(plan);return plan;
+  }
+  private configHash(project:string,path:string){
+    const file=this.files.preview(project,path);
+    if(!file.etag||file.content===undefined)experimentError("EXPERIMENT_CONFIG_UNREADABLE",422);
+    try{JSON.parse(file.content);}catch{experimentError("EXPERIMENT_CONFIG_INVALID",422);}
+    return file.etag;
+  }
+  gitDraft(project:string,repository_id:string,request:string,content:Record<string,unknown>){
+    const input=experimentPlanInputSchema.parse({...content,code_source:"git",repository_id});
+    const sha=createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const id="plan_"+request;
+    return this.store.db.transaction(()=>{
+      const existing=this.data.plans(project).find(plan=>plan.plan_id===id&&plan.version===1);
+      if(existing){
+        if(existing.draft_request_sha256!==sha)experimentError("IDEMPOTENCY_CONFLICT",409);
+        return existing;
+      }
+      return this.createPlan(project,input,undefined,0,{id,hash:sha});
+    }).immediate();
   }
   async preflight(plan:ExperimentPlanVersion):Promise<Record<string,unknown>>{
     if(plan.reproduction)await this.reproductions.bundle(plan.project_id,plan.reproduction);
-    else await this.repository.preflight(plan.project_id,plan.content.commit_sha,plan.repository.repository_id);
+    else await this.repository.preflight(plan.project_id,plan.content.commit_sha,plan.repository.repository_id,false);
+    if(plan.content.source_config_path&&this.configHash(plan.project_id,plan.content.source_config_path)!==plan.source_config_sha256)
+      experimentError("EXPERIMENT_CONFIG_CHANGED",409);
     const profile=this.data.profile(plan.project_id,plan.profile.profile_id);
     if(JSON.stringify(profile)!==JSON.stringify(plan.profile))experimentError("SSH_PROFILE_CHANGED",409);
     const remote=await this.ssh.connect(profile);
@@ -190,7 +214,7 @@ export class ExperimentService {
       await remote.exec([run.plan.content.python,"-c","import os,sys; os.makedirs(sys.argv[1],mode=0o700,exist_ok=True); os.makedirs(sys.argv[1]+'/runner',exist_ok=True)",run.remote_dir]);
       this.mark(run,"syncing");await remote.upload(bundle.path,posix.join(run.remote_dir,"code.bundle.part"));
       await remote.exec([run.plan.content.python,"-c","import os,sys,hashlib; p=sys.argv[1]; h=hashlib.sha256(); f=open(p,'rb'); [h.update(b) for b in iter(lambda:f.read(1048576),b'')]; assert h.hexdigest()==sys.argv[2],'BUNDLE_HASH_MISMATCH'; os.replace(p,sys.argv[3])",posix.join(run.remote_dir,"code.bundle.part"),bundle.sha256,posix.join(run.remote_dir,"code.bundle")]);
-      const manifest={run_id:run.run_id,token:run.token,runner_version:RUNNER_VERSION,bundle_sha256:bundle.sha256,...run.plan.content,...(run.plan.reproduction?{code_snapshot:run.plan.reproduction}:{}),preparation:run.preparation,datasets:run.plan.datasets};
+      const manifest={run_id:run.run_id,token:run.token,runner_version:RUNNER_VERSION,bundle_sha256:bundle.sha256,source_config_sha256:run.plan.source_config_sha256,...run.plan.content,...(run.plan.reproduction?{code_snapshot:run.plan.reproduction}:{}),preparation:run.preparation,datasets:run.plan.datasets};
       await remote.write(posix.join(run.remote_dir,"manifest.json"),JSON.stringify(manifest));await remote.write(posix.join(run.remote_dir,"environment.json"),JSON.stringify(environment));await remote.write(posix.join(run.remote_dir,"runner","runner.py"),REMOTE_RUNNER);
       const local=projectRuntime(this.store.root,run.project_id,'experiment-runs',run.run_id);await mkdir(local,{recursive:true});await writeFile(join(local,"manifest.json"),JSON.stringify(manifest,null,2),{mode:0o600});
       if(this.data.run(run.project_id,run.run_id).status==="cancel_requested"){run.status="cancelled";this.saveRun(run);return;}
@@ -214,6 +238,10 @@ export class ExperimentService {
       if(status.run_id!==run.run_id||status.token!==run.token)experimentError("RUN_IDENTITY_MISMATCH",409);
       if(!terminal.includes(status.state)&&!inspection.session_alive&&Date.now()/1000-status.at>30){this.mark(run,"unknown_remote_state","远端状态已过期且会话不存在，不能认定实验仍在运行。");return;}
       run.remote_status={...status,token:undefined};run.process_status=status.state;
+      if(status.version_receipt){
+        if(!run.plan.reproduction&&status.version_receipt.commit_sha!==run.plan.content.commit_sha)experimentError("COMMIT_MISMATCH",409);
+        run.version_receipt=status.version_receipt;
+      }
       if(status.exit_code!==undefined&&status.exit_code!==null)run.exit_code=status.exit_code;
       if(status.started_at)run.started_at=new Date(status.started_at*1000).toISOString();if(status.finished_at)run.finished_at=new Date(status.finished_at*1000).toISOString();
       const current=this.data.run(run.project_id,run.run_id);
@@ -260,6 +288,14 @@ export class ExperimentService {
       this.saveRun(run);
     }
     run.artifacts=collected;
+    if(run.version_receipt){
+      const config=collected.find(artifact=>artifact.path==="config.json");
+      if(config?.sha256!==run.version_receipt.config_sha256){
+        run.collection_status="配置文件与运行时记录不一致";
+        run.metrics_status="待核对配置完整性";
+        return;
+      }
+    }
     run.collection_status=run.artifacts.some(a=>!a.downloaded)?"部分大文件仅保留远端引用":"产物已收集";
     if(run.plan.content.result_collection?.mode==='none'){run.metrics_status='方案未识别可靠指标，仅保存日志与产物，结果待补充';return;}
     if(run.preparation){run.metrics_status="环境准备不产生实验结果";return;}

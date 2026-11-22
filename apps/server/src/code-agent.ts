@@ -418,6 +418,27 @@ export class CodeAgent {
     if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
     return this.files.sharedChatFile(project,sharedChatFileInput.parse(body),item.task.path,item.sharedVersions,this.paperCodeRoots());
   }
+  gitExperimentTool(project:string,token:string,body:unknown){
+    const item=this.activeTool(project,token);
+    const repo=this.boundChatRepository(item);
+    const input=z.discriminatedUnion('operation',[
+      z.object({operation:z.literal('git-sync-plan'),request_id:z.string().uuid(),content:z.record(z.unknown())}).strict(),
+      z.object({operation:z.literal('git-sync-runs'),plan_id:z.string().min(1).max(160)}).strict(),
+    ]).parse(body);
+    const experiment=this.experiments;
+    if(input.operation==='git-sync-plan'){
+      if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
+      if(item.task.coordination?.kind==='assignment')experimentError('USE_COORDINATION_DRAFT',409);
+      const plan=experiment.gitDraft(project,repo.repository_id,input.request_id,input.content);
+      return {plan_id:plan.plan_id,version:plan.version,status:plan.status,commit:plan.content.commit_sha,
+        source_config_sha256:plan.source_config_sha256};
+    }
+    if(!experiment.data.plans(project).some(p=>p.plan_id===input.plan_id&&p.repository.repository_id===repo.repository_id))
+      experimentError('EXPERIMENT_PLAN_NOT_FOUND',404);
+    return {runs:experiment.data.runs(project).filter(run=>run.plan.plan_id===input.plan_id&&run.plan.repository.repository_id===repo.repository_id)
+      .map(run=>({run_id:run.run_id,version:run.plan.version,status:run.status,result_id:run.result_id,error:run.error,
+        exit_code:run.exit_code,version_receipt:run.version_receipt,artifacts:run.artifacts.map(({path,artifact_id,downloaded})=>({path,artifact_id,downloaded}))}))};
+  }
   async autoDLTool(project:string,token:string,body:unknown,signal:AbortSignal){
     const item=this.activeTool(project,token);
     const input=autoDLToolInput.parse(body);

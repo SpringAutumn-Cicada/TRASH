@@ -54,12 +54,14 @@ export function saveRunArchive(root:string,run:ExperimentRun){
     code:run.plan.reproduction
       ? {reproduction_id:run.plan.reproduction.reproduction_id,snapshot_id:run.plan.reproduction.snapshot_id,sha256:run.plan.reproduction.sha256}
       : {repository_id:run.plan.repository.repository_id,commit:run.plan.content.commit_sha},
+    version_receipt:run.version_receipt,source_config_sha256:run.plan.source_config_sha256,
     result_id:run.result_id,retry_of:run.retry_of,preparation:run.preparation,
     run_api:activity,logs_api:activity+'/logs'
   },run.run_id);
   for(const folder of ['configs','results','figures','logs'])directory(join(path,folder));
   writeOwned(join(path,'configs','run-config.json'),{
     run_id:run.run_id,seed:run.plan.content.seed,command:run.plan.content.command,config:run.plan.content.config,
+    source_config_path:run.plan.content.source_config_path,input_revisions:run.plan.content.input_revisions,
     datasets:run.plan.datasets.map(item=>({id:item.dataset_id,name:item.name,version:item.version,sha256:item.sha256}))
   },run.run_id);
   writeOwned(join(path,'results','index.json'),{

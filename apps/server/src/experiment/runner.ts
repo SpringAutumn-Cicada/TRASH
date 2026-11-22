@@ -1,10 +1,11 @@
 // Uploaded as a versioned source file. No Python or remote command is executed during development.
-export const RUNNER_VERSION = "4";
+export const RUNNER_VERSION = "5";
 export const REMOTE_RUNNER = String.raw`import sys, os, json, time, hashlib, subprocess, signal, threading, pathlib, fcntl, shlex, platform
 ROOT = pathlib.Path(sys.argv[2]).resolve()
 ACTION = sys.argv[1]
 M = json.loads((ROOT / 'manifest.json').read_text())
 TOKEN = M['token']
+version_receipt = None
 
 def atomic(name, value):
     target = ROOT / name
@@ -14,6 +15,7 @@ def atomic(name, value):
 
 def status(state, **extra):
     value = dict(run_id=M['run_id'], token=TOKEN, state=state, at=time.time(), **extra)
+    if version_receipt: value['version_receipt'] = version_receipt
     atomic('status.json', value)
     return value
 
@@ -152,7 +154,7 @@ if (ROOT / 'status.json').exists():
     if old.get('state') in ['completed','failed','cancelled']: sys.exit(0)
 (ROOT / 'logs').mkdir(exist_ok=True)
 (ROOT / 'outputs').mkdir(exist_ok=True)
-status('waiting', runner_version='4')
+status('waiting', runner_version=M['runner_version'])
 host_lock = pathlib.Path('/tmp/trash-experiment-' + str(os.getuid()) + '.lock').open('a')
 while True:
     try:
@@ -162,7 +164,7 @@ while True:
         if (ROOT / 'cancel.json').exists():
             status('cancelled', exit_code=None)
             sys.exit(0)
-        status('waiting', runner_version='4')
+        status('waiting', runner_version=M['runner_version'])
         time.sleep(2)
 process = None
 links=[]
@@ -214,6 +216,7 @@ try:
         subprocess.run(['git','-C',str(code),'checkout','--detach',M['commit_sha']],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         head = subprocess.check_output(['git','-C',str(code),'rev-parse','HEAD'],text=True).strip()
         if head != M['commit_sha']: raise RuntimeError('COMMIT_MISMATCH')
+        if subprocess.check_output(['git','-C',str(code),'status','--porcelain','--untracked-files=no']): raise RuntimeError('REMOTE_GIT_TREE_DIRTY')
     dataset_root=pathlib.Path(M['datasets'][0]['path']).resolve() if len(M.get('datasets',[]))==1 else None
     data=(dataset_root/M.get('dataset_subdirectory','')).resolve() if dataset_root else None
     if data and (not data.is_relative_to(dataset_root) or not data.exists()): raise RuntimeError('DATASET_PATH_INVALID')
@@ -247,8 +250,10 @@ try:
     if M['gpu'] == 'cpu': env['CUDA_VISIBLE_DEVICES'] = ''
     else: env['CUDA_VISIBLE_DEVICES'] = M['gpu']
     atomic('config.json', expand(M['config']))
+    version_receipt = dict(config_sha256=digest(ROOT / 'config.json'), bundle_sha256=M['bundle_sha256'])
+    if head: version_receipt['commit_sha'] = head
     environment = json.loads((ROOT / 'environment.json').read_text()) if (ROOT / 'environment.json').exists() else {}
-    environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version='4', code_snapshot=M.get('code_snapshot')))
+    environment.update(dict(python=sys.version, executable=sys.executable, platform=platform.platform(), commit_sha=head, runner_version=M['runner_version'], code_snapshot=M.get('code_snapshot'), version_receipt=version_receipt, source_config_sha256=M.get('source_config_sha256'), input_revisions=M.get('input_revisions')))
     atomic('environment.json', environment)
     steps=M.get('execution_steps') or [dict(stage='other',purpose='执行实验',working_directory='.',argv=M['command'],env={})]
     if M.get('preparation'):
@@ -280,7 +285,7 @@ try:
         threads=[threading.Thread(target=pump,args=(process.stdout,'stdout.log'),daemon=True),threading.Thread(target=pump,args=(process.stderr,'stderr.log'),daemon=True)]
         for thread in threads: thread.start()
         while process.poll() is None:
-            status('running',pid=process.pid,started_at=started,runner_version='4',log_rotation=True,**progress)
+            status('running',pid=process.pid,started_at=started,runner_version=M['runner_version'],log_rotation=True,**progress)
             cancel=ROOT/'cancel.json'
             if cancel.exists() and json.loads(cancel.read_text()).get('token')==TOKEN: reason='cancelled'
             if time.time()-started>M['timeout_seconds']: reason='timeout'

@@ -440,6 +440,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(op.startsWith("coordination-") || task.coordination&&task.coordination.kind!=="assignment"){
         sendJson(response,200,await coordination.tool(projectId,task,body)); return;
       }
+      if(op==="git-sync-plan"||op==="git-sync-runs"){
+        sendJson(response,200,codeAgent.gitExperimentTool(projectId,token,body));return;
+      }
       if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-choice"){
         sendJson(response,200,codeAgent.requestChoice(projectId,token,body));return;
       }
