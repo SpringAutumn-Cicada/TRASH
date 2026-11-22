@@ -10,12 +10,12 @@ export function useChatAttachments(base:string,conversation:string,entries:ChatA
   const upload=async(files:File[])=>{
     if(!files.length)return;
     const state=store.getSnapshot();
-    if(state.uploading){onError('附件正在上传，请稍候再添加。');return;}
-    if(state.sending)return;
+    if(state.uploading[conversation]){onError('附件正在上传，请稍候再添加。');return;}
+    if(state.sending[conversation])return;
     if(files.length+(state.messages[conversation]?.attachments?.length??0)>10){onError('每条消息最多添加 10 个附件。');return;}
     if(files.some(file=>file.size===0||file.size>20*1048576)){onError('请选择非空附件，单文件不能超过 20 MiB。');return;}
     if(state.conversation===undefined)store.choose(conversation);
-    store.setUploading(true);let added=0;
+    store.setPending('uploading',conversation,true);let added=0;
     try{for(const file of files){
       const response=await fetch(base+`/chat/attachments?name=${encodeURIComponent(file.name||'pasted-image.png')}`,{method:'POST',body:file});
       let data:{error?:string;attachment?:ChatAttachment};
@@ -28,11 +28,11 @@ export function useChatAttachments(base:string,conversation:string,entries:ChatA
       const attachment=data.attachment;
       store.update(conversation,draft=>({...draft,attachments:[...(draft.attachments??[]),attachment]}));added++;
     }}catch(cause){if(alive.current)onError(`${cause instanceof TypeError?'无法连接附件接口，请确认本分支后端服务已启动。':cause instanceof Error?cause.message:'附件上传失败。'}${added?` 已保留 ${added} 个上传成功的附件。`:''}`);}
-    finally{store.setUploading(false);}
+    finally{store.setPending('uploading',conversation,false);}
   };
   return {entries,dragging,setDragging,upload,remove:(id:string)=>{
       const {sending,uploading}=store.getSnapshot();
-      if(!sending&&!uploading)store.update(conversation,draft=>({...draft,attachments:draft.attachments?.filter(item=>item.id!==id)}));
+      if(!sending[conversation]&&!uploading[conversation])store.update(conversation,draft=>({...draft,attachments:draft.attachments?.filter(item=>item.id!==id)}));
     },
     paste:(event:React.ClipboardEvent)=>{const files=Array.from(event.clipboardData.files);if(files.length){event.preventDefault();void upload(files);}},
     drop:(event:React.DragEvent)=>{event.preventDefault();setDragging(false);void upload(Array.from(event.dataTransfer.files));}

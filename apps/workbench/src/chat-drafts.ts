@@ -1,8 +1,9 @@
 import type { ChatAttachment } from './chat-attachments.js';
 
-type ChatDraft = { text?: string; skill?: string; attachments?: ChatAttachment[] };
+export type ChatWriteScope = 'drafts' | 'project' | 'repository' | { directory: string };
+type ChatDraft = { text?: string; skill?: string; attachments?: ChatAttachment[]; sandbox?:string; writeScope?:ChatWriteScope };
 type SavedDrafts = { conversation?: string; messages: Record<string, ChatDraft> };
-type DraftState = SavedDrafts & { uploading: boolean; sending: boolean };
+type DraftState = SavedDrafts & { uploading: Record<string,true|undefined>; sending: Record<string,true|undefined> };
 
 function createDraftStore(projectId: string) {
   const key = `trash.chat-drafts:${projectId}`;
@@ -13,7 +14,7 @@ function createDraftStore(projectId: string) {
     const parsed: SavedDrafts | null = stored ? JSON.parse(stored) : null;
     if (parsed?.messages && typeof parsed.messages === 'object' && !Array.isArray(parsed.messages)) saved = parsed;
   } catch { /* Keep drafts in memory when browser storage is unavailable. */ }
-  let state: DraftState = { ...saved, uploading: false, sending: false };
+  let state: DraftState = { ...saved, uploading: {}, sending: {} };
 
   function publish(next: DraftState) {
     const changed = state.conversation !== next.conversation || state.messages !== next.messages;
@@ -38,7 +39,7 @@ function createDraftStore(projectId: string) {
     update(conversation: string, update: (draft: ChatDraft) => ChatDraft) {
       const messages = { ...state.messages };
       const next = update(messages[conversation] ?? {});
-      if (next.text || next.skill || next.attachments?.length) messages[conversation] = next;
+      if (next.text || next.skill || next.attachments?.length || next.sandbox || next.writeScope) messages[conversation] = next;
       else delete messages[conversation];
       publish({ ...state, messages, conversation: state.conversation ?? conversation });
     },
@@ -47,11 +48,11 @@ function createDraftStore(projectId: string) {
       delete messages[conversation];
       publish({ ...state, messages, conversation: state.conversation === conversation ? nextConversation : state.conversation });
     },
-    setUploading(uploading: boolean) {
-      publish({ ...state, uploading });
-    },
-    setSending(sending: boolean) {
-      publish({ ...state, sending });
+    setPending(kind:'uploading'|'sending', conversation:string, pending:boolean) {
+      const changes={...state[kind]};
+      if(pending)changes[conversation]=true;
+      else delete changes[conversation];
+      publish({ ...state, [kind]: changes });
     }
   };
 }

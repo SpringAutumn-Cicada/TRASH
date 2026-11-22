@@ -34,7 +34,22 @@ export class KnowledgeAgent implements TaskRunner {
   onTaskSettled?: (projectId: string, task?:KnowledgeTask) => void;
   private running = new Map<string, { child: ChildProcess; task: KnowledgeTask }>();
   private closed = false;
-  private reserved = new Set<string>();
+  private reserved = new Map<string,{task:KnowledgeTask; resources:Set<string>}>();
+  private pumping = new Set<string>();
+  canStart?: () => boolean;
+  resumeQueued(projectId:string){this.pump(projectId);}
+  hasRunningTasks(){return this.reserved.size>0;}
+  private resources(task:KnowledgeTask){
+    const {input}=task;
+    const source=input.source_ids[0];
+    const {expectedTargets}=task.snapshot as {expectedTargets?:Record<string,unknown>};
+    const resources=new Set(Object.keys(expectedTargets??{}).map(path=>`file:${path}`));
+    if(input.abstract_mode&&source)resources.add(`abstract:${source}`);
+    if(!input.abstract_mode&&source&&(input.include_source_wiki||input.kind==='literature-card'||input.wiki_level==='single'))resources.add(`paper:${source}`);
+    if(input.target_id)resources.add(`target:${input.target_id}`);
+    if(input.wiki_level==='overview')resources.add('project-overview');
+    return resources;
+  }
   constructor(readonly store: TrashStore, readonly knowledge: KnowledgeStore, readonly cli: { command: string; prefix: string[] } = { command: process.env.TRASH_CODEX_COMMAND || "codex", prefix: [] }) {
     const rows = store.db.prepare("SELECT data FROM knowledge_tasks WHERE status IN ('queued','running')").all() as {data:string}[];
     for (const row of rows) { const task = JSON.parse(row.data) as KnowledgeTask; task.status="interrupted"; task.error="服务重启，任务已中断；请手动重试。"; knowledge.saveTask(task); }
@@ -44,7 +59,7 @@ export class KnowledgeAgent implements TaskRunner {
     if(input.topic_preview&&(!isTopicBundle(input)||input.research_exploration!=='topic'))requestError('INVALID_REQUEST',400);
     const kbRoot=new MarkdownKnowledge(this.store).root(projectId);
     if(!migrationManifest(kbRoot)){
-      if(this.knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))requestError('PROJECT_HAS_ACTIVE_TASKS',409);
+      if(this.canStart?.()===false||this.knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status)))requestError('PROJECT_HAS_ACTIVE_TASKS',409);
       migrateKnowledgeBase(kbRoot,migrationPreview(kbRoot).fingerprint);
     }
     if(retryOf){
@@ -198,31 +213,40 @@ export class KnowledgeAgent implements TaskRunner {
     return false;
   }
   isProjectBusy(projectId: string): boolean {
-    return this.running.has(projectId) || this.reserved.has(projectId);
+    return [...this.reserved.values()].some(({task})=>task.project_id===projectId);
   }
   cancel(projectId: string, taskId: string): void {
     const task=this.knowledge.tasks(projectId).find(t=>t.task_id===taskId) ?? requestError("NOT_FOUND",404);
     if (!["queued","running"].includes(task.status)) requestError("TASK_FINISHED",409);
     const wasQueued=task.status==="queued";
     task.status="cancelled"; this.knowledge.saveTask(task); this.knowledge.event(taskId,"用户取消任务");
-    const active=this.running.get(projectId); if(active?.task.task_id===taskId) { active.task.status="cancelled"; this.terminate(active.child); }
-    if(wasQueued){try{this.onTaskSettled?.(projectId,task);}catch{/* Workflow records its own errors. */}}
+    const reserved=this.reserved.get(taskId);
+    if(reserved)reserved.task.status="cancelled";
+    const active=this.running.get(taskId);
+    if(active)this.terminate(active.child);
+    if(wasQueued){try{this.onTaskSettled?.(projectId,task);}catch{/* Workflow records its own errors. */}this.pump(projectId);}
   }
   private terminate(child: ChildProcess): void {
     try { if(process.platform!=="win32" && child.pid) process.kill(-child.pid,"SIGTERM"); else child.kill("SIGTERM"); } catch { /* Process already exited. */ }
-    const timer=setTimeout(()=>{try {if(process.platform!=="win32" && child.pid)process.kill(-child.pid,"SIGKILL");else child.kill("SIGKILL");}catch{/* Already exited. */}},3000); timer.unref();
+    const timer=setTimeout(()=>{if(child.exitCode!==null||child.signalCode!==null)return;try {if(process.platform!=="win32" && child.pid)process.kill(-child.pid,"SIGKILL");else child.kill("SIGKILL");}catch{/* Already exited. */}},3000); timer.unref();
   }
-  close(): void {this.closed=true; for(const active of this.running.values()){active.task.status="interrupted";this.knowledge.saveTask(active.task);this.terminate(active.child);}}
+  close(): void {
+    this.closed=true;
+    for(const {task} of this.reserved.values())if(task.status==='running'){
+      task.status='interrupted';this.knowledge.saveTask(task);
+    }
+    for(const {child} of this.running.values())this.terminate(child);
+  }
   private async readBatch(task:KnowledgeTask,prompt:string,images:string[],directory:string,timeout:number){
     if(timeout<=1)throw new Error('全文阅读超时，未发布最终卡片');
     const child=spawn(this.cli.command,[...this.cli.prefix,'exec','--sandbox','workspace-write','-c','approval_policy="never"','-c','mcp_servers.node_repl.enabled=false','--skip-git-repo-check','--ephemeral','--json','--color','never','-C',directory,...images.flatMap(path=>['--image',path]),'-'],{cwd:directory,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
-    this.running.set(task.project_id,{child,task});
+    this.running.set(task.task_id,{child,task});
     const result=new CliTurnResult(message=>this.knowledge.event(task.task_id,redact(message)));
     child.stdout.on('data',(chunk:Buffer)=>result.push(chunk));
     let bytes=0;const log=(chunk:Buffer)=>{if(bytes>1024*1024)return;bytes+=chunk.length;this.knowledge.event(task.task_id,redact(chunk.toString()));};child.stdout.on('data',log);child.stderr.on('data',log);
     let timedOut=false;
     const completion=new Promise<void>((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>{result.finish();const failure=timedOut?'PDF阅读超时；批次草稿已保留':result.failure(code,signal);if(failure){this.knowledge.event(task.task_id,'模型调用失败：'+redact(failure));reject(new Error(redact(failure)));}else resolve();});});
-    const timer=setTimeout(()=>{timedOut=true;this.terminate(child);},timeout*1000);child.stdin.on('error',()=>{});child.stdin.end(prompt);try{await completion;}finally{clearTimeout(timer);}
+    const timer=setTimeout(()=>{timedOut=true;this.terminate(child);},timeout*1000);child.stdin.on('error',()=>{});child.stdin.end(prompt);try{await completion;}finally{clearTimeout(timer);this.running.delete(task.task_id);}
     if(task.status!=='running'||this.closed)throw new Error('PDF 全文阅读已取消或中断');
   }
   private restoreDrafts(task:KnowledgeTask,output:string,paths:string[]) {
@@ -325,12 +349,23 @@ export class KnowledgeAgent implements TaskRunner {
     }
     return entry;
   }
-  private async pump(projectId: string): Promise<void> {
-    if(this.closed || this.running.has(projectId) || this.reserved.has(projectId))return;
-    const task=this.knowledge.tasks(projectId).filter(t=>t.status==="queued").sort((a,b)=>a.created_at.localeCompare(b.created_at))[0];
-    if(!task)return;
-    // Reserve before filesystem work or process startup.
-    task.status="running";this.knowledge.saveTask(task);this.reserved.add(projectId);
+  private pump(projectId:string):void {
+    if(this.closed||this.pumping.has(projectId)||(this.canStart&&!this.canStart()))return;
+    this.pumping.add(projectId);
+    try{
+      const queued=this.knowledge.tasks(projectId).filter(t=>t.status==='queued').sort((a,b)=>a.created_at.localeCompare(b.created_at));
+      const occupied=new Set([...this.reserved.values()].filter(({task})=>task.project_id===projectId).flatMap(({resources})=>[...resources]));
+      for(const task of queued){
+        const resources=this.resources(task);
+        if([...resources].some(key=>occupied.has(key)))continue;
+        for(const key of resources)occupied.add(key);
+        task.status='running';this.knowledge.saveTask(task);
+        this.reserved.set(task.task_id,{task,resources});
+        void this.run(projectId,task);
+      }
+    }finally{this.pumping.delete(projectId);}
+  }
+  private async run(projectId:string,task:KnowledgeTask):Promise<void> {
     let directory=projectRuntime(this.store.root,projectId,'tasks',task.task_id);
     let child: ChildProcess | undefined;
     try {
@@ -439,7 +474,7 @@ export class KnowledgeAgent implements TaskRunner {
         if(this.closed||task.status!=='running')throw new Error('任务已停止；草稿已保留');
         if(Date.now()>=deadline)throw new Error('生成阶段超时；草稿已保留，请继续分析');
         child=spawn(this.cli.command,[...this.cli.prefix,"exec","--sandbox","workspace-write","-c",'approval_policy="never"',"-c",'mcp_servers.node_repl.enabled=false',"--skip-git-repo-check","--ephemeral","--json","--color","never","-C",directory,"-"],{cwd:directory,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"]});
-        this.running.set(projectId,{child,task});
+        this.running.set(task.task_id,{child,task});
         let logBytes=0;
         const result=new CliTurnResult(message=>this.knowledge.event(task.task_id,redact(message)));
         const log=(chunk:Buffer)=>{if(!this.closed&&logBytes<1024*1024){const message=redact(chunk.toString());logBytes+=Buffer.byteLength(message);this.knowledge.event(task.task_id,message);}};
@@ -539,6 +574,13 @@ export class KnowledgeAgent implements TaskRunner {
       task.status="completed";task.output_id=(topicEntry?records.find(record=>record.id===topicEntry):paperBundle?records.find(record=>record.path===`knowledge_base/papers/${source}/whoami.md`):undefined)?.id??records[0].id;task.output_version=1;this.knowledge.saveTask(task);this.knowledge.event(task.task_id,`Markdown 已发布：${records.map(record=>record.path).join('、')}`);
 
     }catch(error){if(task.status==="running" && !this.closed){task.status="failed";task.error=redact(error instanceof Error?error.message:"任务失败");this.knowledge.saveTask(task);this.knowledge.event(task.task_id,task.error);}}
-    finally {this.reserved.delete(projectId);this.running.delete(projectId);if(!this.closed){try{this.onTaskSettled?.(projectId,task);}catch{/* The workflow records its own errors. */}void this.pump(projectId);}}
+    finally {
+      this.reserved.delete(task.task_id);this.running.delete(task.task_id);
+      if(!this.closed)queueMicrotask(()=>{
+        if(this.closed)return;
+        try{this.onTaskSettled?.(projectId,task);}catch{/* The workflow records its own errors. */}
+        this.pump(projectId);
+      });
+    }
   }
 }

@@ -411,7 +411,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel" || subpath === "literature-analysis/resume") && method === "POST") {
       const input=z.object({ confirm: z.literal(true),mode:z.enum(['all','missing','changed','synthesis','overview']).default('all'),source_ids:z.array(z.string().min(1)).max(1000).optional(),title:z.string().min(1).max(500).optional(),instructions:z.string().max(10000).optional() }).strict().parse(await readJson(request));
       if (subpath.endsWith("/cancel")) { sendJson(response, 200, { analysis: analysis.cancel(projectId) }); return; }
-      if (codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
       if(subpath.endsWith('/resume')){sendJson(response,202,{analysis:analysis.resume(projectId)});return;}
       sendJson(response, 202, { analysis: analysis.start(projectId,input.mode,input) }); return;
     }
@@ -635,7 +634,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const input=z.object({confirm:z.literal(true),regenerate:z.boolean().default(false),resume:z.boolean().default(false)}).strict().parse(await readJson(request));
       const sourceId=decodeURIComponent(sourceAnalysis[1]),source=store.getSource(sourceId);
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
-      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
       const latestTask=(statuses:string[])=>store.db.prepare(`SELECT task_id,status FROM knowledge_task_summaries
         WHERE project_id=? AND include_source_wiki=1 AND json_extract(source_ids,'$[0]')=?
         AND status IN (${statuses.map(()=>'?').join(',')}) ORDER BY created_at DESC,task_id DESC LIMIT 1`)
@@ -653,7 +651,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',source_ids:[sourceId],title:source.title,include_source_wiki:true,regenerate:input.regenerate}));
       sendJson(response,202,{task_id:task.task_id,status:task.status});return;
     }
-    if(subpath.startsWith('knowledge-tasks')&&method==='POST'&&codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
     if (await knowledgeRoute(request, response, url, projectId, subpath, store, knowledge, readJson, sendJson, agent)) return;
     const attachmentRoute = subpath.match(/^sources\/([^/]+)\/attachments$/);
     if (attachmentRoute && method === "POST") {
@@ -826,7 +823,9 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const workspaces = new ProjectWorkspaces(store, knowledge);
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
-  const codeAgent = new CodeAgent(store, experiments);
+  const codeAgent = new CodeAgent(store, experiments,()=>agent.hasRunningTasks());
+  agent.canStart=()=>!codeAgent.hasUnrestrictedWriter();
+  codeAgent.onSettled=()=>{for(const project of store.listProjects())agent.resumeQueued(project.project_id);};
   const analysis = new LiteratureAnalysis(store, knowledge, agent);
   const exploration=new ResearchExploration(store,knowledge,agent);
   const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)), id=>workspaces.busy(id));
