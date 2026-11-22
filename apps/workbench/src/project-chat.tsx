@@ -4,16 +4,15 @@ import { ModalLayer } from './modal-layer.js';
 import { ErrorNotice } from './error-notice.js';
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowDown, Bot, Check, ChevronDown, Copy, FolderOpen, List, LoaderCircle, MessageSquare, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Puzzle, Trash2, Search, Play, Send, Settings2, Square, X } from 'lucide-react';
-import { chatDraftStore, type ChatWriteScope } from './chat-drafts.js';
+import { chatDraftStore } from './chat-drafts.js';
 import { copyText } from './clipboard.js';
 import { ChatMarkdown } from './chat-markdown.js';
 import './project-chat.css';
 
 type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string};
 type WriteTargets={repositories:{id:string;name:string;path:string}[]};
-const nextWriteScope=(scope:unknown):ChatWriteScope=>scope==='paper-code'?'paper-code':'drafts';
-const nextSandbox=(sandbox:unknown)=>sandbox==='read-only'?'read-only':'workspace-write';
-type Turn={write_scope?:unknown;repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
+const nextSandbox=(sandbox:unknown)=>sandbox==='read-only'||sandbox==='danger-full-access'?sandbox:'workspace-write';
+type Turn={repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>;repository_bindings:Record<string,string|null>};
 type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
@@ -21,6 +20,7 @@ type SkillsStatus='loading'|'ready'|'failed';
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
 const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
 const states:Record<string,string>={queued:'等待资源',running:'正在处理',cancelling:'正在停止',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
+const isWaiting=(turn:Turn)=>turn.status==='queued'||turn.status==='running'&&Boolean(turn.waiting_for);
 const waitingResource=(turn:Turn)=>turn.waiting_for?.trim()||'正在确认占用情况';
 const errors:Record<string,string>={CHAT_WRITE_SCOPE_INVALID:"绑定的 Git 仓库目录不可用。",CHAT_REPOSITORY_BINDING_REQUIRED:"请先为当前会话选择论文代码的 Git 仓库。",CHAT_REPOSITORY_BINDING_CHANGED:"会话绑定的仓库已变化，请刷新后重试。",CHAT_REPOSITORY_UNAVAILABLE:"所选 Git 仓库不可用，请重新选择。",CHAT_PAPER_LAYOUT_CONFLICT:"论文仓库路径与其他受保护目录重叠。",CHAT_PAPER_SANDBOX_UNAVAILABLE:"当前环境无法隔离论文代码目录。",REPOSITORY_NOT_BOUND:"当前会话尚未绑定 Git 仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理当前对话中的任务。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
 const suggestions=[{title:'梳理研究方向',text:'请根据当前项目的研究问题和已有文献，梳理研究方向、已有证据以及需要补充的材料。'},{title:'比较文献方法',text:'请比较当前项目已有文献的方法、实验条件与局限，标明来源和不确定之处。'},{title:'整理研究 Wiki',text:'请基于现有文献卡片整理研究 Wiki，保留来源与版本引用，生成待审内容。'},{title:'讨论论文结构',text:'请结合当前研究问题和已有证据，和我讨论论文结构，区分已有结论与待验证假设。'}];
@@ -117,10 +117,9 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const [targets,setTargets]=useState<WriteTargets>(),[targetError,setTargetError]=useState(false);
   const [config,setConfig]=useState<ModelConfig>(),[configLoading,setConfigLoading]=useState(false),[configError,setConfigError]=useState('');
   const [sessionAction,setSessionAction]=useState<{id:string;type:'rename'|'delete';title:string}>();
-  const [model,setModel]=useState(''),[effort,setEffort]=useState(''),[lastSandbox,setLastSandbox]=useState('workspace-write'),[lastWriteScope,setLastWriteScope]=useState<ChatWriteScope>('drafts');
+  const [model,setModel]=useState(''),[effort,setEffort]=useState(''),[lastSandbox,setLastSandbox]=useState('workspace-write');
   const sandbox=nextSandbox(drafts[conversation]?.sandbox??lastSandbox);
   const repositoryId=(conversation?repositoryBindings[conversation]:drafts[conversation]?.repositoryId)??'';
-  const writeScope=repositoryId?nextWriteScope(drafts[conversation]?.writeScope??lastWriteScope):'drafts';
   const repository=targets?.repositories.find(entry=>entry.id===repositoryId);
   const [actingBusy,setBusy]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true),[connected,setConnected]=useState(true),[query,setQuery]=useState(''),[history,setHistory]=useState(true),[options,setOptions]=useState(false),[indexOpen,setIndexOpen]=useState(false),[away,setAway]=useState(false),[unread,setUnread]=useState(false),[copied,setCopied]=useState('');
   const busy=actingBusy||sending;
@@ -160,7 +159,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
           const latest=selected===undefined?data.tasks[0]:data.tasks.find(turn=>turn.conversation_id===selected);
           if(latest){
             if(selected===undefined)draftStore.choose(latest.conversation_id);
-            setLastSandbox(latest.sandbox);setLastWriteScope(nextWriteScope(latest.write_scope));setModel(latest.model);setEffort(latest.reasoning_effort??'');
+            setLastSandbox(latest.sandbox);setModel(latest.model);setEffort(latest.reasoning_effort??'');
           }
         }
       }catch{if(mounted)setConnected(false);}finally{polling=false;if(mounted)setLoading(false);}
@@ -178,12 +177,9 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const active=activeByConversation.get(conversation),session=sessions.find(item=>item.id===conversation),last=messages.at(-1);
   const currentTurn=active??last;
   const selectedSandbox=active?.sandbox??sandbox;
-  const selectedScope=active?nextWriteScope(active.write_scope):writeScope;
-  const scopeMissing=!active&&sandbox==='workspace-write'&&writeScope==='paper-code'&&!repository;
   const writeSummary=selectedSandbox==='read-only'?'只读 · 不占写锁'
-    : selectedSandbox==='danger-full-access'?'旧任务 · 完整本机权限'
-    : selectedScope==='paper-code'?active?.write_roots?.[0]??repository?.path??'请先绑定论文代码的 Git 仓库'
-    :'按文件发布共享草稿';
+    : selectedSandbox==='danger-full-access'?'整机完全控制'
+    : repository?`共享文件 · ${repository.name}`:'共享文件';
   const sessionTitle=(item:Session)=>titles[item.id]||item.first.instructions.slice(0,70);
   const filtered=sessions.filter(item=>`${sessionTitle(item)}\n${item.first.instructions}\n${item.latest.instructions}`.toLowerCase().includes(query.trim().toLowerCase()));
   const scrollBottom=(smooth=false)=>{const node=messagesRef.current;if(node)node.scrollTo({top:node.scrollHeight,behavior:smooth?'smooth':'auto'});follow.current=true;setAway(false);setUnread(false);};
@@ -199,7 +195,6 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     initial.current=true;
     draftStore.choose(session?.id??'');setOpenLogs({});setError('');setIndexOpen(false);
     setLastSandbox(session?.latest.sandbox??'workspace-write');
-    setLastWriteScope(nextWriteScope(session?.latest.write_scope));
     setModel(session?.latest.model??'');setEffort(session?.latest.reasoning_effort??'');
     input.current?.focus();
   };
@@ -262,8 +257,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const defaultEffort=config?.reasoning_effort??selectedModel?.default_effort;
   const shownEffort=effort||defaultEffort;
   const modelSummary = (shownModel ?? '模型设置') + (shownEffort ? ` · ${effortLabels[shownEffort] ?? shownEffort}` : '');
-  const permissionLabel=selectedSandbox==='read-only'?'只读交流':selectedSandbox==='danger-full-access'?'旧任务 · 完整本机权限'
-    :selectedScope==='drafts'?'共享文件':'论文代码';
+  const permissionLabel=selectedSandbox==='read-only'?'只读交流':selectedSandbox==='danger-full-access'?'整机完全控制':'允许写入';
   const threadTitle = session ? sessionTitle(session) : '新对话';
   const supportedEfforts=selectedModel?.efforts.length?selectedModel.efforts:Object.keys(effortLabels);
   const modelChoices=[...new Set([...(config?.models.map(item=>item.id)??[]),model])]
@@ -283,7 +277,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       else{
         setTurns(previous=>previous.filter(turn=>turn.conversation_id!==action.id));
         if(wasSelected){
-          setOpenLogs({});setIndexOpen(false);setModel('');setEffort('');setLastSandbox('workspace-write');setLastWriteScope('drafts');
+          setOpenLogs({});setIndexOpen(false);setModel('');setEffort('');setLastSandbox('workspace-write');
         }
       }
       setSessionAction(undefined);
@@ -291,12 +285,11 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   };
   const changeRepository=(id:string)=>{
     if(!conversation){
-      draftStore.update('',message=>({...message,repositoryId:id,writeScope:'drafts'}));
+      draftStore.update('',message=>({...message,repositoryId:id}));
       return;
     }
     void act(async()=>{
       await call(`/chat/conversations/${encodeURIComponent(conversation)}/repository`,{repository_id:id||null});
-      draftStore.update(conversation,message=>({...message,writeScope:'drafts'}));
       if(!alive.current)return;
       historyRevision.current++;
       setRepositoryBindings(old=>({...old,[conversation]:id||null}));
@@ -306,8 +299,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     event.preventDefault();
     const state=draftStore.getSnapshot();
     if((!draft.trim()&&!attachments.entries.length)||state.uploading[conversation]||state.sending[conversation]||
-      (active&&(active.status!=='running'||!active.session_id))||acting.current||loading||
-      scopeMissing)return;
+      (active&&(active.status!=='running'||!active.session_id))||acting.current||loading)return;
     const instructions=draft.trim()?draft:'请查看并分析本条消息所附的材料。';
     if(state.conversation===undefined)draftStore.choose('');
     draftStore.setPending('sending',conversation,true);
@@ -316,7 +308,6 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       const data=await call<{task:Turn}>(active?`/chat/tasks/${active.task_id}/append`:'/chat/tasks',{
         instructions,attachments:attachments.entries.map(item=>item.id),skill_id:selectedSkill||undefined,
         model,reasoning_effort:effort||undefined,sandbox,confirm:true,timeout_seconds:1800,
-        ...(!active&&sandbox==='workspace-write'?{write_scope:writeScope}:{}),
         ...(!active?{repository_id:repositoryId||null}:{}),...(conversation?{conversation_id:conversation}:{})
       });
       const stillSelected=draftStore.getSnapshot().conversation===conversation;
@@ -325,7 +316,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       historyRevision.current++;
       setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);
       if(!conversation&&data.task.repository_id)setRepositoryBindings(old=>({...old,[data.task.conversation_id]:data.task.repository_id!}));
-      if(stillSelected){setLastSandbox(data.task.sandbox);setLastWriteScope(nextWriteScope(data.task.write_scope));follow.current=true;setIndexOpen(false);input.current?.focus();}
+      if(stillSelected){setLastSandbox(data.task.sandbox);follow.current=true;setIndexOpen(false);input.current?.focus();}
     }catch(cause){
       if(alive.current&&draftStore.getSnapshot().conversation===conversation)setError(cause instanceof Error?cause.message:'发送失败，草稿已保留。');
     }finally{draftStore.setPending('sending',conversation,false);}
@@ -361,7 +352,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
             </span>
             <span className="chat-session-meta">
               <span>{date(item.latest.created_at)} · {item.count} 轮</span>
-              {status==='queued'&&<span className="chat-session-warning chat-session-resource" title={waitingResource(current)}>
+              {isWaiting(current)&&<span className="chat-session-warning chat-session-resource" title={waitingResource(current)}>
                 等待资源 · {waitingResource(current)}
               </span>}
               {['failed','interrupted'].includes(status)&&<span className="chat-session-warning">{states[status]}</span>}
@@ -426,14 +417,10 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
             <label>对话权限<select value={selectedSandbox} disabled={busy||Boolean(active)} onChange={event=>{const sandbox=event.target.value;draftStore.update(conversation,message=>({...message,sandbox}));}}>
               <option value="read-only">只读交流</option>
               <option value="workspace-write">允许写入</option>
-              {selectedSandbox==='danger-full-access'&&<option value="danger-full-access">旧任务 · 完整本机权限</option>}
+              <option value="danger-full-access">整机完全控制</option>
             </select></label>
-            {selectedSandbox==='workspace-write'&&<label>操作范围<select value={selectedScope} disabled={busy||Boolean(active)}
-              onChange={event=>{const writeScope=nextWriteScope(event.target.value);draftStore.update(conversation,message=>({...message,writeScope}));}}>
-              <option value="drafts">共享文件与知识库</option>
-              <option value="paper-code" disabled={!repository}>写入或执行绑定仓库代码</option>
-            </select></label>}
           </div>
+          {selectedSandbox==='danger-full-access'&&<p>运行期间，平台内其他写入和执行任务会等待。</p>}
           {targetError?<p role="status">暂时无法读取 Git 仓库列表。</p>:targets&&targets.repositories.length===0&&<p role="status">当前项目还没有已登记的论文代码 Git 仓库。</p>}
         </div>}
         {indexOpen&&<nav id={messageIndexId} className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
@@ -441,7 +428,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
         <div ref={transcriptRef} className="chat-transcript-wrap"><div ref={messagesRef} className="chat-messages" role="log" aria-label="Agent 对话消息" aria-live="polite" aria-relevant="additions text" onScroll={event=>{const node=event.currentTarget,isAway=node.scrollHeight-node.scrollTop-node.clientHeight>90;follow.current=!isAway;setAway(isAway);if(!isAway)setUnread(false);}}>
           {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+item.text:item.text);input.current?.focus();}}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messages.map((turn,index)=>{
             const isCurrent = turn.task_id === currentTurn?.task_id;
-            const status = isCurrent && !connected ? 'offline' : turn.status;
+            const status = isCurrent && !connected ? 'offline' : isWaiting(turn)?'queued':turn.status;
             const statusText = status === 'offline' ? '状态待同步' : states[status] ?? status;
             return <section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
             <article className="chat-message chat-user"><header><span>你</span><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header>{turn.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>{turn.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===turn.skill_id)?.title??turn.skill_id}</div>}<div className="chat-user-body">{turn.instructions}</div><ChatAttachmentList base={base} entries={turn.attachments??[]}/><footer className="chat-user-actions"><button type="button" onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>引用</button><button type="button" aria-label="复制用户消息" onClick={()=>copy(turn.task_id+'-user',turn.instructions)}>{copied===turn.task_id+'-user'?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id+'-user'?'已复制':'复制'}</button></footer></article>
@@ -463,14 +450,14 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
         </div>
         <ChatHeightControl height={chatHeight} onChange={changeChatHeight} target={transcriptRef}/>
         {error&&<div className="chat-notice"><ErrorNotice>{error}</ErrorNotice><button type="button" className="icon-button" aria-label="关闭对话错误提示" onClick={()=>setError('')}><X size={13}/></button></div>}
-        {active?.status==='queued'&&<p className="chat-resource-wait" role="status">
+        {active&&isWaiting(active)&&<p className="chat-resource-wait" role="status">
           <strong>等待资源</strong><span>{waitingResource(active)}</span>
         </p>}
         <form className="chat-composer" onSubmit={event=>void send(event)}><div className={`chat-input-shell ${attachments.dragging?'chat-drop-active':''}`} onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=busy||uploading?'none':'copy';attachments.setDragging(!busy&&!uploading);}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))attachments.setDragging(false);}} onDrop={event=>{if(busy||uploading){event.preventDefault();attachments.setDragging(false);return;}attachments.drop(event);}} onPaste={event=>{if(!busy)attachments.paste(event);}}><ChatAttachmentList base={base} entries={attachments.entries} uploading={uploading} onRemove={attachments.remove}/>{attachments.dragging&&<div className="chat-drop-label">松开即可上传图片或文件</div>}<textarea ref={input} aria-label="发送给项目 Agent 的消息" value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><ChatAttachmentButtons disabled={busy||uploading} onUpload={files=>void attachments.upload(files)}/>
           <ChatSkillPicker key={conversation} skills={skills} status={skillsStatus} value={selectedSkill} disabled={busy}
             onChange={skill=>draftStore.update(conversation,message=>({...message,skill}))}/>
-          <span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)||scopeMissing} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,...(sandbox==='workspace-write'?{write_scope:writeScope}:{}),conversation_id:conversation,repository_id:repositoryId||null,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?.status==='running'?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.status!=='running'||!active.session_id))||scopeMissing}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?.status==='running'?'追加指令':'发送'}</span></button></div></div></div>
-          <div className="chat-composer-footer"><span className="chat-write-summary" title={active?.write_roots?.join("、")||writeSummary}>写入范围 · {writeSummary}</span><small>Ctrl / ⌘ + Enter 发送</small></div>
+          <span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,repository_id:repositoryId||null,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?.status==='running'?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.status!=='running'||!active.session_id))}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?.status==='running'?'追加指令':'发送'}</span></button></div></div></div>
+          <div className="chat-composer-footer"><span className="chat-write-summary" title={active?.write_roots?.join("、")||repository?.path||writeSummary}>写入范围 · {writeSummary}</span><small>Ctrl / ⌘ + Enter 发送</small></div>
         </form>
       </div>
     </div>

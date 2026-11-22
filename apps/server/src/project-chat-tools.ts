@@ -66,7 +66,7 @@ export function prepareChatWorkspace(store: TrashStore, projectId: string, taskI
 payload=json.load(sys.stdin)
 request=urllib.request.Request(os.environ['TRASH_PROJECT_TOOL_URL'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+os.environ['TRASH_PROJECT_TOOL_TOKEN']},method='POST')
 try:
- timeout=910 if payload.get('operation')=='paper-code-run' else 30
+ timeout=310+payload.get('timeout_seconds',120) if payload.get('operation')=='paper-code-run' else 30
  with urllib.request.urlopen(request,timeout=timeout) as response: print(response.read().decode())
 except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
