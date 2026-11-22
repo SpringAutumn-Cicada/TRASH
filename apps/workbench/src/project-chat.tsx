@@ -20,6 +20,7 @@ type SkillsStatus='loading'|'ready'|'failed';
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
 const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
 const states:Record<string,string>={queued:'等待资源',running:'正在处理',cancelling:'正在停止',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
+const waitingResource=(turn:Turn)=>turn.waiting_for?.trim()||'正在确认占用情况';
 const errors:Record<string,string>={CHAT_WRITE_SCOPE_INVALID:"请选择项目中已有的普通子目录。",REPOSITORY_NOT_BOUND:"这个会话尚未绑定代码仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理这段对话中的任务，再删除。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
 const suggestions=[{title:'梳理研究方向',text:'请根据当前项目的研究问题和已有文献，梳理研究方向、已有证据以及需要补充的材料。'},{title:'比较文献方法',text:'请比较当前项目已有文献的方法、实验条件与局限，标明来源和不确定之处。'},{title:'整理研究 Wiki',text:'请基于现有文献卡片整理研究 Wiki，保留来源与版本引用，生成待审内容。'},{title:'讨论论文结构',text:'请结合当前研究问题和已有证据，和我讨论论文结构，区分已有结论与待验证假设。'}];
 const time=(value:string)=>new Date(value).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
@@ -336,7 +337,8 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
         </div><label className="chat-history-search"><Search size={14}/><input aria-label="搜索对话" placeholder="搜索对话…" value={query} onChange={event=>setQuery(event.target.value)}/></label><div className="chat-session-list">{loading?<p>正在读取对话…</p>:filtered.map(item=>{
         const title = sessionTitle(item);
         const selected = conversation === item.id;
-        const status = activeByConversation.get(item.id)?.status??item.latest.status;
+        const current = activeByConversation.get(item.id)??item.latest;
+        const status = current.status;
         const inProgress = status === 'running' || status === 'cancelling';
         return <div key={item.id} className={`chat-session-card ${selected?'selected':''}`}>
           <button type="button" className="chat-session-open" aria-current={selected?'true':undefined} disabled={actingBusy} onClick={()=>choose(item)}>
@@ -347,7 +349,10 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
                 role="img" aria-label={states[status]} title={states[status]}/>}
             </span>
             <span className="chat-session-meta">
-              <span>{date(item.latest.created_at)} · {item.count} 轮</span>{status==='queued'&&<span className="chat-session-warning">等待资源</span>}
+              <span>{date(item.latest.created_at)} · {item.count} 轮</span>
+              {status==='queued'&&<span className="chat-session-warning chat-session-resource" title={waitingResource(current)}>
+                等待资源 · {waitingResource(current)}
+              </span>}
               {['failed','interrupted'].includes(status)&&<span className="chat-session-warning">{states[status]}</span>}
             </span>
           </button>
@@ -441,7 +446,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
             const statusText = status === 'offline' ? '状态待同步' : states[status] ?? status;
             return <section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
             <article className="chat-message chat-user"><header><span>你</span><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header>{turn.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>{turn.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===turn.skill_id)?.title??turn.skill_id}</div>}<div className="chat-user-body">{turn.instructions}</div><ChatAttachmentList base={base} entries={turn.attachments??[]}/><footer className="chat-user-actions"><button type="button" onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>引用</button><button type="button" aria-label="复制用户消息" onClick={()=>copy(turn.task_id+'-user',turn.instructions)}>{copied===turn.task_id+'-user'?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id+'-user'?'已复制':'复制'}</button></footer></article>
-            <article className="chat-message chat-assistant"><header><span className="chat-agent-avatar"><Bot size={15}/></span><strong>论文助手</strong><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header>{turn.output?.length?<ChatOutputMessages output={turn.output} response={turn.response}/>:turn.response?<ChatMarkdown text={turn.response}/>:<div className={`chat-empty-response ${turn.status==='running'?'working':''}`}>{turn.status==='running'?<><span className="chat-thinking"><i/><i/><i/></span>正在处理，进展消息会陆续显示。</>:turn.status==='queued'?`等待资源${turn.waiting_for?` · ${turn.waiting_for}`:''}`:turn.status==='cancelling'?'正在停止，请稍候。':turn.status==='failed'?'本轮未能完成，可以查看过程后重新发送。':'本轮没有返回文本。'}</div>}{turn.error&&<p className="chat-error">{turn.error}</p>}
+            <article className="chat-message chat-assistant"><header><span className="chat-agent-avatar"><Bot size={15}/></span><strong>论文助手</strong><time dateTime={turn.created_at}>{time(turn.created_at)}</time></header>{turn.output?.length?<ChatOutputMessages output={turn.output} response={turn.response}/>:turn.response?<ChatMarkdown text={turn.response}/>:<div className={`chat-empty-response ${turn.status==='running'?'working':''}`}>{turn.status==='running'?<><span className="chat-thinking"><i/><i/><i/></span>正在处理，进展消息会陆续显示。</>:turn.status==='queued'?'资源可用后自动开始。':turn.status==='cancelling'?'正在停止，请稍候。':turn.status==='failed'?'本轮未能完成，可以查看过程后重新发送。':'本轮没有返回文本。'}</div>}{turn.error&&<p className="chat-error">{turn.error}</p>}
               <div className="chat-turn-actions">
                 <div className="chat-turn-buttons">{turn.response&&<button type="button" className="text-button" onClick={()=>copy(turn.task_id,turn.response)}>{copied===turn.task_id?<Check size={13}/>:<Copy size={13}/>} {copied===turn.task_id?'已复制':'复制回复'}</button>}<button type="button" className="text-button" disabled={busy} aria-expanded={Boolean(openLogs[turn.task_id])} onClick={()=>openLogs[turn.task_id]?setOpenLogs(old=>({...old,[turn.task_id]:false})):readLogs(turn)}><ChevronDown size={13}/> {openLogs[turn.task_id]?'收起过程':'查看过程'}</button>{['failed','cancelled','interrupted'].includes(turn.status)&&<button type="button" className="text-button" disabled={busy} onClick={()=>{updateDraft(draft?draft+'\n\n'+turn.instructions:turn.instructions);input.current?.focus();}}>将问题填入输入框</button>}{turn.status==='interrupted'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('请先确认旧 Agent 进程已经停止，并核对本轮已产生的改动。确认完成？'))void act(async()=>{await call(`/code-agent/tasks/${turn.task_id}/acknowledge`,{confirm:true});await refresh();});}}>确认旧进程已停止</button>}
                 </div>
@@ -459,6 +464,9 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
         </div>
         <ChatHeightControl height={chatHeight} onChange={changeChatHeight} target={transcriptRef}/>
         {error&&<div className="chat-notice"><ErrorNotice>{error}</ErrorNotice><button type="button" className="icon-button" aria-label="关闭对话错误提示" onClick={()=>setError('')}><X size={13}/></button></div>}
+        {active?.status==='queued'&&<p className="chat-resource-wait" role="status">
+          <strong>等待资源</strong><span>{waitingResource(active)}</span>
+        </p>}
         <form className="chat-composer" onSubmit={event=>void send(event)}><div className={`chat-input-shell ${attachments.dragging?'chat-drop-active':''}`} onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=busy||uploading?'none':'copy';attachments.setDragging(!busy&&!uploading);}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))attachments.setDragging(false);}} onDrop={event=>{if(busy||uploading){event.preventDefault();attachments.setDragging(false);return;}attachments.drop(event);}} onPaste={event=>{if(!busy)attachments.paste(event);}}><ChatAttachmentList base={base} entries={attachments.entries} uploading={uploading} onRemove={attachments.remove}/>{attachments.dragging&&<div className="chat-drop-label">松开即可上传图片或文件</div>}<textarea ref={input} aria-label="发送给项目 Agent 的消息" value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><ChatAttachmentButtons disabled={busy||uploading} onUpload={files=>void attachments.upload(files)}/>
           <ChatSkillPicker key={conversation} skills={skills} status={skillsStatus} value={selectedSkill} disabled={busy}
             onChange={skill=>draftStore.update(conversation,message=>({...message,skill}))}/>

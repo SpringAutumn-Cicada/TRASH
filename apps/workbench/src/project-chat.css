@@ -76,7 +76,9 @@
 .chat-jump-bottom{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid var(--line);background:var(--surface);box-shadow:0 3px 15px #0001;border-radius:25px;font-size:11px;cursor:pointer;color:var(--green);white-space:nowrap}
 .chat-notice{display:flex;align-items:center;gap:8px;padding:0 18px}
 .chat-notice>div{flex:1}
-.chat-other-active{font-size:11px;color:var(--muted);padding:8px 20px;border-top:1px solid var(--line)}
+.chat-resource-wait{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:0;padding:8px 20px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+.chat-resource-wait strong{color:#b45337}
+.chat-resource-wait span{min-width:0;overflow-wrap:anywhere}
 .chat-composer{flex:none;padding:13px 20px 12px;background:var(--surface);border-top:1px solid var(--line)}
 .chat-input-shell{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:color-mix(in srgb,var(--surface) 94%,var(--green-soft))}
 .chat-input-shell:focus-within{border-color:color-mix(in srgb,var(--green) 60%,var(--line));box-shadow:0 0 0 2px color-mix(in srgb,var(--green) 9%,transparent)}
@@ -223,7 +225,7 @@
 .chat-suggestions strong{font-size:13px}
 .chat-suggestions span{font-size:12px}
 .chat-welcome>small{font-size:11px}
-.chat-other-active{background:var(--chat-paper);border-color:var(--chat-line);font-size:12px}
+.chat-resource-wait{background:var(--chat-paper);border-color:var(--chat-line);font-size:12px}
 .chat-message-index{border-color:var(--chat-line);border-radius:12px}
 .chat-message-index button{font-size:12px}
 .chat-jump-bottom{font-size:12px;border-color:var(--chat-line);box-shadow:0 5px 20px #23415c12}
@@ -389,6 +391,7 @@
 }
 .chat-session-meta > span { white-space: nowrap; }
 .chat-session-warning { color: #b45337; }
+.chat-session-meta > .chat-session-resource { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
 .chat-session-actions {
   position: absolute;
   inset-block-start: var(--session-padding);

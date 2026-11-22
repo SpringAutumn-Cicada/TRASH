@@ -266,6 +266,14 @@ export class CodeAgent {
     });
     return [...new Set(repository?[...folders,repository]:folders)];
   }
+  private blockerLabel(blocker:CodeTask, project:string) {
+    const id=blocker.conversation_id;
+    const conversationTitle=id?this.conversationMeta(blocker.project_id,id).title:undefined;
+    const label=id?`对话「${conversationTitle??id.slice(0,8)}」`
+      :`代码任务「${blocker.task_id.slice(0,13)}」`;
+    const otherProject=blocker.project_id!==project?this.store.getProject(blocker.project_id)?.title:undefined;
+    return `${otherProject?`${otherProject} · `:""}${label}${blocker.status==='interrupted'?'（待确认中断）':''}`;
+  }
   private conflict(item:ActiveCodeTask) {
     const {task,writableRoots}=item;
     if(task.sandbox==='read-only')return;
@@ -283,13 +291,27 @@ export class CodeAgent {
       }
     }
     for(const other of related){
-      if(other.task.sandbox==='danger-full-access'||task.sandbox==='danger-full-access')return '完整本机权限任务';
-      const overlap=writableRoots.find(path=>other.roots.some(root=>contains(root,path)||contains(path,root)));
-      if(overlap)return overlap;
+      if(other.task.sandbox==='danger-full-access')return `${this.blockerLabel(other.task,task.project_id)} · 完整本机权限`;
+      if(task.sandbox==='danger-full-access')return this.blockerLabel(other.task,task.project_id);
+      for(const requested of writableRoots){
+        const held=other.roots.find(root=>contains(root,requested)||contains(requested,root));
+        if(held){
+          const overlap=contains(requested,held)?held:requested;
+          return `${overlap} · ${this.blockerLabel(other.task,task.project_id)}`;
+        }
+      }
     }
-    if(task.sandbox==='danger-full-access'&&this.knowledgeBusy())return '正在运行的文献任务';
-    if(this.experiments.data.runs().some(run=>this.experiments.data.active(run)&&
-      (task.sandbox==='danger-full-access'||Boolean(run.plan.repository.path)&&writableRoots.some(root=>contains(root,run.plan.repository.path)||contains(run.plan.repository.path,root)))))return '实验运行中的代码仓库';
+    if(task.sandbox==='danger-full-access'&&this.knowledgeBusy()){
+      const blocker=this.store.db.prepare("SELECT task_id,title FROM knowledge_task_summaries WHERE status='running' ORDER BY created_at,task_id LIMIT 1")
+        .get() as {task_id:string;title?:string}|undefined;
+      return blocker?`文献任务「${blocker.title||blocker.task_id.slice(0,13)}」`:'正在运行的文献任务';
+    }
+    const experiment=this.experiments.data.runs().find(run=>this.experiments.data.active(run)&&
+      (task.sandbox==='danger-full-access'||Boolean(run.plan.repository.path)&&writableRoots.some(root=>contains(root,run.plan.repository.path)||contains(run.plan.repository.path,root))));
+    if(experiment){
+      const title=`实验「${experiment.plan.content.title}」`;
+      return experiment.plan.repository.path?`${experiment.plan.repository.path} · ${title}`:title;
+    }
   }
   private launch(item:ActiveCodeTask,input:Input,methodContext='') {
     const {task}=item;
