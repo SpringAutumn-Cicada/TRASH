@@ -3,7 +3,7 @@ import { mkdirSync,lstatSync,readFileSync,writeFileSync,renameSync,rmSync } from
 import { join } from "node:path";
 import { z } from "zod";
 import { experimentError,type TrashStore } from "@trash/storage";
-import type { CoordinationMemoryKind,CoordinationMemoryHeader,CoordinationMemoryPage,CoordinationMember } from "@trash/protocol";
+import type { CoordinationMemoryKind,CoordinationMemoryHeader,CoordinationMemoryPage,CoordinationMember,CoordinationJob } from "@trash/protocol";
 import { ensureResearchDirectory } from "./project-layout.js";
 
 const folders:Record<CoordinationMemoryKind,string>={direction:"directions",decision:"decisions",lesson:"lessons"};
@@ -37,6 +37,10 @@ export class CoordinationMemory {
       CREATE TABLE IF NOT EXISTS coordination_page_versions (
       project TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,data TEXT NOT NULL,
       PRIMARY KEY(project,id,revision),FOREIGN KEY(project,id) REFERENCES coordination_pages(project,id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS coordination_evidence (
+      project TEXT NOT NULL,page TEXT NOT NULL,receipt TEXT NOT NULL,job TEXT NOT NULL,turn TEXT,observed TEXT NOT NULL,
+      note TEXT NOT NULL,PRIMARY KEY(project,receipt),FOREIGN KEY(project,page) REFERENCES coordination_pages(project,id) ON DELETE CASCADE);
+      CREATE INDEX IF NOT EXISTS coordination_evidence_page ON coordination_evidence(project,page,observed);
       CREATE TABLE IF NOT EXISTS coordination_exports (
       project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,path TEXT NOT NULL,written TEXT,pending TEXT,
       PRIMARY KEY(project,path));`);
@@ -71,12 +75,41 @@ export class CoordinationMemory {
         archived=excluded.archived,updated=excluded.updated,source=excluded.source`).run(project,id,kind,title,member?.id??null,member?.repository_id??null,expected+1,+archived,new Date().toISOString(),source,body);
       const page=this.page(project,id);
       this.store.db.prepare("INSERT INTO coordination_page_versions VALUES (?,?,?,?)").run(project,id,page.revision,JSON.stringify(page));
-      this.enqueue(project,folders[page.kind]+"/"+page.id+".md",this.render(page));
+      this.enqueue(project,folders[page.kind]+"/"+page.id+".md",this.render(page)+this.renderEvidence(project,page.id));
       const links=(this.store.db.prepare(`SELECT ${header} FROM coordination_pages WHERE project=? ORDER BY archived,kind,title`).all(project) as CoordinationMemoryHeader[])
         .map(p=>"- ["+p.title.replace(/[\[\]\\]/g," ")+"]("+folders[p.kind]+"/"+p.id+".md)"+(p.archived?" · 已归档":""));
       this.enqueue(project,"index.md","# 协调项目记忆\n\n"+links.join("\n")+"\n");
     }).immediate();
     return this.page(project,id);
+  }
+  evidence(project:string,id:string,offset=0){
+    const rows=this.store.db.prepare("SELECT receipt,job,turn,observed,note FROM coordination_evidence WHERE project=? AND page=? ORDER BY observed DESC,rowid DESC LIMIT 11 OFFSET ?").all(project,id,offset) as {receipt:string;job:string;turn:string|null;observed:string;note:string}[];
+    return {entries:rows.slice(0,10),next_offset:rows.length>10?offset+10:null};
+  }
+  remember(project:string,job:CoordinationJob,title:string){
+    const text=(job.report??job.worker_response??"").trim();
+    if(!job.conversation||!job.reply_task_id&&!job.task_id||!text||job.consultation&&!(job.feedback==="answered"||job.feedback==="blocked"))return;
+    const versions=(job.plans??[]).map(p=>({commit:p.commit,plan:p.plan_id,version:p.version,run:p.run_id,result:p.result_id}));
+    const note=[job.instructions.slice(0,320),text.slice(0,1000),...versions.slice(0,8).map(v=>JSON.stringify(v))].join("\n\n");
+    const receipt=digest(JSON.stringify([job.id,job.conversation,job.repository_id,job.feedback??job.report_status,note]));
+    this.store.db.transaction(()=>{
+      if(this.store.db.prepare("SELECT 1 FROM coordination_evidence WHERE project=? AND receipt=?").get(project,receipt))return;
+      const existing=this.direction(project,job.conversation,job.repository_id);
+      const page=existing?this.page(project,existing.id):undefined;
+      if(page?.archived)return;
+      const id=page?.id??randomUUID();
+      const observed=new Date().toISOString(),turn=job.reply_task_id??job.task_id;
+      const source="成员回报 · "+job.id+" · "+turn;
+      // Keep the human-maintained body independent of append-only, explicitly attributed observations.
+      this.save(project,{id,title:page?.title??title,body:page?.body??"## 当前结论\n\n待结合下方成员回报核实。",expected:page?.revision??0,archived:false},"direction",source,{id:job.conversation,repository_id:job.repository_id});
+      this.store.db.prepare("INSERT INTO coordination_evidence VALUES (?,?,?,?,?,?,?)").run(project,id,receipt,job.id,turn,observed,note);
+      const current=this.page(project,id);
+      this.enqueue(project,folders.direction+"/"+id+".md",this.render(current)+this.renderEvidence(project,id));
+    }).immediate();
+  }
+  private renderEvidence(project:string,id:string){
+    const rows=this.evidence(project,id).entries;
+    return rows.length?"\n## 最近成员回报\n\n"+rows.map(r=>"### "+r.observed+" · "+r.job+"\n\n"+r.note+"\n\n原回复 "+r.turn).join("\n\n")+"\n":"";
   }
   private render(p:CoordinationMemoryPage){
     return "# "+p.title+"\n\n版本 "+p.revision+" · "+p.updated+(p.archived?" · 已归档":"")+"\n\n"+p.body+"\n\n来源："+p.source+"\n";
@@ -106,6 +139,6 @@ export class CoordinationMemory {
     const query=z.object({id:z.string().uuid().optional(),revision:z.number().int().positive().optional(),q:z.string().max(300).default(""),offset:z.number().int().nonnegative().default(0)}).parse(body);
     if(!query.id)return this.list(project,query.q,query.offset);
     const page=this.page(project,query.id,query.revision);
-    return {...page,body:page.body.slice(query.offset,query.offset+6000),next_offset:page.body.length>query.offset+6000?query.offset+6000:null};
+    return {...page,recent_evidence:this.evidence(project,page.id).entries.slice(0,3),body:page.body.slice(query.offset,query.offset+6000),next_offset:page.body.length>query.offset+6000?query.offset+6000:null};
   }
 }

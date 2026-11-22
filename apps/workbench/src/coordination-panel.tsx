@@ -272,7 +272,7 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
           </>}
           summary={<span className="chat-write-summary">{interrupted?"请先确认旧进程已停止":"协调权限 · 只读与派单"}</span>}/>
       </div>
-    </div>:tab==="memory"?<MemoryPanel url={url} members={members} initialId={memoryId} openChat={id=>{chatDraftStore(projectId).choose(id);onNavigate("chat");}} openMethod={experiment=>onNavigate("experiments",{tab:"method",experiment})}/>:<div className="coordination-panel">
+    </div>:tab==="memory"?<MemoryPanel url={url} members={members} initialId={memoryId} openChat={(id,turn)=>{chatDraftStore(projectId).choose(id);onNavigate("chat",{focus:turn});}} openMethod={experiment=>onNavigate("experiments",{tab:"method",experiment})}/>:<div className="coordination-panel">
       {decisions.length>0&&<section className="coord-section"><header><h3>待你处理</h3></header>
         {decisions.map(s=><div key={s.task_id}><small>{s.title} · {s.repository}</small>
           <ChatDecisionCard decision={s.decision!} disabled={busy||["queued","running","cancelling","interrupted"].includes(s.status)} continued={false}

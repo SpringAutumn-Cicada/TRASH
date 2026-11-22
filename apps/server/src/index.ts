@@ -569,6 +569,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
+    if(subpath==="coordination/memory/evidence"&&method==="GET"){
+      sendJson(response,200,coordination.memory.evidence(projectId,z.string().uuid().parse(url.searchParams.get("id")),
+        z.coerce.number().int().nonnegative().parse(url.searchParams.get("offset")??0)));return;
+    }
     if(subpath==="coordination/memory"&&method==="GET"){
       response.setHeader("cache-control","no-store");
       const id=url.searchParams.get("id");

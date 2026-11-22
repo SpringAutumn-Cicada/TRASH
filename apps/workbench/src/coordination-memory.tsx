@@ -3,9 +3,10 @@ import type { CoordinationMemoryPage,CoordinationMemoryHeader,CoordinationMember
 import { ChatMarkdown } from "./chat-markdown.js";
 import { api,uiError } from "./api.js";
 
-type Detail={page:CoordinationMemoryPage;methods:{direction_id:string;scheme_id:string;title:string}[]};
+type Evidence={entries:{receipt:string;job:string;turn:string;observed:string;note:string}[];next_offset:number|null};
+type Detail={evidence:Evidence;page:CoordinationMemoryPage;methods:{direction_id:string;scheme_id:string;title:string}[]};
 type Index={pages:CoordinationMemoryHeader[];next_offset:number|null};
-export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:string;members:CoordinationMember[];initialId?:string;openChat:(id:string)=>void;openMethod:(key:string)=>void}){
+export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:string;members:CoordinationMember[];initialId?:string;openChat:(id:string,turn?:string)=>void;openMethod:(key:string)=>void}){
   const [q,query]=useState(""),[offset,setOffset]=useState(0),[index,setIndex]=useState<Index>();
   const [id,select]=useState(initialId??""),[detail,setDetail]=useState<Detail>(),[rev,setRev]=useState(0);
   const [edit,setEdit]=useState<CoordinationMemoryPage>(),[busy,setBusy]=useState(false),[error,setError]=useState(""),[tick,refresh]=useState(0);
@@ -50,6 +51,8 @@ export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:str
       <div><button type="button" className="text-button" disabled={busy} onClick={()=>setEdit(undefined)}>取消</button><button className="primary-button" disabled={busy}>保存版本</button></div>
     </form>:page?<><header><h3>{page.title}</h3><span>v{page.revision}{page.archived?" · 已归档":""}</span></header>
       <ChatMarkdown text={page.body}/><small>{page.source} · {new Date(page.updated).toLocaleString()}</small>
+      {!rev&&detail.evidence.entries.length>0&&<section><h4>成员回报</h4>{detail.evidence.entries.map(r=><details key={r.receipt}><summary>{new Date(r.observed).toLocaleString()} · {r.note.split("\n")[0]}</summary><ChatMarkdown text={r.note}/>{page.conversation&&<button className="text-button" onClick={()=>openChat(page.conversation!,r.turn)}>查看原回复</button>}</details>)}
+      {detail.evidence.next_offset!==null&&<button className="text-button" onClick={()=>{void api<Evidence>(base+"/evidence?id="+id+"&offset="+detail.evidence.next_offset).then(value=>setDetail(current=>current===detail?{...detail,evidence:{...value,entries:[...detail.evidence.entries,...value.entries]}}:current)).catch(e=>setError(uiError(e,"读取回报失败")));}}>更早回报</button>}</section>}
       <div className="memory-actions">{page.conversation&&<button className="text-button" onClick={()=>openChat(page.conversation!)}>来源对话</button>}
       {detail.methods.map(m=><button key={m.direction_id+"/"+m.scheme_id} className="text-button" onClick={()=>openMethod(m.direction_id+"/"+m.scheme_id)}>{m.title} · 方法设计</button>)}
       {page.repository&&<small>仓库 · {members.find(m=>m.repository_id===page.repository)?.repository??page.repository}</small>}</div>

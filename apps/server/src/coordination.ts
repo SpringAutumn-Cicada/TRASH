@@ -81,6 +81,9 @@ export class ExperimentCoordination {
     if(!this.port||this.working)return;
     this.working=true;
     try {
+      for(const row of this.store.db.prepare("SELECT DISTINCT project FROM coordination_exports WHERE pending IS NOT NULL").all() as {project:string}[]){
+        try{this.memory.flush(row.project);}catch(error){console.warn("协调记忆导出待重试",(error as Error).message);}
+      }
       const projects=this.store.db.prepare("SELECT DISTINCT project FROM coordination_jobs WHERE status IN ('waiting','delivered') UNION SELECT project FROM coordination_summaries WHERE sent=0 UNION SELECT project FROM coordination_consultations WHERE state='open'").all() as {project:string}[];
       for(const {project} of projects){
         if(!this.port)return;
@@ -119,6 +122,10 @@ export class ExperimentCoordination {
           }
         }
         const updated=this.view(project);
+        for(const job of updated.jobs.filter(j=>j.consultation?!!j.feedback:j.finished||j.report_status==="ready")){
+          const member=updated.conversations.find(m=>m.id===job.conversation);
+          if(member&&member.repository_id===job.repository_id)this.memory.remember(project,job,member.title);
+        }
         if(!await this.resumeConsultation(project,updated))await this.sendSummary(project,updated);
       }
     }finally{this.working=false;}
@@ -326,6 +333,10 @@ export class ExperimentCoordination {
     if(task.coordination?.kind==="assignment")return this.workerTool(project,task,body);
     if(task.coordination?.kind!=="coordinator"&&task.coordination?.kind!=="summary")experimentError("COORDINATOR_ONLY",403);
     const operation=z.object({operation:z.string()}).parse(body).operation;
+    if(operation==="coordination-evidence"){
+      const {id,offset}=z.object({id:z.string().uuid(),offset:z.number().int().nonnegative().default(0)}).parse(body);
+      return this.memory.evidence(project,id,offset);
+    }
     if(operation==="coordination-memory")return this.memory.read(project,body);
     const view=this.view(project);
     const root=task.coordination.origin??task.task_id;
@@ -460,7 +471,7 @@ export class ExperimentCoordination {
   memoryDetail(project:string,id:string,revision?:number){
     const page=this.memory.page(project,id,revision);
     const methods=page.repository?listExperiments(join(this.store.root,"projects",project)).filter(e=>e.repository_id===page.repository):[];
-    return {page,methods};
+    return {page,methods,evidence:this.memory.evidence(project,id)};
   }
 
   messageProcess(project:string,id:string) {
