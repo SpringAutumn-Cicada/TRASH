@@ -12,6 +12,12 @@ export function autoDLPath(root: string, ...parts: string[]): string {
   return [root.replace(/\/+$/, ""), ...parts].join("/");
 }
 
+export function normalizeAutoDLRoot(path: string): string {
+  const root = path.trim();
+  if (!root.startsWith("/")) return root;
+  return "/" + root.split("/").filter(part => part && part !== ".").join("/");
+}
+
 export function remoteDirectoryLabel(name: string): string {
   const value = name.normalize("NFKC").replace(/[^\p{L}\p{N}_.-]+/gu, "_").replace(/^[._-]+|[._-]+$/g, "");
   const encoder = new TextEncoder();

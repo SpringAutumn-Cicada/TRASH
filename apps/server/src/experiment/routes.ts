@@ -14,7 +14,7 @@ import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { autoDLDirectories, autoDLPaperDirectory, autoDLReproductionDirectory, datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
+import { autoDLDirectories, autoDLPaperDirectory, autoDLReproductionDirectory, datasetInputSchema, remotePathSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
@@ -59,7 +59,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{workspace:service.workspaces.get(projectId,profileId)??null,suggested_root:service.workspaces.suggested(projectId),sources:service.data.profiles(projectId).filter(item=>item.profile_id!==profileId).flatMap(item=>{const workspace=service.workspaces.get(projectId,item.profile_id);return workspace?[{profile_id:item.profile_id,root:workspace.root}]:[]})});return true;}
     if(parts.length===1&&method==="PUT"){const input=z.object({root:z.string().trim().min(1).max(2048)}).strict().parse(await readJson(request));if(service.reproductions.busy(projectId)||service.datasetUploads.busy(projectId)||service.deployments.busyProject(projectId)||service.data.runs(projectId).some(run=>service.data.active(run)))experimentError('WORKSPACE_BUSY',409);send(response,200,{workspace:service.workspaces.save(projectId,profileId,input.root)});return true;}
     if(parts.length===2&&['recognize','adopt'].includes(parts[1])&&method==='POST'){const input=z.object({root:z.string().trim().min(1).max(2048),source_profile_id:z.string().min(1).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));if(input.source_profile_id)service.data.profile(projectId,input.source_profile_id);if(parts[1]==='recognize')send(response,200,{recognition:await recognizeWorkspace(service,projectId,profileId,input.root,input.source_profile_id)});else send(response,200,await adoptWorkspace(service,projectId,profileId,input.root,input.source_profile_id));return true;}
-    if(parts.length===2&&parts[1]==="initialize"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{workspace:await service.workspaces.initialize(projectId,profileId,service.terminals.connection(projectId,profileId))});return true;}
+    if(parts.length===2&&parts[1]==="initialize"&&method==="POST"){
+      const input=z.object({confirm:z.literal(true),root:remotePathSchema.optional()}).strict().parse(await readJson(request));
+      const workspace=await service.workspaces.initialize(projectId,profileId,()=>service.terminals.connection(projectId,profileId),input.root);
+      send(response,200,{workspace});return true;
+    }
   }
   if(parts.length===1&&parts[0]==="terminals"&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{terminals:service.terminals.list(projectId)});return true;}
   if(parts[0]==="terminals"&&parts[1]){

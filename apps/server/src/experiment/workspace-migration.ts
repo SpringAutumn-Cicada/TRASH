@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
-import { autoDLDirectories, remotePathSchema, type WorkspaceRecognition } from "@trash/protocol";
+import { autoDLDirectories, normalizeAutoDLRoot, remotePathSchema, type WorkspaceRecognition } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import type { ExperimentService } from "./service.js";
 import type { RemoteConnection } from "./ssh.js";
@@ -28,7 +28,7 @@ async function matchesCode(service:ExperimentService,project:string,remote:Remot
 }
 export function mappedWorkspacePath(source:string,root:string,path:string){const relative=posix.relative(source,path);if(!relative||relative==='..'||relative.startsWith('../')||posix.isAbsolute(relative))return undefined;return posix.join(root,relative);}
 export async function recognizeWorkspace(service:ExperimentService,project:string,profile:string,path:string,source?:string):Promise<WorkspaceRecognition>{
- const root=posix.normalize(remotePathSchema.parse(path));if(root==='/'||root.split('/').filter(Boolean).length<2)experimentError('WORKSPACE_PATH_INVALID',400);
+ const root=normalizeAutoDLRoot(remotePathSchema.parse(path));if(root==='/'||root.split('/').filter(Boolean).length<2)experimentError('WORKSPACE_PATH_INVALID',400);
  const remote=service.terminals.connection(project,profile);const sourceWorkspace=source?service.workspaces.get(project,source)??experimentError('WORKSPACE_SOURCE_NOT_FOUND',404):undefined;
  if(source===profile)experimentError('WORKSPACE_SOURCE_INVALID',400);
  const directories:WorkspaceRecognition['directories']=[];
