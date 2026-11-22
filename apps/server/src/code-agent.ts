@@ -1,4 +1,3 @@
-import { commitShaSchema } from "@trash/protocol";
 import { methodDraftInput, methodDraftOutput, methodSkillDirectory, methodSkillId, readMethodContext, type MethodContext, type MethodDraft } from "./experiment/method-agent.js";
 import { experimentSelection, listExperiments } from "./experiment/catalog.js";
 import { readChatModelConfig, reasoningEffort } from "./chat-model-config.js";
@@ -15,7 +14,7 @@ import { realpath } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import type { TrashStore } from "@trash/storage";
-import { autoDLDirectories, autoDLPaperDirectory, type ChatDecision, type ProjectRepository } from "@trash/protocol";
+import { autoDLDirectories, autoDLPaperDirectory, commitShaSchema, type ChatDecision, type ProjectRepository } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import type { ExperimentService } from "./experiment/service.js";
 import { redact } from "./experiment/ssh.js";
@@ -111,6 +110,7 @@ export interface CodeTask {
   decision?: ChatDecision;
   git_identity_required?: boolean;
   git_upload_decision?: GitUploadDecision;
+  git_import_decision?: {version_id:string;commit:string};
   logs: string; response: string; before?: string; after?: string; truncated?: boolean;
 }
 type ActiveCodeTask = {
@@ -218,7 +218,7 @@ export class CodeAgent {
       return !conversations.get(id)?.deleted;
     });
     return {
-      tasks:tasks.map(({method_draft:_draft,git_upload_decision:_approval,...task})=>({...task,logs:''})),
+      tasks:tasks.map(({method_draft:_draft,git_upload_decision:_approval,git_import_decision:_import,...task})=>({...task,logs:''})),
       titles:Object.fromEntries([...conversations].flatMap(([id,meta])=>meta.title&&!meta.deleted?[[id,meta.title]]:[])),
       repository_bindings:Object.fromEntries([...conversations].flatMap(([id,meta])=>{
         const repository=meta.deleted?undefined:this.repositoryBinding(project,meta);
@@ -279,14 +279,46 @@ export class CodeAgent {
     const {operation:_operation,...question}=chatChoiceInput.parse(body);
     return this.saveChoice(item,question);
   }
-  private saveChoice(item:ActiveCodeTask,question:Omit<ChatDecision,'id'|'status'>,approval?:GitUploadDecision){
+  private saveChoice(item:ActiveCodeTask,question:Omit<ChatDecision,'id'|'status'>,approval?:GitUploadDecision,importApproval?:CodeTask['git_import_decision']){
     const {task}=item;
     if(task.decision||!task.session_id||item.stop||!item.toolToken||!this.active.has(task.task_id)||item.repositoryOperation||item.autoDLUpload)
       experimentError('CHAT_NOT_READY',409);
     task.decision={...question,id:randomUUID(),status:'pending'};
     task.git_upload_decision=approval;
+    task.git_import_decision=importApproval;
     this.save(task);
     return {decision_id:task.decision.id,waiting_for_user:true};
+  }
+  requestGitImportChoice(project:string,token:string,body:unknown){
+    const item=this.activeTool(project,token);
+    if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
+    const {version_id,commit}=z.object({operation:z.literal('request-git-import-choice'),version_id:z.string().uuid(),commit:commitShaSchema}).strict().parse(body);
+    const repo=this.boundChatRepository(item);
+    const version=this.experiments.gitSync.version(project,repo,version_id);
+    if(commit===version.commit)experimentError('GIT_SYNC_NO_REMOTE_CHANGES',409);
+    return this.saveChoice(item,{
+      title:'确认导回远端 Git 提交',description:'将已提交的代码导入本地审查分支，保留远端提交 SHA。',
+      details:[{label:'仓库',value:repo.name||basename(repo.path)},{label:'来源',value:version.host+':'+version.path},
+        {label:'部署基线',value:version.commit},{label:'远端 SHA',value:commit},{label:'本地审查分支',value:'trash-import/'+commit}],
+      options:[{id:'import',label:'确认导回',primary:true},{id:'skip',label:'暂不导回'}],
+    },undefined,{version_id,commit});
+  }
+  private async executeGitImport(item:ActiveCodeTask,source:CodeTask,signal:AbortSignal){
+    if(source.decision?.option_id!=='import')return '用户暂不导回远端提交。';
+    const approval=source.git_import_decision!;
+    try{
+      const project=item.task.project_id;
+      const repo=this.boundChatRepository(item);
+      const version=this.experiments.gitSync.version(project,repo,approval.version_id);
+      const result=await this.withRepositoryLock(item,repo,signal,()=>this.experiments.gitSync.importCommit(project,repo,version,approval.commit,signal));
+      const resultText=JSON.stringify(result);
+      this.recordChoiceOperation(item.task,'导回远端 Git 提交',resultText,'completed');
+      return resultText;
+    }catch(error){
+      const result='导回未完成：'+redact(error instanceof Error?error.message:'GIT_SYNC_IMPORT_FAILED');
+      this.recordChoiceOperation(item.task,'导回远端 Git 提交',result,'failed');
+      return result;
+    }
   }
   async requestGitUploadChoice(project:string,token:string,body:unknown){
     const item=this.activeTool(project,token);
@@ -1154,10 +1186,15 @@ export class CodeAgent {
       if (item.stop || this.closed) return;
       const decision=item.selection?.decision;
       let choiceResult:string|undefined;
-      if(item.selection?.git_upload_decision){
+      if(item.selection&&(item.selection.git_upload_decision||item.selection.git_import_decision)){
         const controller=new AbortController();
         item.choiceController=controller;
-        try{choiceResult=await this.executeApprovedChoice(item,item.selection,AbortSignal.any([controller.signal,AbortSignal.timeout(input.timeout_seconds*1000)]));}
+        try{
+          const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(input.timeout_seconds*1000)]);
+          choiceResult=item.selection.git_import_decision
+            ?await this.executeGitImport(item,item.selection,signal)
+            :await this.executeApprovedChoice(item,item.selection,signal);
+        }
         finally{item.choiceController=undefined;}
         if(item.stop||this.closed)return;
       }

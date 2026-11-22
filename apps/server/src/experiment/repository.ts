@@ -15,9 +15,9 @@ export async function git(path:string,args:string[],maxBuffer=4*1024*1024,env?:N
 const historyPathLimit=64*1024*1024;
 const sensitivePath=/(^|\/)(?:\.env(?:\.[^/]*)?|\.ssh|\.codex|id_rsa|id_ed25519|credentials|auth\.json)(?:\/|$)|\.(?:pem|key|p12|pfx)$/i;
 
-async function assertExportableHistory(repo:string,sha:string){
+export async function assertExportableHistory(repo:string,sha:string){
   const names=await git(repo,["log","--format=","--name-only","--root","--full-history","-m","--no-renames","-z",sha,"--"],historyPathLimit);
-  if(names.split("\0").some(path=>sensitivePath.test(path)&&!path.endsWith(".env.example")))
+  if(names.split("\0").some(path=>sensitivePath.test(path.replace(/^\n+/, ""))&&!path.endsWith(".env.example")))
     experimentError("SENSITIVE_GIT_HISTORY",422);
 }
 
