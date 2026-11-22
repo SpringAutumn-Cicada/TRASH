@@ -322,11 +322,24 @@ export class ExperimentCoordination {
     const operation=z.object({operation:z.string()}).parse(body).operation;
     const view=this.view(project);
     const root=task.coordination.origin??task.task_id;
-    if(operation==="coordination-status")return {...view,messages:undefined,
-      original_request:task.coordination.origin?view.messages.find(m=>m.id===root)?.prompt:undefined,
-      new_feedback:task.coordination.receipts?.map(receipt=>receipt.split(":")[0]),
-      jobs:task.coordination.origin?view.jobs.filter(j=>j.origin===root):view.jobs,
-      conversations:view.conversations.filter(m=>m.joined)};
+    const scoped=task.coordination.origin?view.jobs.filter(job=>job.origin===root):view.jobs;
+    if(operation==="coordination-status"||operation==="coordination-jobs"){
+      const {offset,origin,conversation}=z.object({offset:z.number().int().nonnegative().default(0),origin:z.string().optional(),conversation:z.string().optional()}).parse(body);
+      const jobs=scoped.filter(j=>(operation==="coordination-jobs"||!j.finished)&&(!origin||j.origin===origin)&&(!conversation||j.conversation===conversation));
+      const members=view.conversations.filter(m=>m.joined);
+      return {original_request:task.coordination.origin?view.messages.find(m=>m.id===root)?.prompt:undefined,
+        new_feedback:task.coordination.receipts?.map(r=>r.split(":")[0]),hosts:view.hosts,queue:view.queue.slice(0,25),queue_count:view.queue.length,
+        conversations:members.slice(offset,offset+25).map(({id,title,repository,status})=>({id,title,repository,status})),member_count:members.length,
+        jobs:jobs.slice(offset,offset+25).map(({id,origin,conversation,title,status,feedback,finished,reason})=>({id,origin,conversation,title,status,feedback,finished,reason})),
+        job_count:jobs.length,next_offset:offset+25<Math.max(jobs.length,members.length)?offset+25:null};
+    }
+    if(operation==="coordination-job"){
+      const {id,offset}=z.object({id:z.string().uuid(),offset:z.number().int().nonnegative().default(0)}).parse(body);
+      const job=scoped.find(j=>j.id===id);
+      if(!job)experimentError("NOT_FOUND",404);
+      const detail=JSON.stringify(job);
+      return {id,format:"json",text:detail.slice(offset,offset+6000),next_offset:offset+6000<detail.length?offset+6000:null};
+    }
 
     if(operation==="coordination-consult"&&(task.coordination.kind==="coordinator"||task.coordination.origin)){
       return this.consult(project,root,body,view,task);
