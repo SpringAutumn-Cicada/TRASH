@@ -13,6 +13,22 @@ const consultInput = z.object({
 });
 const normalizeTarget=(name:string)=>name.normalize("NFKC").toLowerCase().replace(/\s+/g,"");
 
+function consultationTargets(members:CoordinationMember[],target:string){
+  const id=members.find(member=>member.id===target);
+  if(id)return [id];
+  const query=normalizeTarget(target);
+  const labels=(member:CoordinationMember)=>[member.title,...(member.repository_id?[member.repository]:[])].map(normalizeTarget);
+  const exact=members.filter(member=>labels(member).includes(query));
+  if(exact.length)return exact;
+  // Use the numbered direction as an alias only when the literal name did not match.
+  const direction=query.match(/^(?:方案|方向)([0-9]+)$/);
+  if(direction){
+    const numberPattern=new RegExp("(?:方案|方向)"+direction[1]+"(?![0-9])");
+    return members.filter(member=>labels(member).some(label=>numberPattern.test(label)));
+  }
+  return members.filter(member=>labels(member).some(label=>label.includes(query)));
+}
+
 export class ExperimentCoordination {
   private port=0;
   private timer?:ReturnType<typeof setInterval>;
@@ -67,7 +83,12 @@ export class ExperimentCoordination {
         for(const snapshot of view.jobs.filter(j=>j.status==="waiting")){
           const job=this.jobs(project).find(j=>j.id===snapshot.id)!;
           if(job.status!=="waiting")continue;
-          if(job.candidates)continue;
+          if(job.candidates){
+            if(!view.conversations.some(member=>job.candidates!.includes(member.id))){
+              job.status="failed";job.reason="候选对话已删除";this.save(job);
+            }
+            continue;
+          }
           const member=view.conversations.find(m=>m.id===job.conversation);
           const existing=this.agent.coordinationTask(project,job.task_id);
           if(existing){job.status="delivered";job.reason="";this.save(job);continue;}
@@ -310,6 +331,7 @@ export class ExperimentCoordination {
     if(operation==="coordination-consult"&&(task.coordination.kind==="coordinator"||task.coordination.origin)){
       return this.consult(project,root,body,view,task);
     }
+    if(this.consultations(project).some(r=>r.origin===root&&r.state==="stopped"))experimentError("COORDINATION_TARGET_CHANGED",409);
     if(operation!=="coordination-dispatch"||task.coordination.kind!=="coordinator")experimentError("COORDINATOR_ONLY",403);
     const input=z.object({operation:z.literal("coordination-dispatch"),key:z.string().min(1).max(100),
       conversation:z.string().uuid(),instructions:z.string().trim().min(1).max(16000),expects_runs:z.boolean(),
@@ -355,10 +377,7 @@ export class ExperimentCoordination {
           if(duplicate)return {id:duplicate.id,status:"已有相同问题"};
           if(earlier.some(j=>j.parent_question===parent.id))experimentError("COORDINATION_TARGET_CHANGED",409);
         }
-        const name=normalizeTarget(q.target);
-        const matches=(m:CoordinationMember)=>[m.title,...(m.repository_id?[m.repository]:[])].map(normalizeTarget);
-        const exact=view.conversations.filter(m=>m.id===q.target||matches(m).includes(name));
-        const candidates=exact.length?exact:view.conversations.filter(m=>matches(m).some(label=>label.includes(name)));
+        const candidates=consultationTargets(view.conversations,q.target);
         const member=candidates.length===1&&candidates[0].joined?candidates[0]:undefined;
         const id=randomUUID();
         const job:CoordinationJob={id,key,origin,consultation:true,target:q.target,parent_question:q.parent_question,
@@ -438,6 +457,11 @@ export class ExperimentCoordination {
       if(!failed||!origin||failed.conversation_id!==this.thread(project)||!["failed","cancelled"].includes(failed.status)||
         this.consultations(project).find(r=>r.origin===origin)?.state==="stopped")experimentError("COORDINATION_TARGET_CHANGED",409);
       const feedback={origin,receipts:failed.coordination?.receipts??[]};
+      const prior=this.agent.coordinationTask(project,"code_"+request_id);
+      if(!prior){
+        const latest=this.agent.coordinationTurns(project).reverse().find(t=>t.coordination?.origin===origin);
+        if(latest?.task_id!==id)experimentError("COORDINATION_TARGET_CHANGED",409);
+      }
       this.store.db.prepare("UPDATE coordination_consultations SET state='open' WHERE project=? AND origin=?").run(project,origin);
       return this.message(project,request_id,failed.instructions,true,feedback);
     }
