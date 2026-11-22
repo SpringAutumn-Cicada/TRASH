@@ -9,7 +9,7 @@ export interface CoordinationRun {
 export interface CoordinationPlan {
   id:string; plan_id:string; version:number; title:string; commit:string; host:string; status:"pending"|"authorized"|"submitted"|"blocked"|"skipped";
   repository:string; command:string[]; gpu:string; datasets:string[]; preparation:boolean; key:string; info?:string;
-  has_result?:boolean; exit_code?:number; metric_values?:{name:string;value:number;unit?:string}[];
+  draft_hash?:string; has_result?:boolean; exit_code?:number; metric_values?:{name:string;value:number;unit?:string}[];
   approval_hash?:string; run_id?:string; run_status?:string; result_id?:string; metrics?:string; artifacts?:{path:string;id?:string}[];
 }
 export interface CoordinationJob {

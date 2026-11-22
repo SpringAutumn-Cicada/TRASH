@@ -21,3 +21,4 @@
 .coord-approval label { display:flex; align-items:flex-start; gap:.5rem; }
 .coord-approval input { width:auto; }
 @media(max-width:600px){.coord-section {padding:.85rem}.coord-job {padding:.65rem}.coord-section .coord-row {align-items:flex-start}}
+.coord-follow { flex-basis:100%; }
