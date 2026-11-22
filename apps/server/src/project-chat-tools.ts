@@ -66,7 +66,8 @@ export function prepareChatWorkspace(store: TrashStore, projectId: string, taskI
 payload=json.load(sys.stdin)
 request=urllib.request.Request(os.environ['TRASH_PROJECT_TOOL_URL'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+os.environ['TRASH_PROJECT_TOOL_TOKEN']},method='POST')
 try:
- timeout=310+payload.get('timeout_seconds',120) if payload.get('operation')=='paper-code-run' else 30
+ operation=payload.get('operation')
+ timeout=310+payload.get('timeout_seconds',120) if operation=='paper-code-run' else 7200 if operation in ('autodl-upload-file','autodl-upload-code') else 30
  with urllib.request.urlopen(request,timeout=timeout) as response: print(response.read().decode())
 except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
@@ -80,6 +81,7 @@ except urllib.error.HTTPError as error:
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 code/papers/ 外的普通共享文件（包括 code/reproductions/ 下的复现代码）可以并行读取。写入用 {"operation":"stage-shared-file","path":"research/方案.md"} 获取本轮独立草稿，编辑返回的 draft，再用 {"operation":"publish-shared-file","path":"research/方案.md"} 发布。相同路径各轮可以同时起草，发布会核对起草时的版本。收到 VERSION_CONFLICT 时保留草稿并报告路径，本轮不重复覆盖。后续合并先读取最新正式文件，再与冲突草稿对照。稿件和其他共享文件也使用此流程。
 code/papers/ 下的 Git 仓库按会话绑定。用 {"operation":"paper-code-list","path":"src"} 列出绑定仓库内目录，用 {"operation":"paper-code-read","path":"src/main.py"} 读其中源码，读取不占仓库锁。允许写入时，用 {"operation":"paper-code-run","argv":["git","apply","-"],"stdin":"补丁正文","timeout_seconds":120} 在绑定仓库内修改文件或执行命令。命令结束后释放仓库锁。共用 Git 元数据的工作树也会互斥。同一仓库有其他写入或执行操作时，请等待工具返回。查看和编辑内容时可先在本轮目录准备补丁，命令也可读取本轮目录中的文件；执行结果中的退出码和错误需要核对。
+仅在用户明确要求上传到 AutoDL 时调用上传工具。{"operation":"autodl-targets"} 列出当前项目已连接的实例和各自已保存的远端工作区。仅有一个已连接实例时可以省略 profile_id；多个时使用用户指定实例的 profile_id，用户没有指定时先确认目标。普通文件示例 {"operation":"autodl-upload-file","source":{"scope":"project","path":"research/report.csv"},"destination":"outputs/papers/report.csv","confirm":true}。来源 scope 为 project（项目相对路径）、turn（本轮工作目录相对路径）、repository（绑定仓库相对路径）或 attachment（传入当前轮附件 id）。destination 为远端项目工作区相对路径，也接受该工作区内的绝对文件路径。上传当前绑定仓库的完整干净 Git 提交用 {"operation":"autodl-upload-code","confirm":true}，保存到远端 code/papers/ 对应目录。工具通过现有连接上传、校验并汇报路径，相同内容可复用；同名内容不同时保持远端文件。上传完成后报告实例、路径、校验结果，代码同时报告提交号。是否执行实验由用户另行指定。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
 navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。evidence/get读取独立依据时附带同版本公共范围（最多16000字符）与verification声明；范围缺失、版本不同或超限时根据scope_status和scope_document另行读取，不能推定范围。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。

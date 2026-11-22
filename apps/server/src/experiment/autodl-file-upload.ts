@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createWriteStream } from "node:fs";
-import { mkdtemp, open, rm } from "node:fs/promises";
+import { mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { Transform } from "node:stream";
@@ -17,7 +17,7 @@ const activeDestinations = new Set<string>();
 
 export function privateUploadPath(path: string) {
   return path.split("/").some(part =>
-    [".git", ".trash", ".ssh", ".codex", "auth.json", "credentials", "id_rsa", "id_ed25519"].includes(part.toLowerCase()) ||
+    [".git", ".trash", ".ssh", ".codex", ".trash-snapshot.json", "auth.json", "credentials", "id_rsa", "id_ed25519"].includes(part.toLowerCase()) ||
     /^\.env(?:\.|$)/i.test(part) && part !== ".env.example" ||
     /\.(?:pem|key|p12|pfx)$/i.test(part) ||
     part.startsWith(".trash-upload-")
@@ -36,6 +36,8 @@ function targetPath(root: string, path: string) {
 async function localSnapshot(source: string, destination: string, signal: AbortSignal) {
   const file = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
+    if (process.platform === "linux" && await realpath("/proc/self/fd/" + file.fd) !== source)
+      experimentError("AUTODL_UPLOAD_SOURCE_INVALID", 403);
     const before = await file.stat();
     if (!before.isFile()) experimentError("AUTODL_UPLOAD_SOURCE_INVALID", 422);
     if (before.size > sizeLimit) experimentError("REQUEST_TOO_LARGE", 413);
@@ -71,7 +73,7 @@ async function remoteHash(remote: RemoteConnection, path: string) {
 }
 
 export async function uploadAutoDLFile(remote: RemoteConnection, root: string, host: string, source: string,
-  destination: string, report: UploadProgress, signal: AbortSignal) {
+  destination: string, report: UploadProgress, signal: AbortSignal, checkWorkspace: () => void) {
   const path = targetPath(root, destination);
   const key = host + "\0" + path;
   if (activeDestinations.has(key)) experimentError("AUTODL_UPLOAD_TARGET_BUSY", 409);
@@ -86,6 +88,7 @@ export async function uploadAutoDLFile(remote: RemoteConnection, root: string, h
     directory = await mkdtemp(join(tmpdir(), "trash-autodl-upload-"));
     const file = join(directory, "file");
     const { sha256, size, mode } = await localSnapshot(source, file, signal);
+    stopped();checkWorkspace();
     if (!await remoteDirectoryExists(remote, root)) experimentError("WORKSPACE_REQUIRED", 409);
     const parent = posix.dirname(path);
     await ensureRemoteDirectory(remote, parent);
@@ -101,7 +104,7 @@ export async function uploadAutoDLFile(remote: RemoteConnection, root: string, h
     const result = { path, sha256, size_bytes: size, verified: true };
     report("checking", 0, size);
     if (await verifiedExisting()) {
-      stopped();
+      stopped();checkWorkspace();
       return { ...result, reused: true };
     }
     stopped();
@@ -110,11 +113,11 @@ export async function uploadAutoDLFile(remote: RemoteConnection, root: string, h
     temporary = staging;
     await new Promise<void>((resolve, reject) => channel.close(handle, error => error ? reject(error) : resolve()));
     report("uploading", 0, size);
-    await remote.upload(file, staging, sent => report("uploading", sent, size), signal);
-    stopped();
+    if (size) await remote.upload(file, staging, sent => report("uploading", sent, size), signal);
+    stopped();checkWorkspace();
     report("verifying", size, size);
     if (await remoteHash(remote, staging) !== sha256) experimentError("AUTODL_UPLOAD_HASH_MISMATCH", 409);
-    stopped();
+    stopped();checkWorkspace();
     report("saving", size, size);
     try {
       await remote.exec(["ln", "-T", "--", staging, path]);

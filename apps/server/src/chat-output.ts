@@ -1,4 +1,4 @@
-export interface ChatOutput {id:string;kind:'message'|'tool';status:'running'|'completed'|'failed';text:string;title?:string;at:string}
+export interface ChatOutput {id:string;kind:'message'|'tool';status:'running'|'completed'|'failed';text:string;title?:string;at:string;progress?:{label:string;sent:number;total:number}}
 // Only public assistant messages and tool activity are displayed; reasoning stays out of the transcript.
 export function readChatOutput(event:unknown,previous:ChatOutput[],clean:(text:string)=>string):ChatOutput[]{
   if(!event||typeof event!=='object')return previous;

@@ -441,12 +441,15 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         (body.operation === "paper-code-list" || body.operation === "paper-code-read")) {
         sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
       }
-      if(body&&typeof body==="object"&&"operation" in body&&body.operation==="paper-code-run"){
+      if(body&&typeof body==="object"&&"operation" in body&&
+        ["paper-code-run","autodl-targets","autodl-upload-file","autodl-upload-code"].includes(String(body.operation))){
         const controller=new AbortController();
         const disconnect=()=>controller.abort();
         response.once('close',disconnect);
         try{
-          const result=await codeAgent.paperCodeRun(projectId,token,body,controller.signal);
+          const result=body.operation==="paper-code-run"
+            ? await codeAgent.paperCodeRun(projectId,token,body,controller.signal)
+            : await codeAgent.autoDLTool(projectId,token,body,controller.signal);
           if(!response.destroyed)sendJson(response,200,result);
         }finally{response.off('close',disconnect);}
         return;

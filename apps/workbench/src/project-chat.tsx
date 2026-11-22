@@ -9,7 +9,7 @@ import { copyText } from './clipboard.js';
 import { ChatMarkdown } from './chat-markdown.js';
 import './project-chat.css';
 
-type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string};
+type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string;progress?:{label:string;sent:number;total:number}};
 type WriteTargets={repositories:{id:string;name:string;path:string}[]};
 const nextSandbox=(sandbox:unknown)=>sandbox==='read-only'||sandbox==='danger-full-access'?sandbox:'workspace-write';
 type Turn={repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
@@ -476,5 +476,19 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
 
 function ChatOutputMessages({output,response}:{output:ChatOutput[];response:string}){
   const messages=output.filter(item=>item.kind==='message'&&item.text);
-  return <div className="chat-output-stream">{output.map(item=>item.kind==='message'?item.text&&<div className="chat-output-message" key={item.id}><ChatMarkdown text={item.text}/>{item.status==='running'&&<span className="chat-output-writing">正在回复…</span>}</div>:<details className="chat-tool-event" key={item.id}><summary><span className="chat-tool-icon">{item.status==='running'?<LoaderCircle size={15} className="spin"/>:item.status==='failed'?<X size={15}/>:<Check size={15}/>}</span><strong>{item.title||'执行操作'}</strong><span>{item.status==='running'?'进行中':item.status==='failed'?'失败':'完成'}</span><small>查看详情</small></summary><pre>{item.text||'此操作没有额外描述，原始事件可在过程日志中查看。'}</pre></details>)}{response&&!messages.some(item=>item.text===response)&&<div className="chat-output-message"><ChatMarkdown text={response}/></div>}</div>;
+  return <div className="chat-output-stream">{output.map(item=>{
+    if(item.kind==='message')return item.text&&<div className="chat-output-message" key={item.id}>
+      <ChatMarkdown text={item.text}/>{item.status==='running'&&<span className="chat-output-writing">正在回复…</span>}
+    </div>;
+    const progress=item.status==='running'?item.progress:undefined;
+    const percent=progress&&progress.total>0?Math.min(100,Math.floor(progress.sent/progress.total*100)):undefined;
+    const status=progress?.label??(item.status==='running'?'进行中':item.status==='failed'?'失败':'完成');
+    return <details className="chat-tool-event" key={item.id}>
+      <summary>
+        <span className="chat-tool-icon">{item.status==='running'?<LoaderCircle size={15} className="spin"/>:item.status==='failed'?<X size={15}/>:<Check size={15}/>}</span>
+        <strong>{item.title||'执行操作'}</strong><span>{status}{percent===undefined?'':` ${percent}%`}</span><small>查看详情</small>
+      </summary>
+      <pre>{item.text||'此操作没有额外描述，原始事件可在过程日志中查看。'}</pre>
+    </details>;
+  })}{response&&!messages.some(item=>item.text===response)&&<div className="chat-output-message"><ChatMarkdown text={response}/></div>}</div>;
 }

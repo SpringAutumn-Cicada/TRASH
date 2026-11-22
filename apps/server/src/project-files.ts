@@ -247,6 +247,13 @@ export class ProjectFiles {
     const bytes=this.bytes(target,uploadLimit);
     return {bytes,version:hash(bytes),mode:stat.mode&0o777};
   }
+  chatUploadSource(id:string,path:string){
+    if(internal.has(path.split('/')[0]))fail('AUTODL_UPLOAD_SOURCE_INVALID',403);
+    try{return this.locate(id,path);}catch(error){
+      if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))fail('AUTODL_UPLOAD_SOURCE_INVALID',404);
+      throw error;
+    }
+  }
   sharedChatFile(id:string,input:z.infer<typeof sharedChatFileInput>,workspace:string,versions:Map<string,string|null>,paperRoots:string[]){
     const {target,canonical}=this.sharedChatTarget(id,input.path,paperRoots);
     const staged=versions.has(target);

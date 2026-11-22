@@ -37,14 +37,17 @@ export async function uploadExperimentCode(service: ExperimentService, project: 
     const parent = posix.join(workspace.root, autoDLDirectories.paperCode);
     const destination = posix.join(parent, name);
     await ensureRemoteDirectory(remote, parent);
-    const previous = workspace.experiment_uploads?.filter(item => item.path === destination).at(-1);
-    if (previous?.commit === commit) {
-      const snapshot = service.reproductions.snapshotInfo(project, previous.snapshot_id);
-      report("preparing", 0, snapshot.size_bytes);
-      if (await remoteDirectoryExists(remote, destination) && await matchesHashes(remote, destination, snapshot.files).catch(() => false)) {
-        report("completed", snapshot.size_bytes, snapshot.size_bytes);
-        return { path: destination, snapshot, commit, reused: true, verified: true };
+    if (await remoteDirectoryExists(remote, destination)) {
+      const previous = workspace.experiment_uploads?.filter(item => item.path === destination).at(-1);
+      if (previous?.commit === commit) {
+        const snapshot = service.reproductions.snapshotInfo(project, previous.snapshot_id);
+        report("preparing", 0, snapshot.size_bytes);
+        if (await matchesHashes(remote, destination, snapshot.files).catch(() => false)) {
+          report("completed", snapshot.size_bytes, snapshot.size_bytes);
+          return { path: destination, snapshot, commit, reused: true, verified: true };
+        }
       }
+      experimentError("REPRODUCTION_REMOTE_TARGET_EXISTS", 409);
     }
     report("snapshot");
     const snapshot = await service.reproductions.sourceSnapshot(project, repo.path, name, commit);
