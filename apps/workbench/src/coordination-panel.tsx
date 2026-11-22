@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, FormEvent } from "react";
-import { ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Search, Settings2, Square, Workflow, X } from "lucide-react";
+import { BookOpen, ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Search, Settings2, Square, Workflow, X } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
 import type { NavigateOptions } from "./navigation.js";
+import { MemoryPanel } from "./coordination-memory.js";
 import { ConsultationFeedback } from "./consultation-feedback.js";
 import { CoordinationQueue } from "./coordination-queue.js";
 import { ChatDecisionCard } from "./chat-decision-card.js";
@@ -16,19 +17,20 @@ import "./coordination.css";
 
 const tabs = [
   {id:"chat",label:"协调对话",Icon:MessagesSquare},
-  {id:"queue",label:"任务与队列",Icon:ClipboardList}
+  {id:"queue",label:"任务与队列",Icon:ClipboardList},
+  {id:"memory",label:"项目记忆",Icon:BookOpen}
 ] as const;
 const activeStatuses = ["queued","running","cancelling"];
 const states = {...chatStates,queued:"排队中",interrupted:"中断待核对"};
 
-export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
+export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:string;memoryId?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
   const base="/projects/"+encodeURIComponent(projectId);
   const url=base+"/coordination";
   const [data,setData]=useState<CoordinationView>();
   const [error,setError]=useState("");
   const [loadError,setLoadError]=useState("");
   const [busy,setBusy]=useState(false);
-  const [tab,setTab]=useState<(typeof tabs)[number]["id"]>("chat");
+  const [tab,setTab]=useState<(typeof tabs)[number]["id"]>(memoryId?"memory":"chat");
   const [manage,setManage]=useState(false);
   const [membersOpen,setMembersOpen]=useState(true);
   const [query,setQuery]=useState("");
@@ -140,7 +142,7 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
         onClick={()=>setTab(id)} onKeyDown={event=>{
           if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
           event.preventDefault();
-          const next=tabs[event.key==="Home"?0:event.key==="End"?tabs.length-1:(index+1)%tabs.length].id;
+          const next=tabs[event.key==="Home"?0:event.key==="End"?tabs.length-1:(index+(event.key==="ArrowLeft"?tabs.length-1:1))%tabs.length].id;
           setTab(next);
           document.getElementById(ids+"-"+next)?.focus();
         }}>
@@ -270,7 +272,7 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
           </>}
           summary={<span className="chat-write-summary">{interrupted?"请先确认旧进程已停止":"协调权限 · 只读与派单"}</span>}/>
       </div>
-    </div>:<div className="coordination-panel">
+    </div>:tab==="memory"?<MemoryPanel url={url} members={members} initialId={memoryId} openChat={id=>{chatDraftStore(projectId).choose(id);onNavigate("chat");}} openMethod={experiment=>onNavigate("experiments",{tab:"method",experiment})}/>:<div className="coordination-panel">
       {decisions.length>0&&<section className="coord-section"><header><h3>待你处理</h3></header>
         {decisions.map(s=><div key={s.task_id}><small>{s.title} · {s.repository}</small>
           <ChatDecisionCard decision={s.decision!} disabled={busy||["queued","running","cancelling","interrupted"].includes(s.status)} continued={false}

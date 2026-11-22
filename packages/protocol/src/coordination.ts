@@ -28,3 +28,10 @@ export interface CoordinationView {
   messages:CoordinationMessage[]; jobs:CoordinationJob[];
   conversations:CoordinationMember[];
 }
+
+export type CoordinationMemoryKind = "direction" | "decision" | "lesson";
+export interface CoordinationMemoryHeader {
+  id:string; kind:CoordinationMemoryKind; title:string; conversation:string|null;
+  repository:string|null; revision:number; archived:boolean; updated:string; source:string;
+}
+export interface CoordinationMemoryPage extends CoordinationMemoryHeader { body:string }

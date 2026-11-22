@@ -569,6 +569,15 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
+    if(subpath==="coordination/memory"&&method==="GET"){
+      response.setHeader("cache-control","no-store");
+      const id=url.searchParams.get("id");
+      const revision=url.searchParams.get("revision");
+      sendJson(response,200,id?coordination.memoryDetail(projectId,z.string().uuid().parse(id),
+        revision?z.coerce.number().int().positive().parse(revision):undefined):
+        coordination.memory.list(projectId,z.string().max(300).parse(url.searchParams.get("q")??""),z.coerce.number().int().nonnegative().parse(url.searchParams.get("offset")??0)));
+      return;
+    }
     const coordinationProcess = subpath.match(/^coordination\/messages\/(code_[a-f0-9-]+)\/process$/);
     if (coordinationProcess && method === "GET") {
       response.setHeader("cache-control","no-store");

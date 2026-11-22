@@ -47,3 +47,12 @@
 .consult-body { margin:.7rem 0 .2rem 1rem; padding-inline-start:.8rem; border-inline-start:2px solid var(--chat-line); }
 .consult-body p { margin:.25rem 0 .65rem; white-space:pre-wrap; overflow-wrap:anywhere; }
 .consult-choices { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.6rem; }
+.memory-panel {grid-template-columns:minmax(14rem,1fr) minmax(0,2.6fr);align-items:start}
+.memory-panel aside,.memory-panel label {display:grid;gap:.65rem}
+.memory-panel form label {width:100%}
+.memory-panel input,.memory-panel select {box-sizing:border-box;width:100%;padding:.55rem;border:1px solid var(--line);border-radius:.55rem;color:var(--ink);background:var(--surface)}
+.memory-entry {display:grid;text-align:left;gap:.35rem;background:transparent;border:1px solid var(--line);border-radius:.6rem;padding:.65rem;color:var(--ink);cursor:pointer;overflow-wrap:anywhere}
+.memory-entry[aria-current=page] {background:var(--green-soft);border-color:var(--green)}
+.memory-entry small,.memory-panel section>small {color:var(--muted)}
+.memory-actions {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin-top:.8rem}
+@media(max-width:760px){.memory-panel {grid-template-columns:1fr}}

@@ -5,6 +5,10 @@ import type { CoordinationMember, CoordinationView, CoordinationJob, Coordinatio
 import type { CodeAgent, CodeTask } from "./code-agent.js";
 import type { ExperimentService } from "./experiment/service.js";
 
+import { join } from "node:path";
+import { listExperiments } from "./experiment/catalog.js";
+import { CoordinationMemory,memoryEdit } from "./coordination-memory.js";
+
 const consultInput = z.object({
   questions:z.array(z.object({
     key:z.string().trim().min(1).max(100),target:z.string().trim().min(1).max(300),
@@ -30,10 +34,12 @@ function consultationTargets(members:CoordinationMember[],target:string){
 }
 
 export class ExperimentCoordination {
+  readonly memory:CoordinationMemory;
   private port=0;
   private timer?:ReturnType<typeof setInterval>;
   private working=false;
   constructor(private store:TrashStore, private agent:CodeAgent, private experiments:ExperimentService) {
+    this.memory=new CoordinationMemory(store);
     store.db.exec(`CREATE TABLE IF NOT EXISTS coordination_members (
       project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
       conversation TEXT NOT NULL, PRIMARY KEY(project,conversation));
@@ -320,6 +326,7 @@ export class ExperimentCoordination {
     if(task.coordination?.kind==="assignment")return this.workerTool(project,task,body);
     if(task.coordination?.kind!=="coordinator"&&task.coordination?.kind!=="summary")experimentError("COORDINATOR_ONLY",403);
     const operation=z.object({operation:z.string()}).parse(body).operation;
+    if(operation==="coordination-memory")return this.memory.read(project,body);
     const view=this.view(project);
     const root=task.coordination.origin??task.task_id;
     const scoped=task.coordination.origin?view.jobs.filter(job=>job.origin===root):view.jobs;
@@ -450,6 +457,12 @@ export class ExperimentCoordination {
     return {conversations:[...sessions.values()],jobs:this.details(project,this.jobs(project)).sort((a,b)=>(a.priority??Date.parse(a.created_at))-(b.priority??Date.parse(b.created_at))),messages,hosts,queue};
   }
 
+  memoryDetail(project:string,id:string,revision?:number){
+    const page=this.memory.page(project,id,revision);
+    const methods=page.repository?listExperiments(join(this.store.root,"projects",project)).filter(e=>e.repository_id===page.repository):[];
+    return {page,methods};
+  }
+
   messageProcess(project:string,id:string) {
     const task=this.agent.coordinationTask(project,id);
     if(!task||task.conversation_id!==this.thread(project)||!task.coordination||task.coordination.kind==="assignment")
@@ -459,6 +472,13 @@ export class ExperimentCoordination {
 
   async action(project:string,body:unknown) {
     const action=z.object({action:z.string()}).parse(body).action;
+    if(action==="memory-save"){
+      const edit=memoryEdit.parse(body);
+      const member=edit.conversation?this.view(project).conversations.find(m=>m.id===edit.conversation&&m.joined):undefined;
+      if(!edit.expected&&!member)experimentError("COORDINATION_TARGET_CHANGED",409);
+      const page=this.memory.save(project,edit,"direction","用户编辑",member);
+      return {page,conflicts:this.memory.flush(project)};
+    }
     if(action==="message"){
       const input=z.object({id:z.string().uuid(),instructions:z.string().trim().min(1).max(30000)}).parse(body);
       return this.message(project,input.id,input.instructions);
