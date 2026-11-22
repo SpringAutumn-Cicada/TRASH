@@ -1,6 +1,6 @@
 import type { ChatAttachment } from './chat-attachments.js';
 
-export type ChatWriteScope = 'drafts' | 'project' | 'repository' | { directory: string };
+export type ChatWriteScope = 'drafts' | 'project' | 'repository' | { directory: string } | { repository_id: string };
 type ChatDraft = { text?: string; skill?: string; attachments?: ChatAttachment[]; sandbox?:string; writeScope?:ChatWriteScope };
 type SavedDrafts = { conversation?: string; messages: Record<string, ChatDraft> };
 type DraftState = SavedDrafts & { uploading: Record<string,true|undefined>; sending: Record<string,true|undefined> };

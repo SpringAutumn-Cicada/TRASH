@@ -10,7 +10,9 @@ import { ChatMarkdown } from './chat-markdown.js';
 import './project-chat.css';
 
 type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string};
-type Turn={write_scope?:ChatWriteScope;waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
+type WriteTargets={repositories:{id:string;name:string;path:string}[];code_directories:{name:string;path:string}[];papers:{name:string;path:string}[]};
+const nextWriteScope=(scope?:ChatWriteScope):ChatWriteScope=>scope==='project'?'drafts':scope??'drafts';
+type Turn={write_scope?:ChatWriteScope;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>};
 type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
@@ -109,6 +111,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const [titles,setTitles]=useState<Record<string,string>>({});
   const [skills,setSkills]=useState<ChatSkill[]>([]);
   const [skillsStatus,setSkillsStatus]=useState<SkillsStatus>('loading');
+  const [targets,setTargets]=useState<WriteTargets>(),[targetError,setTargetError]=useState(false);
   const [config,setConfig]=useState<ModelConfig>(),[configLoading,setConfigLoading]=useState(false),[configError,setConfigError]=useState('');
   const [sessionAction,setSessionAction]=useState<{id:string;type:'rename'|'delete';title:string}>();
   const [model,setModel]=useState(''),[effort,setEffort]=useState(''),[lastSandbox,setLastSandbox]=useState('workspace-write'),[lastWriteScope,setLastWriteScope]=useState<ChatWriteScope>('drafts');
@@ -152,7 +155,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
           const latest=selected===undefined?data.tasks[0]:data.tasks.find(turn=>turn.conversation_id===selected);
           if(latest){
             if(selected===undefined)draftStore.choose(latest.conversation_id);
-            setLastSandbox(latest.sandbox);setLastWriteScope(latest.write_scope??'drafts');setModel(latest.model);setEffort(latest.reasoning_effort??'');
+            setLastSandbox(latest.sandbox);setLastWriteScope(nextWriteScope(latest.write_scope));setModel(latest.model);setEffort(latest.reasoning_effort??'');
           }
         }
       }catch{if(mounted)setConnected(false);}finally{polling=false;if(mounted)setLoading(false);}
@@ -169,6 +172,21 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     .map(turn=>[turn.conversation_id,turn])),[turns]);
   const active=activeByConversation.get(conversation),session=sessions.find(item=>item.id===conversation),last=messages.at(-1);
   const currentTurn=active??last;
+  const selectedSandbox=active?.sandbox??sandbox;
+  const selectedScope=active?.sandbox==='workspace-write'?active.write_scope??'project':writeScope;
+  const directoryScope=typeof selectedScope==='object'&&'directory' in selectedScope?selectedScope.directory:undefined;
+  const chosenDirectory=[...(targets?.code_directories??[]),...(targets?.papers??[])].find(target=>target.path===directoryScope);
+  const scopeValue=typeof selectedScope==='string'?selectedScope:'repository_id' in selectedScope
+    ? 'repo:'+selectedScope.repository_id : chosenDirectory?'dir:'+chosenDirectory.path:'directory';
+  const scopeMissing=!active&&sandbox==='workspace-write'&&directoryScope!==undefined&&!directoryScope.trim();
+  const repositoryTarget=typeof selectedScope==='object'&&'repository_id' in selectedScope
+    ? targets?.repositories.find(repo=>repo.id===selectedScope.repository_id) : undefined;
+  const writeSummary=selectedSandbox==='read-only'?'只读 · 不占写锁'
+    : selectedSandbox==='danger-full-access'?'完整本机权限'
+    : directoryScope!==undefined?directoryScope||'请选择项目子目录'
+    : typeof selectedScope==='object'?repositoryTarget?.path??active?.write_roots?.[0]??'所选实验仓库'
+    : selectedScope==='repository'?active?.write_roots?.[0]??'当前绑定仓库'
+    : selectedScope==='project'?'整个项目与绑定仓库':'本轮独立草稿与知识库发布';
   const sessionTitle=(item:Session)=>titles[item.id]||item.first.instructions.slice(0,70);
   const filtered=sessions.filter(item=>`${sessionTitle(item)}\n${item.first.instructions}\n${item.latest.instructions}`.toLowerCase().includes(query.trim().toLowerCase()));
   const scrollBottom=(smooth=false)=>{const node=messagesRef.current;if(node)node.scrollTo({top:node.scrollHeight,behavior:smooth?'smooth':'auto'});follow.current=true;setAway(false);setUnread(false);};
@@ -184,7 +202,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     initial.current=true;
     draftStore.choose(session?.id??'');setOpenLogs({});setError('');setIndexOpen(false);
     setLastSandbox(session?.latest.sandbox??'workspace-write');
-    setLastWriteScope(session?.latest.write_scope??'drafts');
+    setLastWriteScope(nextWriteScope(session?.latest.write_scope));
     setModel(session?.latest.model??'');setEffort(session?.latest.reasoning_effort??'');
     input.current?.focus();
   };
@@ -227,6 +245,16 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     readModelConfig();
     return()=>{configRequest.current?.abort();configRequest.current=undefined;};
   },[readModelConfig]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    setTargetError(false);
+    void fetch(base+'/chat/write-targets',{signal:controller.signal,cache:'no-store'}).then(async response=>{
+      if(!response.ok)throw new Error();
+      const value:WriteTargets=await response.json();
+      if(!controller.signal.aborted)setTargets(value);
+    }).catch(()=>{if(!controller.signal.aborted)setTargetError(true);});
+    return()=>controller.abort();
+  },[base]);
   const toggleOptions=()=>{
     if(!options){setIndexOpen(false);readModelConfig();}
     setOptions(!options);
@@ -237,7 +265,8 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const defaultEffort=config?.reasoning_effort??selectedModel?.default_effort;
   const shownEffort=effort||defaultEffort;
   const modelSummary = (shownModel ?? '模型设置') + (shownEffort ? ` · ${effortLabels[shownEffort] ?? shownEffort}` : '');
-  const permissionLabel = sandbox==='read-only'?'只读交流':sandbox==='danger-full-access'?'完整本机权限':writeScope==='drafts'?'独立草稿':writeScope==='repository'?'绑定仓库':'项目读写';
+  const permissionLabel=selectedSandbox==='read-only'?'只读交流':selectedSandbox==='danger-full-access'?'完整本机权限'
+    :selectedScope==='drafts'?'独立草稿':selectedScope==='project'?'项目读写':'指定范围写入';
   const threadTitle = session ? sessionTitle(session) : '新对话';
   const supportedEfforts=selectedModel?.efforts.length?selectedModel.efforts:Object.keys(effortLabels);
   const modelChoices=[...new Set([...(config?.models.map(item=>item.id)??[]),model])]
@@ -268,7 +297,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     const state=draftStore.getSnapshot();
     if((!draft.trim()&&!attachments.entries.length)||state.uploading[conversation]||state.sending[conversation]||
       (active&&(active.status!=='running'||!active.session_id))||acting.current||loading||
-      (sandbox==='workspace-write'&&typeof writeScope==='object'&&!writeScope.directory.trim()))return;
+      scopeMissing)return;
     const instructions=draft.trim()?draft:'请查看并分析本条消息所附的材料。';
     if(state.conversation===undefined)draftStore.choose('');
     draftStore.setPending('sending',conversation,true);
@@ -277,14 +306,14 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       const data=await call<{task:Turn}>(active?`/chat/tasks/${active.task_id}/append`:'/chat/tasks',{
         instructions,attachments:attachments.entries.map(item=>item.id),skill_id:selectedSkill||undefined,
         model,reasoning_effort:effort||undefined,sandbox,confirm:true,timeout_seconds:1800,
-        ...(sandbox==='workspace-write'?{write_scope:writeScope}:{}),...(conversation?{conversation_id:conversation}:{})
+        ...(!active&&sandbox==='workspace-write'?{write_scope:writeScope}:{}),...(conversation?{conversation_id:conversation}:{})
       });
       const stillSelected=draftStore.getSnapshot().conversation===conversation;
       draftStore.discard(conversation,data.task.conversation_id);
       if(!alive.current)return;
       historyRevision.current++;
       setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);
-      if(stillSelected){setLastSandbox(data.task.sandbox);setLastWriteScope(data.task.write_scope??'drafts');follow.current=true;setIndexOpen(false);input.current?.focus();}
+      if(stillSelected){setLastSandbox(data.task.sandbox);setLastWriteScope(nextWriteScope(data.task.write_scope));follow.current=true;setIndexOpen(false);input.current?.focus();}
     }catch(cause){
       if(alive.current&&draftStore.getSnapshot().conversation===conversation)setError(cause instanceof Error?cause.message:'发送失败，草稿已保留。');
     }finally{draftStore.setPending('sending',conversation,false);}
@@ -371,21 +400,37 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
               <option value={effort===defaultEffort?effort:''}>{defaultEffort?effortLabels[defaultEffort]??defaultEffort:'Auto'}</option>
               {effortChoices.map(value=><option value={value} key={value}>{effortLabels[value]??value}</option>)}
             </select></label>
-            <label>对话权限<select value={sandbox} disabled={busy||Boolean(active)} onChange={event=>{const sandbox=event.target.value;draftStore.update(conversation,message=>({...message,sandbox}));}}>
-              <option value="read-only">只读交流</option><option value="workspace-write">项目资料与代码读写</option><option value="danger-full-access">完整本机权限</option>
+            <label>对话权限<select value={selectedSandbox} disabled={busy||Boolean(active)} onChange={event=>{const sandbox=event.target.value;draftStore.update(conversation,message=>({...message,sandbox}));}}>
+              <option value="read-only">只读交流</option><option value="workspace-write">按范围写入</option><option value="danger-full-access">完整本机权限</option>
             </select></label>
-            {sandbox==='workspace-write'&&<label>写入范围<select
-              value={typeof writeScope==='object'?'directory':writeScope} disabled={busy||Boolean(active)}
-              onChange={event=>{const value=event.target.value;draftStore.update(conversation,message=>({...message,writeScope:value==='directory'?{directory:''}:value as ChatWriteScope}));}}>
+            {selectedSandbox==='workspace-write'&&<label>写入范围<select
+              value={scopeValue} disabled={busy||Boolean(active)}
+              onChange={event=>{
+                const value=event.target.value;
+                const writeScope:ChatWriteScope=value==='directory'?{directory:''}
+                  :value.startsWith('repo:')?{repository_id:value.slice(5)}
+                  :value.startsWith('dir:')?{directory:value.slice(4)}:value as ChatWriteScope;
+                draftStore.update(conversation,message=>({...message,writeScope}));
+              }}>
               <option value="drafts">独立草稿与知识库发布</option>
+              {Boolean(targets?.repositories.length||targets?.code_directories.length)&&<optgroup label="实验代码">
+                {targets?.repositories.map(repo=><option key={repo.id} value={'repo:'+repo.id}>{repo.name}</option>)}
+                {targets?.code_directories.map(entry=><option key={entry.path} value={'dir:'+entry.path}>{entry.name}</option>)}
+              </optgroup>}
+              {Boolean(targets?.papers.length)&&<optgroup label="论文目录">
+                {targets?.papers.map(paper=><option key={paper.path} value={'dir:'+paper.path}>{paper.name}</option>)}
+              </optgroup>}
+              {typeof selectedScope==='object'&&'repository_id' in selectedScope&&!repositoryTarget&&
+                <option value={scopeValue}>已选仓库</option>}
               <option value="directory">指定项目子目录</option>
-              <option value="repository">绑定代码仓库</option>
-              <option value="project">项目资料与绑定仓库</option>
+              <option value="repository">当前绑定仓库</option>
+              <option value="project">整个项目与绑定仓库</option>
             </select></label>}
-            {sandbox==='workspace-write'&&typeof writeScope==='object'&&<label>项目子目录<input
-              value={writeScope.directory} placeholder="research 或 code/papers/实验名"
+            {selectedSandbox==='workspace-write'&&directoryScope!==undefined&&<label>项目子目录<input
+              value={directoryScope} placeholder="research 或 code/papers/实验名"
               disabled={busy||Boolean(active)} onChange={event=>{const directory=event.target.value;draftStore.update(conversation,message=>({...message,writeScope:{directory}}));}}/></label>}
           </div>
+          {targetError&&selectedSandbox==='workspace-write'&&<p role="status">暂时无法读取实验和论文目录，可直接填写项目子目录。</p>}
         </div>}
         {indexOpen&&<nav id={messageIndexId} className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
       </div>
@@ -417,8 +462,8 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
         <form className="chat-composer" onSubmit={event=>void send(event)}><div className={`chat-input-shell ${attachments.dragging?'chat-drop-active':''}`} onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=busy||uploading?'none':'copy';attachments.setDragging(!busy&&!uploading);}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))attachments.setDragging(false);}} onDrop={event=>{if(busy||uploading){event.preventDefault();attachments.setDragging(false);return;}attachments.drop(event);}} onPaste={event=>{if(!busy)attachments.paste(event);}}><ChatAttachmentList base={base} entries={attachments.entries} uploading={uploading} onRemove={attachments.remove}/>{attachments.dragging&&<div className="chat-drop-label">松开即可上传图片或文件</div>}<textarea ref={input} aria-label="发送给项目 Agent 的消息" value={draft} maxLength={30000} disabled={busy} onChange={event=>updateDraft(event.target.value)} placeholder="输入研究问题，或交代需要整理的文献与稿件内容…" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/><div className="chat-input-tools"><ChatAttachmentButtons disabled={busy||uploading} onUpload={files=>void attachments.upload(files)}/>
           <ChatSkillPicker key={conversation} skills={skills} status={skillsStatus} value={selectedSkill} disabled={busy}
             onChange={skill=>draftStore.update(conversation,message=>({...message,skill}))}/>
-          <span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox:last.sandbox,...(last.sandbox==='workspace-write'?{write_scope:last.write_scope??'drafts'}:{}),conversation_id:conversation,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?.status==='running'?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.status!=='running'||!active.session_id))||(sandbox==='workspace-write'&&typeof writeScope==='object'&&!writeScope.directory.trim())}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?.status==='running'?'追加指令':'发送'}</span></button></div></div></div>
-          <div className="chat-composer-footer"><span>围绕当前论文项目交流 · 按所选权限执行</span><small>Ctrl / ⌘ + Enter 发送</small></div>
+          <span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:''}</span><div className="chat-run-actions"><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)||scopeMissing} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,...(sandbox==='workspace-write'?{write_scope:writeScope}:{}),conversation_id:conversation,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button><button className="chat-send-button" aria-label={active?.status==='running'?'追加指令':'发送消息'} title={active?'停止当前轮，并在同一会话中处理追加指令':undefined} disabled={busy||uploading||(!draft.trim()&&!attachments.entries.length)||loading||Boolean(active&&(active.status!=='running'||!active.session_id))||scopeMissing}>{busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{active?.status==='running'?'追加指令':'发送'}</span></button></div></div></div>
+          <div className="chat-composer-footer"><span className="chat-write-summary" title={active?.write_roots?.join("、")||writeSummary}>写入范围 · {writeSummary}</span><small>Ctrl / ⌘ + Enter 发送</small></div>
         </form>
       </div>
     </div>
