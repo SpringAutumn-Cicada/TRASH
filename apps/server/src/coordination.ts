@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { experimentError, type TrashStore } from "@trash/storage";
-import type { CoordinationMember, CoordinationView, CoordinationJob } from "@trash/protocol";
+import type { CoordinationMember, CoordinationView, CoordinationJob, CoordinationPlan, ExperimentPlanVersion } from "@trash/protocol";
 import type { CodeAgent, CodeTask } from "./code-agent.js";
 import type { ExperimentService } from "./experiment/service.js";
 
@@ -74,7 +74,62 @@ export class ExperimentCoordination {
       }
     }finally{this.working=false;}
   }
+  private attachPlan(project:string,job:CoordinationJob,plan:ExperimentPlanVersion,key:string,preparation=false){
+    if(!job.repository_id||plan.repository.repository_id!==job.repository_id||plan.reproduction)experimentError("COORDINATION_TARGET_CHANGED",409);
+    const existing=job.plans?.find(p=>p.plan_id===plan.plan_id&&p.version===plan.version&&p.preparation===preparation);
+    if(existing)return existing;
+    const ref:CoordinationPlan={id:randomUUID(),key,plan_id:plan.plan_id,version:plan.version,title:plan.content.title,
+      commit:plan.content.commit_sha,host:plan.profile.name,repository:plan.repository.name??plan.repository.path,
+      command:plan.content.command,gpu:plan.content.gpu,datasets:plan.datasets.map(d=>d.name),preparation,status:"pending"};
+    job.plans=[...(job.plans??[]),ref];this.save(job);return ref;
+  }
+  private workerTool(project:string,task:CodeTask,body:unknown){
+    const job=this.jobs(project).find(j=>j.id===task.coordination?.id);
+    if(!job||job.conversation!==task.conversation_id||job.repository_id!==(task.repository_id??null)||
+      !this.store.db.prepare("SELECT 1 FROM coordination_members WHERE project=? AND conversation=?").get(project,job.conversation))
+      experimentError("COORDINATION_TARGET_CHANGED",409);
+    const op=z.object({operation:z.string()}).parse(body).operation;
+    if(op==="coordination-context")return {
+      assignment:job.id,after:job.after?this.details(project,this.jobs(project).filter(j=>j.id===job.after))[0]:undefined,
+      repository:job.repository_id,
+      plans:this.experiments.data.plans(project).filter(p=>p.repository.repository_id===job.repository_id).map(p=>({id:p.plan_id,version:p.version,title:p.content.title,status:p.status})),
+      hosts:this.experiments.data.profiles(project).map(p=>({id:p.profile_id,name:p.name})),
+      datasets:this.experiments.data.datasets(project).map(d=>({id:d.dataset_id,name:d.name,host:d.profile_id,path:d.path}))};
+    if(op==="coordination-report"){
+      const input=z.object({status:z.enum(["progress","blocked","ready"]),report:z.string().trim().min(1).max(8000)}).parse(body);
+      job.report_status=input.status;job.report=input.report;this.save(job);return {saved:true};
+    }
+    if(op==="coordination-plan"){
+      const input=z.object({plan_id:z.string(),version:z.number().int().positive()}).parse(body);
+      const plan=this.experiments.data.plan(project,input.plan_id,input.version);
+      return this.attachPlan(project,job,plan,plan.plan_id+":"+plan.version);
+    }
+    if(op==="coordination-draft"){
+      if(task.sandbox==="read-only"||!job.repository_id)experimentError("AGENT_TOOL_READONLY",403);
+      const input=z.object({key:z.string().trim().min(1).max(80),content:z.record(z.unknown())}).parse(body);
+      const existing=job.plans?.find(p=>p.key===input.key);
+      if(existing)return existing;
+      return this.store.db.transaction(()=>{
+        const plan=this.experiments.createPlan(project,{...input.content,code_source:"git",repository_id:job.repository_id});
+        return this.attachPlan(project,job,plan,input.key);
+      }).immediate();
+    }
+    experimentError("COORDINATOR_ONLY",403);
+  }
+  private details(project:string,jobs:CoordinationJob[]){
+    return jobs.map(job=>{
+      let turn=this.agent.coordinationTask(project,job.task_id);
+      const visited=new Set<string>();
+      while(turn?.decision?.continuation_task_id&&!visited.has(turn.task_id)){
+        visited.add(turn.task_id);
+        const next=this.agent.coordinationTask(project,turn.decision.continuation_task_id);
+        if(!next)break;turn=next;
+      }
+      return {...job,worker_status:turn?.status,worker_response:turn?.response.slice(-5000)};
+    });
+  }
   async tool(project:string,task:CodeTask,body:unknown){
+    if(task.coordination?.kind==="assignment")return this.workerTool(project,task,body);
     if(task.coordination?.kind!=="coordinator"&&task.coordination?.kind!=="summary")experimentError("COORDINATOR_ONLY",403);
     const operation=z.object({operation:z.string()}).parse(body).operation;
     const view=this.view(project);
@@ -130,7 +185,7 @@ export class ExperimentCoordination {
     const messages=core?this.agent.list(project).filter(t=>t.conversation_id===core).reverse().map(t=>({
       id:t.task_id,prompt:t.instructions,response:t.response,status:t.status,error:t.error,summary:t.coordination?.kind==="summary"
     })):[];
-    return {conversations:[...sessions.values()],jobs:this.jobs(project),messages};
+    return {conversations:[...sessions.values()],jobs:this.details(project,this.jobs(project)),messages};
   }
 
   async action(project:string,body:unknown) {

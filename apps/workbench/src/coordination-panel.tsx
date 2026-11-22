@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { GitBranch, MessagesSquare, Settings2 } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
 import type { NavigateOptions } from "./navigation.js";
+import { ChatDecisionCard } from "./chat-decision-card.js";
 import { api, uiError } from "./api.js";
 import { chatDraftStore } from "./chat-drafts.js";
 import "./coordination.css";
@@ -41,9 +42,17 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
         <button className="primary-button" disabled={busy||!data||!prompt.trim()||data.messages.some(m=>["running","queued","cancelling"].includes(m.status))}>发送</button></form>
     </section>
     {!!data?.jobs.length&&<section className="coord-section"><header><h3>协调任务</h3></header>{data.jobs.map(job=><div className="coord-row" key={job.id}>
-      <div><strong>{job.title}</strong><p>{job.instructions}</p><small>{job.reason||"已投递"}</small></div>
+      <div><strong>{job.title}</strong><p>{job.instructions}</p><small>{job.reason||states[job.worker_status??""]||"已投递"}</small>
+        {(job.report||job.worker_response)&&<p>{job.report||job.worker_response}</p>}
+        {job.plans?.map(p=><small key={p.id}>{p.title} · v{p.version} · {p.host}</small>)}
+      </div>
       {job.status==="waiting"&&<button className="text-button" disabled={busy} onClick={()=>void act({action:"withdraw",id:job.id})}>撤回</button>}
     </div>)}</section>}
+    {data?.conversations.some(s=>s.joined&&s.decision?.status==="pending")&&<section className="coord-section"><header><h3>待你处理</h3></header>
+      {data.conversations.filter(s=>s.joined&&s.decision?.status==="pending").map(s=><div key={s.task_id}><small>{s.title} · {s.repository}</small>
+        <ChatDecisionCard decision={s.decision!} disabled={busy||["queued","running","cancelling","interrupted"].includes(s.status)} continued={false}
+          choose={async option_id=>{await api("/projects/"+encodeURIComponent(projectId)+"/chat/tasks/"+s.task_id+"/choices/"+s.decision!.id,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({option_id})});await refresh();}}/></div>)}
+    </section>}
     <section className="coord-section"><header><h3><MessagesSquare size={18}/>参与对话</h3>
       <button type="button" className="secondary-button" aria-expanded={manage} onClick={()=>setManage(!manage)}><Settings2 size={14}/>{manage?"完成":"管理对话"}</button></header>
       {data?.conversations.filter(s=>manage||s.joined).map(s=><div className="coord-row" key={s.id}>
