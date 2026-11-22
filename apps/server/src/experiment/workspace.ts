@@ -50,4 +50,26 @@ export class WorkspaceService {
  }
 }
 // Follow no symlinks and never replace a file. Existing directories are retained.
-export async function ensureRemoteDirectory(remote:RemoteConnection,path:string){remotePathSchema.parse(path);const sftp=await remote.sftp();try{let current='';for(const part of posix.normalize(path).split('/').filter(Boolean)){current+='/'+part;const info=await new Promise<import('ssh2').Stats|undefined>((resolve,reject)=>sftp.lstat(current,(error,value)=>{if(!error)resolve(value);else if(Number((error as Error&{code?:number}).code)===2)resolve(undefined);else reject(error);}));if(info){if(!info.isDirectory()||info.isSymbolicLink())experimentError('WORKSPACE_PATH_UNSAFE',409);}else await new Promise<void>((resolve,reject)=>sftp.mkdir(current,{mode:0o755},error=>error?reject(error):resolve()));}}finally{sftp.end();}}
+export async function ensureRemoteDirectory(remote:RemoteConnection,path:string){
+  remotePathSchema.parse(path);
+  const sftp=await remote.sftp();
+  const inspect=(target:string)=>new Promise<import('ssh2').Stats|undefined>((resolve,reject)=>{
+    sftp.lstat(target,(error,value)=>{
+      if(!error)resolve(value);
+      else if(Number((error as Error&{code?:number}).code)===2)resolve(undefined);
+      else reject(error);
+    });
+  });
+  try{
+    let current='';
+    for(const part of posix.normalize(path).split('/').filter(Boolean)){
+      current+='/'+part;
+      let info=await inspect(current);
+      if(!info){
+        try{await new Promise<void>((resolve,reject)=>sftp.mkdir(current,{mode:0o755},error=>error?reject(error):resolve()));}
+        catch(error){info=await inspect(current);if(!info)throw error;}
+      }
+      if(info&&(!info.isDirectory()||info.isSymbolicLink()))experimentError('WORKSPACE_PATH_UNSAFE',409);
+    }
+  }finally{sftp.end();}
+}
