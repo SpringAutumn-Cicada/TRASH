@@ -40,6 +40,9 @@ export class CoordinationMemory {
       CREATE TABLE IF NOT EXISTS coordination_notes (
       project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,origin TEXT NOT NULL,key TEXT NOT NULL,
       id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(project,origin,key));
+      CREATE TABLE IF NOT EXISTS coordination_briefs (
+      project TEXT NOT NULL,page TEXT NOT NULL,receipt TEXT NOT NULL,revision INTEGER NOT NULL,section TEXT NOT NULL,
+      PRIMARY KEY(project,page,receipt),FOREIGN KEY(project,page) REFERENCES coordination_pages(project,id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS coordination_evidence (
       project TEXT NOT NULL,page TEXT NOT NULL,receipt TEXT NOT NULL,job TEXT NOT NULL,turn TEXT,observed TEXT NOT NULL,
       note TEXT NOT NULL,PRIMARY KEY(project,receipt),FOREIGN KEY(project,page) REFERENCES coordination_pages(project,id) ON DELETE CASCADE);
@@ -104,16 +107,37 @@ export class CoordinationMemory {
       return {id};
     }).immediate();
   }
+  summarize(project:string,job:CoordinationJob,body:unknown){
+    const input=z.object({receipt:z.string().regex(/^[a-f0-9]{64}$/),expected:z.number().int().positive(),
+      finding:z.string().trim().min(1).max(1600),scope:z.string().trim().min(1).max(600),
+      pending:z.string().trim().min(1).max(600)}).parse(body);
+    return this.store.db.transaction(()=>{
+      const evidence=this.store.db.prepare("SELECT page FROM coordination_evidence WHERE project=? AND job=? AND receipt=?").get(project,job.id,input.receipt) as {page:string}|undefined;
+      if(!evidence)experimentError("COORDINATION_SOURCE_REQUIRED",422);
+      const page=this.page(project,evidence.page);
+      const prior=this.store.db.prepare("SELECT revision FROM coordination_briefs WHERE project=? AND page=? AND receipt=?").get(project,page.id,input.receipt) as {revision:number}|undefined;
+      if(prior)return {id:page.id,revision:prior.revision};
+      if(page.archived||page.revision!==input.expected)experimentError("VERSION_CONFLICT",409);
+      const previous=this.store.db.prepare("SELECT section FROM coordination_briefs WHERE project=? AND page=? ORDER BY revision DESC LIMIT 1").get(project,page.id) as {section:string}|undefined;
+      const notes=previous&&page.body.endsWith(previous.section)?page.body.slice(0,-previous.section.length):page.body;
+      const section="\n\n## 协调员综合 · "+new Date().toISOString().slice(0,10)+"\n\n"+input.finding+
+        "\n\n适用范围："+input.scope+"\n\n待核实："+input.pending+"\n\n成员回报："+job.id+" · "+input.receipt;
+      if(notes.length+section.length>64000)experimentError("MEMORY_PAGE_TOO_LONG",409);
+      const result=this.save(project,{...page,body:notes+section,expected:page.revision,conversation:undefined},"direction","协调综合 · "+job.id);
+      this.store.db.prepare("INSERT INTO coordination_briefs VALUES (?,?,?,?,?)").run(project,page.id,input.receipt,result.revision,section);
+      return {id:page.id,revision:result.revision};
+    }).immediate();
+  }
   evidence(project:string,id:string,offset=0){
     const rows=this.store.db.prepare("SELECT receipt,job,turn,observed,note FROM coordination_evidence WHERE project=? AND page=? ORDER BY observed DESC,rowid DESC LIMIT 11 OFFSET ?").all(project,id,offset) as {receipt:string;job:string;turn:string|null;observed:string;note:string}[];
     return {entries:rows.slice(0,10),next_offset:rows.length>10?offset+10:null};
   }
   remember(project:string,job:CoordinationJob,title:string){
-    const text=(job.report??job.worker_response??"").trim();
+    const text=((job.consultation?job.worker_response:job.report)??job.worker_response??"").trim();
     if(!job.conversation||!job.reply_task_id&&!job.task_id||!text||job.consultation&&!(job.feedback==="answered"||job.feedback==="blocked"))return;
     const versions=(job.plans??[]).map(p=>({commit:p.commit,plan:p.plan_id,version:p.version,run:p.run_id,result:p.result_id}));
-    const note=[job.instructions.slice(0,320),text.slice(0,1000),...versions.slice(0,8).map(v=>JSON.stringify(v))].join("\n\n");
-    const receipt=digest(JSON.stringify([job.id,job.conversation,job.repository_id,job.feedback??job.report_status,note]));
+    const note=[job.instructions.slice(0,320),((job.feedback==="blocked"||job.report_status==="blocked")?"成员报告阻塞 · ":"成员回报 · ")+text.slice(0,1000),...versions.slice(0,8).map(v=>JSON.stringify(v))].join("\n\n");
+    const receipt=digest(JSON.stringify([job.id,job.conversation,job.repository_id,job.feedback??job.report_status,text,versions]));
     this.store.db.transaction(()=>{
       if(this.store.db.prepare("SELECT 1 FROM coordination_evidence WHERE project=? AND receipt=?").get(project,receipt))return;
       const existing=this.direction(project,job.conversation,job.repository_id);
@@ -161,6 +185,6 @@ export class CoordinationMemory {
     const query=z.object({id:z.string().uuid().optional(),revision:z.number().int().positive().optional(),q:z.string().max(300).default(""),offset:z.number().int().nonnegative().default(0)}).parse(body);
     if(!query.id)return this.list(project,query.q,query.offset);
     const page=this.page(project,query.id,query.revision);
-    return {...page,recent_evidence:this.evidence(project,page.id).entries.slice(0,3),body:page.body.slice(query.offset,query.offset+6000),next_offset:page.body.length>query.offset+6000?query.offset+6000:null};
+    return {...page,recent_evidence:query.revision?undefined:this.evidence(project,page.id).entries.slice(0,3),body:page.body.slice(query.offset,query.offset+6000),next_offset:page.body.length>query.offset+6000?query.offset+6000:null};
   }
 }

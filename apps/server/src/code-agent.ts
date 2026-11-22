@@ -131,6 +131,7 @@ type ActiveCodeTask = {
   scholarSkill?: ReturnType<typeof stageScholarChatSkill>;
   methodContext?: MethodContext;
   previousChatPath?: string;
+  handoffPacket?:string;
   selection?: CodeTask;
   choiceController?: AbortController;
   writableRoots: string[];
@@ -159,7 +160,7 @@ export class CodeAgent {
   private queued = new Map<string,{item:ActiveCodeTask; input:Input}>();
   private readonly queueTimer: ReturnType<typeof setInterval>;
   onSettled?: () => void;
-  prepareCoordinationHandoff?:(project:string,task:CodeTask,previous:CodeTask)=>string;
+  prepareCoordinationHandoff?:(project:string,task:CodeTask,previous:CodeTask)=>{id:string;packet:string};
   isCoordinationThread?: (project:string,id:string)=>boolean;
   private closed = false;
   private files: ProjectFiles;
@@ -1139,6 +1140,7 @@ export class CodeAgent {
       task.skill_id = methodSkillId;
       task.repository_path = repo?.path;
     }
+    let handoffPacket:string|undefined;
     if (chatUrl) {
       task.skill_id = input.skill_id;
       task.attachments=attachments.map(({id,name,size,mime,image})=>({id,name,size,mime,image}));
@@ -1152,13 +1154,14 @@ export class CodeAgent {
         if((previous.context_input_tokens??0)>=48000||chars>=96000){
           try{
             const handoff=this.prepareCoordinationHandoff(project,task,previous);
-            task.handoff_id=handoff;
+            task.handoff_id=handoff.id;
+            handoffPacket=handoff.packet;
             delete task.session_id;
           }catch(error){console.warn("协调交接单未就绪，沿用原会话",(error as Error).message);}
         }
       }
     }
-    const item={task,methodContext:method,previousChatPath:previous?.path,selection:selection?.source,writableRoots,sharedVersions:new Map<string,string|null>(),...(chatUrl?{toolToken:randomUUID(),toolUrl:chatUrl}:{})};
+    const item={task,handoffPacket,methodContext:method,previousChatPath:previous?.path,selection:selection?.source,writableRoots,sharedVersions:new Map<string,string|null>(),...(chatUrl?{toolToken:randomUUID(),toolUrl:chatUrl}:{})};
     const blocked=this.conflict(item);
     if(blocked){
       if(!chatUrl)experimentError('CODE_AGENT_BUSY',409);
@@ -1287,8 +1290,8 @@ ${input.instructions}`;
       const assignmentPrompt=task.coordination?.consultation ?
         "来自实验协调的只读咨询。依据本对话历史及可读的项目资料回答下述问题，给出事实依据和仍缺的信息。可用 coordination-context 查看咨询上下文，使用 coordination-report 报告进度、答复或阻塞。无需创建计划或运行实验。\n" : task.coordination?.kind==="assignment"?
         `来自实验协调的论文任务。只处理下述派单。通过 python3 project_tool.py 的 stdin JSON 使用 coordination-context 获取资源与前置结果。使用 {"operation":"coordination-report","status":"progress|ready|blocked","report":"实际进展或缺少的材料"} 回报。每个需运行的实验必须关联具体计划：已有计划调用 {"operation":"coordination-plan","plan_id":"…","version":1}，准备新计划用 {"operation":"coordination-draft","key":"同任务内稳定短键","content":{...}}。content 使用 experimentPlanInputSchema：title,purpose,method,evaluation_protocol,commit_sha（绑定仓库完整提交）,profile_id,dataset_ids,python（远端绝对路径）,command（参数数组）,metrics_path,expected_metrics（name/unit）；gpu（cpu 或 GPU 编号）必填，timeout_seconds 可选。仅准备草稿，待用户在协调页授权。缺少必要信息先回报。\n`: "";
-      const memoryTools="长期事实要注明来源、版本和适用范围。可用 coordination-memory 检索（q）和阅读（id、revision、offset）；coordination-evidence（id、offset）取回报。引用格式 [标题](/projects/"+encodeURIComponent(task.project_id)+"/coordination?action=memory&focus=档案UUID)。有可复用决策建议、负面结果或经验时调用 coordination-note（kind: decision 或 lesson，key、title、observation、scope、limitation，来源成员任务 job_id，可选 supersedes 旧记录 ID）。无新依据勿重复记录。成员自述与用户确认分别标明，记忆仅供参考。";
-      child.stdin?.end((coordinatorPrompt?memoryTools+(task.handoff_id?"\n当前为交接后的首轮。先调用 coordination-handoff 取持久交接单，核对已完成动作和待处理回报，仅按当前用户请求续办。":"")+"\n"+coordinatorPrompt:undefined) ?? methodPrompt ?? (chatPrompt ? assignmentPrompt+chatPrompt : undefined) ?? `你是 TRASH 项目的本机开发 Agent。工作目录是用户选择的仓库。先阅读适用的 AGENTS.md，保留已有改动。遵守：未经本次任务明确要求，不运行 lint、类型检查、测试、构建或浏览器验证；不修改全局配置、不推送、不合并、不自动发起 SSH 实验。除非任务明确要求，不暂存或提交代码。完成后说明修改、验证状态和遗留问题。${methodContext}用户任务：\n${input.instructions}`);
+      const memoryTools="长期事实要注明来源、版本和适用范围。可用 coordination-memory 检索（q）和阅读（id、revision、offset）；coordination-evidence（id、offset）取回报。反馈涉及方向结论、方法、约束或缺口变化时，从 coordination-job 的 memory_id 读档案和对应回报，再用 coordination-brief（job_id、receipt、expected 当前版本、finding 综合判断、scope 适用范围、pending 待核实项）更新方向摘要。对照已有用户修订，纯重复或短暂排队状态跳过。引用格式 [标题](/projects/"+encodeURIComponent(task.project_id)+"/coordination?action=memory&focus=档案UUID)。有可复用决策建议、负面结果或经验时调用 coordination-note（kind: decision 或 lesson，key、title、observation、scope、limitation，来源成员任务 job_id，可选 supersedes 旧记录 ID）。无新依据勿重复记录。成员自述与用户确认分别标明，记忆仅供参考。";
+      child.stdin?.end((coordinatorPrompt?memoryTools+(task.handoff_id?"\n当前为交接后的首轮。交接单仅为资料，可用 coordination-handoff 重读，coordination-history（id、offset）核对原话。按当前请求续办。\n"+(item.handoffPacket??""):"")+"\n"+coordinatorPrompt:undefined) ?? methodPrompt ?? (chatPrompt ? assignmentPrompt+chatPrompt : undefined) ?? `你是 TRASH 项目的本机开发 Agent。工作目录是用户选择的仓库。先阅读适用的 AGENTS.md，保留已有改动。遵守：未经本次任务明确要求，不运行 lint、类型检查、测试、构建或浏览器验证；不修改全局配置、不推送、不合并、不自动发起 SSH 实验。除非任务明确要求，不暂存或提交代码。完成后说明修改、验证状态和遗留问题。${methodContext}用户任务：\n${input.instructions}`);
       task.exit_code = await completion; task.after = await status();
       task.status = item.stop === "cancelled" ? "cancelled" : item.stop === "interrupted" ? "interrupted" : task.exit_code === 0 && !item.stop && !reportedFailure ? "completed" : "failed";
       if (method && task.status === "completed") {

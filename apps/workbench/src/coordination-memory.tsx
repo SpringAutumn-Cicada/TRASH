@@ -45,6 +45,12 @@ export function MemoryPanel({url,members,initialId,openChat,openMethod}:{url:str
         <strong>{p.title}</strong><small>{p.archived?"已归档":names[p.kind]} · v{p.revision}</small></button>)}
       {index&&!index.pages.length&&<p>暂无匹配档案</p>}
       <div><button className="text-button" disabled={!offset} onClick={()=>setOffset(offset-30)}>上一页</button><button className="text-button" disabled={index?.next_offset==null} onClick={()=>setOffset(offset+30)}>下一页</button></div>
+      <button className="text-button" disabled={busy||!!edit} onClick={async()=>{
+        setBusy(true);setError("");
+        try{const r=await api<{conflicts:string[]}>(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"memory-import"})});
+          if(r.conflicts.length)setError("以下 Markdown 有独立修改："+r.conflicts.join("、"));refresh(n=>n+1);
+        }catch(e){setError(uiError(e,"整理历史回报失败"));}finally{setBusy(false);}
+      }}>从历史回报补建档案</button>
       <select aria-label="新建记忆类型" value={kind} onChange={e=>setKind(e.target.value as CoordinationMemoryKind)}>{Object.entries(names).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>
       <select aria-label="参与对话" value={member} onChange={e=>setMember(e.target.value)}><option value="">选择参与对话</option>{joined.map(m=><option key={m.id} value={m.id}>{m.title} · {m.repository}</option>)}</select>
       <button className="secondary-button" disabled={kind==="direction"&&!member||!!edit} onClick={create}>建立{names[kind]}</button>

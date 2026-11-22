@@ -74,7 +74,7 @@ export class ExperimentCoordination {
     const open=jobs.filter(j=>!j.finished),closed=jobs.filter(j=>j.finished);
     const packet={as_of:new Date().toISOString(),previous_turn:previous.task_id,previous_session:previous.session_id,
       origin,original_request:origin?view.messages.find(m=>m.id===origin)?.prompt.slice(0,1800):undefined,
-      requested_feedback:task.coordination?.receipts?.map(r=>r.split(":")[0]),
+      requested_feedback_count:task.coordination?.receipts?.length??0,requested_feedback:task.coordination?.receipts?.slice(0,24).map(r=>r.split(":")[0]),
       open_count:open.length,open:open.slice(0,24).map(compact),recently_closed:closed.slice(-12).map(compact),
       recent_turns:recent.map(m=>({id:m.id,origin:m.origin,status:m.status,request:m.prompt.slice(0,350),answer:m.response.slice(-650)})),
       memory:pages.slice(0,16).map(({id,revision,title,kind})=>({id,revision,title,kind})),
@@ -82,7 +82,7 @@ export class ExperimentCoordination {
     this.store.db.prepare("INSERT OR IGNORE INTO coordination_handoffs VALUES (?,?,?,?)").run(project,task.task_id,previous.task_id,JSON.stringify(packet));
     const saved=this.readHandoff(project,task.task_id);
     if(saved.previous_turn!==previous.task_id)experimentError("VERSION_CONFLICT",409);
-    return task.task_id;
+    return {id:task.task_id,packet:JSON.stringify(saved)};
   }
   private readHandoff(project:string,id:string){
     const row=this.store.db.prepare("SELECT packet FROM coordination_handoffs WHERE project=? AND id=?").get(project,id) as {packet:string}|undefined;
@@ -152,13 +152,17 @@ export class ExperimentCoordination {
           }
         }
         const updated=this.view(project);
-        for(const job of updated.jobs.filter(j=>j.consultation?!!j.feedback:j.finished||j.report_status==="ready")){
-          const member=updated.conversations.find(m=>m.id===job.conversation);
-          if(member&&member.repository_id===job.repository_id)this.memory.remember(project,job,member.title);
-        }
+        try{this.captureFeedback(project,updated);}catch(error){console.warn("成员回报归档待重试",(error as Error).message);}
         if(!await this.resumeConsultation(project,updated))await this.sendSummary(project,updated);
       }
     }finally{this.working=false;}
+  }
+  private captureFeedback(project:string,view:CoordinationView){
+    for(const job of view.jobs){
+      if(job.consultation?!job.feedback:!job.finished&&!["ready","blocked"].includes(job.report_status??""))continue;
+      const member=view.conversations.find(m=>m.id===job.conversation);
+      this.memory.remember(project,job,(member?.repository_id===job.repository_id?member?.title:undefined)??job.title);
+    }
   }
   private consultations(project:string){
     return this.store.db.prepare("SELECT origin,state FROM coordination_consultations WHERE project=?").all(project) as
@@ -382,6 +386,12 @@ export class ExperimentCoordination {
     const view=this.view(project);
     const root=task.coordination.origin??task.task_id;
     const scoped=task.coordination.origin?view.jobs.filter(job=>job.origin===root):view.jobs;
+    if(operation==="coordination-brief"){
+      const {job_id}=z.object({job_id:z.string().uuid()}).parse(body);
+      const job=scoped.find(j=>j.id===job_id);
+      if(!job)experimentError("NOT_FOUND",404);
+      return this.memory.summarize(project,job,body);
+    }
     if(operation==="coordination-note"){
       const {job_id}=z.object({job_id:z.string().uuid().optional()}).parse(body);
       const job=job_id?scoped.find(j=>j.id===job_id):undefined;
@@ -393,16 +403,17 @@ export class ExperimentCoordination {
       const jobs=scoped.filter(j=>(operation==="coordination-jobs"||!j.finished)&&(!origin||j.origin===origin)&&(!conversation||j.conversation===conversation));
       const members=view.conversations.filter(m=>m.joined);
       return {original_request:task.coordination.origin?view.messages.find(m=>m.id===root)?.prompt:undefined,
-        new_feedback:task.coordination.receipts?.map(r=>r.split(":")[0]),hosts:view.hosts,queue:view.queue.slice(0,25),queue_count:view.queue.length,
+        new_feedback:task.coordination.receipts?.slice(offset,offset+25).map(r=>r.split(":")[0]),feedback_count:task.coordination.receipts?.length??0,hosts:view.hosts.slice(offset,offset+25),host_count:view.hosts.length,queue:view.queue.slice(offset,offset+25),queue_count:view.queue.length,
         conversations:members.slice(offset,offset+25).map(({id,title,repository,status})=>({id,title,repository,status})),member_count:members.length,
         jobs:jobs.slice(offset,offset+25).map(({id,origin,conversation,title,status,feedback,finished,reason})=>({id,origin,conversation,title,status,feedback,finished,reason})),
-        job_count:jobs.length,next_offset:offset+25<Math.max(jobs.length,members.length)?offset+25:null};
+        job_count:jobs.length,next_offset:offset+25<Math.max(jobs.length,members.length,view.hosts.length,view.queue.length,task.coordination.receipts?.length??0)?offset+25:null};
     }
     if(operation==="coordination-job"){
       const {id,offset}=z.object({id:z.string().uuid(),offset:z.number().int().nonnegative().default(0)}).parse(body);
       const job=scoped.find(j=>j.id===id);
       if(!job)experimentError("NOT_FOUND",404);
-      const detail=JSON.stringify(job);
+      const direction=this.memory.direction(project,job.conversation,job.repository_id);
+      const detail=JSON.stringify({...job,memory_id:direction?.id});
       return {id,format:"json",text:detail.slice(offset,offset+6000),next_offset:offset+6000<detail.length?offset+6000:null};
     }
 
@@ -530,6 +541,10 @@ export class ExperimentCoordination {
 
   async action(project:string,body:unknown) {
     const action=z.object({action:z.string()}).parse(body).action;
+    if(action==="memory-import"){
+      this.captureFeedback(project,this.view(project));
+      return {conflicts:this.memory.flush(project)};
+    }
     if(action==="memory-save"){
       const edit=memoryEdit.parse(body);
       const member=edit.conversation?this.view(project).conversations.find(m=>m.id===edit.conversation&&m.joined):undefined;
