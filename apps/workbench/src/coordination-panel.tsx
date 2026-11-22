@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Search, Settings2, Square, Workflow, X } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
@@ -217,14 +217,25 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
             </div>:groups.map((root,index)=>{
               const jobs=data.jobs.filter(job=>job.consultation&&job.origin===root.id);
               const replies=messages.filter(m=>m.origin===root.id);
-              return <div className="coord-message-group" key={root.id}>
+              const waitingForMember=jobs.some(job=>!job.feedback);
+              const waitingForChoice=jobs.some(job=>job.status==="waiting"&&job.candidates?.length);
+              return <Fragment key={root.id}>
                 {[root,...replies].map(message=>{
                   const current=message.id===(active??last)?.id;
+                  let status=message.status;
+                  if(message===root&&status==="completed"&&jobs.length){
+                    if(root.consultation_status==="stopped")status="已停止咨询";
+                    if(root.consultation_status==="open"){
+                      if(waitingForChoice)status="等待选择对话";
+                      else if(waitingForMember)status="等待成员反馈";
+                      else status="正在整理反馈";
+                    }
+                  }
                   return <section key={message.id} className="chat-turn" aria-label={`第 ${index+1} 轮协调`}>
                     {!message.summary&&<ChatUserMessage author="你" at={message.created_at} text={message.prompt}
                       copied={copied===message.id+"-user"} onCopy={()=>copy(message.id+"-user",message.prompt)} onQuote={()=>quote(message.prompt)}/>}
                     <ChatAssistantMessage author={message.origin?"协调反馈":message.summary?"实验汇总":"协调 Agent"} at={message.created_at} response={message.response}
-                      error={message.error} status={current&&loadError?"offline":message.status} turnStatus={message.status}
+                      error={message.error} status={current&&loadError?"offline":status} turnStatus={message.status}
                       current={current} copied={copied===message.id} onCopy={()=>copy(message.id,message.response)}
                       process={{open:openProcess===message.id,disabled:loadingProcess,log:processes[message.id],
                         toggle:()=>openProcess===message.id?setOpenProcess(undefined):void readProcess(message.id),
@@ -243,11 +254,10 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
                       {message.id===root.id&&<ConsultationFeedback jobs={jobs} members={members} busy={busy}
                         select={(id,conversation)=>void act({action:"select-consultation",id,conversation})}
                         open={(conversation,turn)=>{chatDraftStore(projectId).choose(conversation);onNavigate("chat",{focus:turn});}}/>}
-                      {message.id===root.id&&root.consultation_status==="stopped"&&jobs.length>0&&<small>咨询已停止</small>}
                     </ChatAssistantMessage>
                   </section>;
                 })}
-              </div>;
+              </Fragment>;
             })}
         </ChatTranscript>
         <ChatHeightControl height={height} onChange={changeHeight} target={transcript}/>

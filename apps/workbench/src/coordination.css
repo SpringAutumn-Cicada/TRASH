@@ -36,7 +36,6 @@
 .coord-approval input { width:auto; }
 @media(max-width:600px){.coord-section {padding:.85rem}.coord-job {padding:.65rem}.coord-section .coord-row {align-items:flex-start}}
 .coord-follow { flex-basis:100%; }
-.coord-message-group { display:grid; gap:1rem; min-width:0; }
 .consult-feedback { margin-block:1rem; border:1px solid var(--chat-line); border-radius:12px; overflow:hidden; }
 .consult-feedback header { display:flex; align-items:center; gap:.5rem; padding:.7rem .9rem; background:var(--chat-canvas); }
 .consult-feedback header svg,.consult-state { color:var(--green); }
