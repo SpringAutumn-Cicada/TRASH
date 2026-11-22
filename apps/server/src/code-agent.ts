@@ -89,6 +89,10 @@ const uploadErrorLabels:Record<string,string>={
   AUTODL_UPLOAD_HASH_MISMATCH:'远端校验不匹配',
   AUTODL_UPLOAD_SOURCE_INVALID:'找不到可上传的本地文件',
   WORKSPACE_CHANGED:'目标实例的项目工作区已变更',
+  ENVIRONMENT_PYTHON_NOT_FOUND:'在目标主机的 PATH 和常见 Conda 目录中未找到兼容的 Python 3',
+  ENVIRONMENT_PYTHON_DISCOVERY_FAILED:'目标主机的 Python 解释器探测失败',
+  ENVIRONMENT_PYTHON_DISCOVERY_TIMEOUT:'目标主机的 Python 解释器探测超时',
+  GIT_SYNC_PYTHON_UNUSABLE:'已找到 Python，但在非交互 SSH 中无法直接运行其绝对路径',
   UPLOAD_CANCELLED:'上传已停止',
   GIT_TREE_DIRTY:'Git 仓库有未提交改动',
 };
@@ -331,7 +335,8 @@ export class CodeAgent {
       this.recordChoiceOperation(item.task,title,text,'completed');
       return text;
     }catch(error){
-      const result=title+'未完成：'+redact(error instanceof Error?error.message:'GIT_SYNC_OPERATION_FAILED');
+      const detail=redact(error instanceof Error?error.message:'GIT_SYNC_OPERATION_FAILED');
+      const result=title+'未完成：'+(uploadErrorLabels[detail]??detail);
       this.recordChoiceOperation(item.task,title,result,'failed');
       return result;
     }

@@ -7,6 +7,7 @@ import { autoDLDirectories, commitShaSchema, type ProjectRepository, type SshPro
 import { experimentError } from "@trash/storage";
 import { z } from "zod";
 import { uploadAutoDLFile } from "./autodl-file-upload.js";
+import { resolveRemotePython } from "./environment-host.js";
 import type { UploadProgress } from "./experiment-code-upload.js";
 import type { ExperimentService } from "./service.js";
 import { assertExportableHistory, git } from "./repository.js";
@@ -132,6 +133,8 @@ export class GitSyncService {
     };
     checkTarget();
     const remote=service.terminals.connection(project,version.profile_id);
+    const python=await resolveRemotePython(remote,signal);
+    checkTarget();
     const temp=await mkdtemp(join(tmpdir(),"trash-return-bundle-"));
     const packet=posix.join(posix.dirname(version.path),"return-"+randomUUID());
     const location=posix.join(packet,"code.bundle");
@@ -140,7 +143,8 @@ export class GitSyncService {
     const ref="refs/heads/"+branch;
     const readRef=async()=> (await git(repo.path,["rev-parse","--verify",ref]).catch(()=>"")).trim();
     try{
-      const probe=JSON.parse(await remote.exec(["python3","-c",exportRemote,version.path,commit,version.commit,packet],undefined,180000));
+      checkTarget();
+      const probe=JSON.parse(await remote.exec([python,"-I","-B","-c",exportRemote,version.path,commit,version.commit,packet],undefined,180000));
       const {sha256,size}=z.object({sha256:z.string().regex(/^[a-f0-9]{64}$/),size:z.number().int().positive().max(200*1024*1024)}).parse(probe);
       const file=openSync(local,"wx",0o600),hash=createHash("sha256");
       let received=0;
@@ -175,7 +179,7 @@ export class GitSyncService {
       }
       return {branch,commit,baseline:version.commit,sha256,summary:summary.trim(),reused:!!prior};
     }finally{
-      await remote.exec(["python3","-c","import pathlib,shutil,sys; p=pathlib.Path(sys.argv[1]); shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else None",packet]).catch(()=>{});
+      await remote.exec([python,"-I","-B","-c","import pathlib,shutil,sys; p=pathlib.Path(sys.argv[1]); shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else None",packet]).catch(()=>{});
       await rm(temp,{recursive:true,force:true});
     }
   }
@@ -193,9 +197,14 @@ export class GitSyncService {
       if(service.workspaces.get(project,profile.profile_id)?.root!==root||JSON.stringify(syncIdentity(current))!==JSON.stringify(syncIdentity(profile)))
         experimentError("WORKSPACE_CHANGED",409);
     };
+    checkTarget();
+    report("checking");
+    await service.repository.preflight(project,sha,repo.repository_id,false);
+    const python=await resolveRemotePython(remote,signal);
+    checkTarget();
     const materializeVersion=async(bundle="",digest="",size=0)=>{
       checkTarget();
-      const result=JSON.parse(await remote.exec(["python3","-c",materialize,path,sha,bundle,digest,String(size)],undefined,180000));
+      const result=JSON.parse(await remote.exec([python,"-I","-B","-c",materialize,path,sha,bundle,digest,String(size)],undefined,180000));
       return result===null?null:receiptSchema.parse(result);
     };
     const record=(receipt:Receipt)=>{
@@ -207,9 +216,6 @@ export class GitSyncService {
         .run(version.id,project,path,profile.profile_id,JSON.stringify(version));
       return version;
     };
-    checkTarget();
-    report("checking");
-    await service.repository.preflight(project,sha,repo.repository_id,false);
     await ensureRemoteDirectory(remote,parent);
     const prior=await materializeVersion();
     if(prior)return record(prior);
