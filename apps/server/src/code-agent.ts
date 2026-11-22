@@ -290,11 +290,12 @@ export class CodeAgent {
   }
   private chatRepositories(project:string){
     const base=this.paperCodeBase(project);
+    if(!base)return [];
     return this.registeredRepositories(project).flatMap(repo=>{
       const marker=lstatSync(join(repo.path,'.git'),{throwIfNoEntry:false});
       if(!marker||!marker.isFile()&&!marker.isDirectory())return [];
       const path=realpathSync(repo.path);
-      return path===repo.path&&(repo.paper_id||base&&path!==base&&contains(base,path))?[repo]:[];
+      return path===repo.path&&path!==base&&contains(base,path)?[repo]:[];
     });
   }
   writeTargets(project:string) {
@@ -313,7 +314,7 @@ export class CodeAgent {
       for(const repo of this.registeredRepositories(project.project_id)){
         if(!existsSync(repo.path)||!statSync(repo.path).isDirectory())continue;
         const path=realpathSync(repo.path);
-        if(repo.paper_id||base&&path!==base&&contains(base,path))roots.add(path);
+        if(base&&path!==base&&contains(base,path))roots.add(path);
       }
     }
     return [...roots].sort((a,b)=>a.localeCompare(b));

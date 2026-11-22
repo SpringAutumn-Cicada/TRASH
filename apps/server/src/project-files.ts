@@ -1,4 +1,4 @@
-import { publicDirectories, visibleEntry } from "./project-layout.js";
+import { visibleEntry } from "./project-layout.js";
 import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync, rmdirSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -37,7 +37,7 @@ export class ProjectFiles {
     if(!allowMissing&&!inside(root,realpathSync(path)))fail('FILES_OUTSIDE_WORKSPACE',403);
     return path;
   }
-  private isProtected(path:string){
+  private isProtected(path:string,sharedChat=false){
     path=path.split('/').filter(Boolean).join('/');
     if(path==='library')return true;
     path=libraryLogicalPath(path);
@@ -45,15 +45,17 @@ export class ProjectFiles {
     const parts=path.split('/').filter(Boolean);
     if(parts[0]==='experiments'&&parts[3]==='runs'&&(/^run_[a-f0-9-]+$/.test(parts[4]??''))&&[5,6,7].includes(parts.length))return parts.length===5||['run.json','run-config.json','index.json'].includes(parts.at(-1)??'');
     if(isManuscriptDirectory(parts[0])&&(parts.length===1||parts.length===3&&['paper.yaml','experiment-evidence.json'].includes(parts[2])))return true;
-    return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
+    const reproduction=parts[0]==='code'&&parts[1]==='reproductions';
+    if(reproduction&&(!sharedChat||parts[2]==='snapshots'||/^repro_[a-f0-9-]+\.json$/.test(parts[2]??'')))return true;
+    return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
     const match=libraryLogicalPath(path.split('/').filter(Boolean).join('/')).match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
     return match?{kind:match[1]==='wiki'?'wiki-page' as const:'literature-card' as const,id:match[2]}:undefined;
   }
-  private writable(id:string,path:string,blocked=this.blocked){
+  private writable(id:string,path:string,blocked=this.blocked,sharedChat=false){
     if(blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
-    if(this.isProtected(path))fail('FILES_MANAGED_READONLY',403);
+    if(this.isProtected(path,sharedChat))fail('FILES_MANAGED_READONLY',403);
     const physical=this.locate(id,path,true);
     // Registered artifacts remain immutable even when stored in a nonstandard project folder.
     const rows=this.store.db.prepare('SELECT artifact_id FROM artifacts WHERE project_id=?').all(id) as {artifact_id:string}[];
@@ -219,11 +221,10 @@ export class ProjectFiles {
   private sharedChatTarget(id:string,path:string,paperRoots:string[]){
     const logical=path.split('/').filter(Boolean).join('/');
     const [top,folder]=logical.split('/');
-    if(!folder||!publicDirectories.includes(top)&&!isManuscriptDirectory(top)||top==='code'&&folder==='papers')
+    if(!top||top==='code'&&folder==='papers')
       fail('FILES_MANAGED_READONLY',403);
-    const target=this.writable(id,logical,()=>false);
+    const target=this.writable(id,logical,()=>false,true);
     const canonical=relative(this.root(id),target).split(sep).join('/');
-    if(!statSync(this.locate(id,dirname(canonical))).isDirectory())fail('FILES_NOT_DIRECTORY',422);
     if(paperRoots.some(root=>inside(root,target)))fail('FILES_MANAGED_READONLY',403);
     return {target,canonical};
   }
@@ -266,7 +267,11 @@ export class ProjectFiles {
     try{
       const current=this.sharedChatCurrent(target);
       if(current.version!==versions.get(target))fail('VERSION_CONFLICT');
-      const temporary=join(dirname(target),`.trash-publish-${randomUUID()}.tmp`);
+      const parent=dirname(target);
+      mkdirSync(parent,{recursive:true});
+      const parentPath=relative(this.root(id),parent).split(sep).join('/');
+      this.locate(id,parentPath);
+      const temporary=join(parent,`.trash-publish-${randomUUID()}.tmp`);
       try{
         writeFileSync(temporary,bytes,{flag:'wx',mode:current.mode});
         if(current.version===null){
