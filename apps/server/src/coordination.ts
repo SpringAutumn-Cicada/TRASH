@@ -31,7 +31,10 @@ export class ExperimentCoordination {
       CREATE TABLE IF NOT EXISTS coordination_summaries (
         project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
         origin TEXT NOT NULL, id TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(project,origin))`);
+        PRIMARY KEY(project,origin));
+      CREATE TABLE IF NOT EXISTS coordination_consultations (
+        project TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+        origin TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(project,origin))`);
     agent.isCoordinationThread=(project,id)=>this.thread(project)===id;
   }
 
@@ -56,7 +59,7 @@ export class ExperimentCoordination {
     if(!this.port||this.working)return;
     this.working=true;
     try {
-      const projects=this.store.db.prepare("SELECT DISTINCT project FROM coordination_jobs WHERE status IN ('waiting','delivered') UNION SELECT project FROM coordination_summaries WHERE sent=0").all() as {project:string}[];
+      const projects=this.store.db.prepare("SELECT DISTINCT project FROM coordination_jobs WHERE status IN ('waiting','delivered') UNION SELECT project FROM coordination_summaries WHERE sent=0 UNION SELECT project FROM coordination_consultations WHERE state='open'").all() as {project:string}[];
       for(const {project} of projects){
         if(!this.port)return;
         const view=this.view(project);
@@ -88,15 +91,46 @@ export class ExperimentCoordination {
             job.status="failed";job.reason=(error as Error).message;this.save(job);
           }
         }
-        await this.sendSummary(project,view);
+        const updated=this.view(project);
+        if(!await this.resumeConsultation(project,updated))await this.sendSummary(project,updated);
       }
     }finally{this.working=false;}
   }
+  private consultations(project:string){
+    return this.store.db.prepare("SELECT origin,state FROM coordination_consultations WHERE project=?").all(project) as
+      {origin:string;state:"open"|"stopped"|"settled"}[];
+  }
+
+  private async resumeConsultation(project:string,view:CoordinationView){
+    if(!this.port||view.messages.some(m=>["running","queued","cancelling","interrupted"].includes(m.status)))return false;
+    const turns=this.agent.coordinationTurns(project);
+    for(const request of this.consultations(project).filter(r=>r.state==="open")){
+      const jobs=view.jobs.filter(j=>j.origin===request.origin&&j.consultation);
+      const receipts=new Set(turns.filter(t=>t.coordination?.origin===request.origin).flatMap(t=>t.coordination?.receipts??[]));
+      // Persist consumed replies on the receiving turn itself. A restart cannot deliver them twice.
+      const incoming=jobs.flatMap(job=>{
+        if(!job.feedback)return [];
+        const content=JSON.stringify([job.feedback,job.worker_response,job.reason]);
+        const receipt=job.id+":"+createHash("sha256").update(content).digest("hex");
+        return receipts.has(receipt)?[]:[receipt];
+      });
+      if(!incoming.length){
+        if(jobs.length&&jobs.every(j=>j.finished))
+          this.store.db.prepare("UPDATE coordination_consultations SET state='settled' WHERE project=? AND origin=? AND state='open'").run(project,request.origin);
+        continue;
+      }
+      await this.message(project,randomUUID(),"处理原请求的新反馈，读取 coordination-status 后按来源答复。",true,
+        {origin:request.origin,receipts:incoming});
+      return true;
+    }
+    return false;
+  }
+
   private async sendSummary(project:string,view:CoordinationView) {
     if(!this.port||view.messages.some(m=>["running","queued","cancelling","interrupted"].includes(m.status)))return;
     const pending=this.store.db.prepare("SELECT origin,id FROM coordination_summaries WHERE project=? AND sent=0 ORDER BY rowid").all(project) as {origin:string;id:string}[];
     for(const batch of pending){
-      const jobs=view.jobs.filter(j=>j.origin===batch.origin);
+      const jobs=view.jobs.filter(j=>j.origin===batch.origin&&!j.consultation);
       if(!jobs.length||jobs.some(job=>!job.finished))continue;
       const prompt="汇总此指令下的论文任务 "+jobs.map(j=>j.id).sort().join("、")+"。使用实际回报、指标、产物及运行编号，解释失败或跳过的项；没有证据时写明缺口。";
       await this.message(project,batch.id,prompt,true);
@@ -223,6 +257,22 @@ export class ExperimentCoordination {
     const turns=this.agent.coordinationTurns(project).reverse();
     return jobs.map(job=>{
       const turn=turns.find(t=>t.coordination?.kind==="assignment"&&t.coordination.id===job.id);
+      if(job.consultation){
+        const ended=!!turn?.finished_at;
+        const failed=turn&&["failed","cancelled","interrupted"].includes(turn.status);
+        const finalText=turn?.status==="completed"?turn.response.trim():"";
+        let feedback:CoordinationJob["feedback"];
+        let answer=job.report??"";
+        if(job.status==="withdrawn")feedback="withdrawn";
+        else if(job.status==="failed"||failed){feedback="failed";answer=turn?.error??job.reason;}
+        else if(job.report_status==="blocked")feedback="blocked";
+        else if(job.report_status==="ready")feedback="answered";
+        else if(finalText){feedback="answered";answer=finalText;}
+        else if(ended){feedback="blocked";answer="成员结束本轮时没有给出答复";}
+        else if(job.reason==="等待核对中断的对话"||job.reason==="等待处理原对话的确认")feedback="blocked";
+        return {...job,feedback,worker_status:turn?.status,worker_response:answer,reply_task_id:turn?.task_id,
+          finished:ended||job.status==="failed"||job.status==="withdrawn",successful:feedback==="answered"};
+      }
       const plans=job.plans?.map(p=>{
         const run=runs.find(r=>r.run_id===p.run_id||r.idempotency_key===p.id);
         if(!run)return p;
@@ -250,9 +300,15 @@ export class ExperimentCoordination {
     if(task.coordination?.kind!=="coordinator"&&task.coordination?.kind!=="summary")experimentError("COORDINATOR_ONLY",403);
     const operation=z.object({operation:z.string()}).parse(body).operation;
     const view=this.view(project);
-    if(operation==="coordination-status")return {...view,messages:undefined,conversations:view.conversations.filter(m=>m.joined)};
-    if(operation==="coordination-consult"&&task.coordination.kind==="coordinator"){
-      return this.consult(project,task.task_id,body,view);
+    const root=task.coordination.origin??task.task_id;
+    if(operation==="coordination-status")return {...view,messages:undefined,
+      original_request:task.coordination.origin?view.messages.find(m=>m.id===root)?.prompt:undefined,
+      new_feedback:task.coordination.receipts?.map(receipt=>receipt.split(":")[0]),
+      jobs:task.coordination.origin?view.jobs.filter(j=>j.origin===root):view.jobs,
+      conversations:view.conversations.filter(m=>m.joined)};
+
+    if(operation==="coordination-consult"&&(task.coordination.kind==="coordinator"||task.coordination.origin)){
+      return this.consult(project,root,body,view,task);
     }
     if(operation!=="coordination-dispatch"||task.coordination.kind!=="coordinator")experimentError("COORDINATOR_ONLY",403);
     const input=z.object({operation:z.literal("coordination-dispatch"),key:z.string().min(1).max(100),
@@ -275,43 +331,58 @@ export class ExperimentCoordination {
     }).immediate();
     return {id};
   }
-  private consult(project:string,origin:string,body:unknown,view:CoordinationView){
+  private consult(project:string,origin:string,body:unknown,view:CoordinationView,task:CodeTask){
     const {questions}=consultInput.parse(body);
-    return this.store.db.transaction(()=>questions.map(q=>{
-      const key="consult:"+q.key;
-      const prior=this.jobs(project).find(j=>j.origin===origin&&j.key===key);
-      if(prior){
-        if(!prior.consultation||prior.target!==q.target||prior.instructions!==q.question||prior.parent_question!==q.parent_question)
-          experimentError("IDEMPOTENCY_CONFLICT",409);
-        return {id:prior.id,status:prior.reason||prior.status};
-      }
-      const name=normalizeTarget(q.target);
-      const matches=(m:CoordinationMember)=>[m.title,...(m.repository_id?[m.repository]:[])].map(normalizeTarget);
-      const exact=view.conversations.filter(m=>m.id===q.target||matches(m).includes(name));
-      const candidates=exact.length?exact:view.conversations.filter(m=>matches(m).some(label=>label.includes(name)));
-      const member=candidates.length===1&&candidates[0].joined?candidates[0]:undefined;
-      const id=randomUUID();
-      const job:CoordinationJob={id,key,origin,consultation:true,target:q.target,parent_question:q.parent_question,
-        conversation:member?.id??"",title:member?.title??q.target,repository_id:member?.repository_id??null,
-        instructions:q.question,task_id:"code_"+id,gate:"finish",expects_runs:false,created_at:new Date().toISOString(),
-        status:candidates.length?"waiting":"failed",reason:member?"等待投递":candidates.length?"等待选择参与对话":"未找到对应对话",
-        candidates:!member&&candidates.length?candidates.map(m=>m.id):undefined};
-      this.store.db.prepare("INSERT INTO coordination_jobs VALUES (?,?,?,?,?,?)").run(project,id,origin,key,job.status,JSON.stringify(job));
-      return {id,status:job.reason};
-    })).immediate();
+    return this.store.db.transaction(()=>{
+      const state=this.consultations(project).find(r=>r.origin===origin)?.state;
+      if(state==="stopped")experimentError("COORDINATION_TARGET_CHANGED",409);
+      this.store.db.prepare("INSERT OR IGNORE INTO coordination_consultations VALUES (?,?,'open')").run(project,origin);
+      return questions.map(q=>{
+        const key="consult:"+task.task_id+":"+q.key;
+        const prior=this.jobs(project).find(j=>j.origin===origin&&j.key===key);
+        if(prior){
+          if(!prior.consultation||prior.target!==q.target||prior.instructions!==q.question||prior.parent_question!==q.parent_question)
+            experimentError("IDEMPOTENCY_CONFLICT",409);
+          return {id:prior.id,status:prior.reason||prior.status};
+        }
+        if(task.coordination?.origin||q.parent_question){
+          const parent=view.jobs.find(j=>j.id===q.parent_question&&j.origin===origin&&j.consultation);
+          if(!task.coordination?.origin||!parent||parent.feedback!=="answered"||parent.conversation!==q.target||
+            !view.conversations.some(m=>m.joined&&m.id===parent.conversation&&m.repository_id===parent.repository_id))
+            experimentError("COORDINATION_TARGET_CHANGED",409);
+          const earlier=this.jobs(project).filter(j=>j.origin===origin&&j.conversation===q.target);
+          const duplicate=earlier.find(j=>normalizeTarget(j.instructions)===normalizeTarget(q.question));
+          if(duplicate)return {id:duplicate.id,status:"已有相同问题"};
+          if(earlier.some(j=>j.parent_question===parent.id))experimentError("COORDINATION_TARGET_CHANGED",409);
+        }
+        const name=normalizeTarget(q.target);
+        const matches=(m:CoordinationMember)=>[m.title,...(m.repository_id?[m.repository]:[])].map(normalizeTarget);
+        const exact=view.conversations.filter(m=>m.id===q.target||matches(m).includes(name));
+        const candidates=exact.length?exact:view.conversations.filter(m=>matches(m).some(label=>label.includes(name)));
+        const member=candidates.length===1&&candidates[0].joined?candidates[0]:undefined;
+        const id=randomUUID();
+        const job:CoordinationJob={id,key,origin,consultation:true,target:q.target,parent_question:q.parent_question,
+          conversation:member?.id??"",title:member?.title??q.target,repository_id:member?.repository_id??null,
+          instructions:q.question,task_id:"code_"+id,gate:"finish",expects_runs:false,created_at:new Date().toISOString(),
+          status:candidates.length?"waiting":"failed",reason:member?"等待投递":candidates.length?"等待选择参与对话":"未找到对应对话",
+          candidates:!member&&candidates.length?candidates.map(m=>m.id):undefined};
+        this.store.db.prepare("INSERT INTO coordination_jobs VALUES (?,?,?,?,?,?)").run(project,id,origin,key,job.status,JSON.stringify(job));
+        return {id,status:job.reason};
+      });
+    }).immediate();
   }
 
-  private async message(project:string,id:string,instructions:string,summary=false){
+  private async message(project:string,id:string,instructions:string,summary=false,feedback?:{origin:string;receipts:string[]}){
     this.store.db.prepare("INSERT OR IGNORE INTO coordination_threads VALUES (?,?)").run(project,randomUUID());
     const conversation=this.thread(project)!;
     const taskId="code_"+id;
     const prior=this.agent.coordinationTask(project,taskId);
     if(prior){
-      if(prior.conversation_id!==conversation||prior.instructions!==instructions)experimentError("IDEMPOTENCY_CONFLICT",409);
+      if(prior.conversation_id!==conversation||prior.instructions!==instructions||prior.coordination?.origin!==feedback?.origin)experimentError("IDEMPOTENCY_CONFLICT",409);
       return {id:taskId};
     }
     await this.agent.start(project,{conversation_id:conversation,instructions,sandbox:"read-only",confirm:true},this.url(project),false,undefined,
-      {turn:{kind:summary?"summary":"coordinator",id},taskId});
+      {turn:{kind:summary?"summary":"coordinator",id,...feedback},taskId});
     return {id:taskId};
   }
 
@@ -336,8 +407,9 @@ export class ExperimentCoordination {
         status:turn.status,task_id:turn.task_id,decision:turn.decision,joined:joined.has(id)});
     }
     const core=this.thread(project);
+    const requests=new Map(this.consultations(project).map(r=>[r.origin,r.state]));
     const messages=core?turns.filter(t=>t.conversation_id===core).map(t=>({
-      id:t.task_id,prompt:t.instructions,response:t.response,status:t.status,created_at:t.created_at,error:t.error,summary:t.coordination?.kind==="summary"
+      id:t.task_id,origin:t.coordination?.origin,consultation_status:requests.get(t.task_id),prompt:t.instructions,response:t.response,status:t.status,created_at:t.created_at,error:t.error,summary:t.coordination?.kind==="summary"
     })):[];
     const queue=this.experiments.data.runs(project).filter(r=>this.experiments.data.active(r)).sort((a,b)=>a.created_at.localeCompare(b.created_at)).map(r=>({
       id:r.run_id,title:r.plan.content.title,host:r.plan.profile.name,status:r.status,created_at:r.created_at}));
@@ -359,11 +431,33 @@ export class ExperimentCoordination {
       const input=z.object({id:z.string().uuid(),instructions:z.string().trim().min(1).max(30000)}).parse(body);
       return this.message(project,input.id,input.instructions);
     }
-    if(action==="acknowledge"||action==="stop"){
+    if(action==="retry-feedback"){
+      const {id,request_id}=z.object({id:z.string(),request_id:z.string().uuid()}).parse(body);
+      const failed=this.agent.coordinationTask(project,id);
+      const origin=failed?.coordination?.origin;
+      if(!failed||!origin||failed.conversation_id!==this.thread(project)||!["failed","cancelled"].includes(failed.status)||
+        this.consultations(project).find(r=>r.origin===origin)?.state==="stopped")experimentError("COORDINATION_TARGET_CHANGED",409);
+      const feedback={origin,receipts:failed.coordination?.receipts??[]};
+      this.store.db.prepare("UPDATE coordination_consultations SET state='open' WHERE project=? AND origin=?").run(project,origin);
+      return this.message(project,request_id,failed.instructions,true,feedback);
+    }
+    if(action==="stop-consultation"||action==="acknowledge"||action==="stop"){
       const {id,confirm}=z.object({id:z.string(),confirm:z.literal(true)}).parse(body);
       const task=this.agent.coordinationTask(project,id);
       if(!task||task.conversation_id!==this.thread(project)||!task.coordination)experimentError("COORDINATION_TARGET_CHANGED",409);
-      if(action==="stop")this.agent.cancel(project,id);
+      if(action!=="acknowledge"){
+        const origin=task.coordination.origin??id;
+        if(task.coordination.kind==="coordinator"||task.coordination.origin){
+          this.store.db.transaction(()=>{
+            this.store.db.prepare("INSERT INTO coordination_consultations VALUES (?,?,'stopped') ON CONFLICT(project,origin) DO UPDATE SET state='stopped'").run(project,origin);
+            for(const job of this.jobs(project).filter(j=>j.consultation&&j.origin===origin&&j.status==="waiting")){
+              job.status="withdrawn";job.reason="用户已停止咨询";this.save(job);
+            }
+          }).immediate();
+        }
+        for(const t of this.agent.coordinationTurns(project).filter(t=>(t.task_id===id||t.coordination?.origin===origin)&&["running","queued"].includes(t.status)))
+          this.agent.cancel(project,t.task_id);
+      }
       else this.agent.acknowledge(project,id);
       return {ok:confirm};
     }

@@ -14,6 +14,7 @@ export interface CoordinationPlan {
 }
 export interface CoordinationJob {
   id:string; conversation:string; repository_id:string|null; title:string; instructions:string;
+  feedback?:"answered"|"blocked"|"failed"|"withdrawn"; reply_task_id?:string;
   consultation?:boolean; parent_question?:string; target?:string; candidates?:string[];
   priority?:number; finished?:boolean; successful?:boolean;
   report?:string; report_status?:"progress"|"blocked"|"ready"; plans?:CoordinationPlan[]; worker_status?:string; worker_response?:string;
@@ -21,7 +22,7 @@ export interface CoordinationJob {
   status:"waiting"|"delivered"|"withdrawn"|"failed"|"settled"; reason:string;
   task_id:string; origin:string; key:string; created_at:string;
 }
-export interface CoordinationMessage {id:string;prompt:string;response:string;status:string;created_at:string;error?:string;summary:boolean}
+export interface CoordinationMessage {id:string;prompt:string;response:string;status:string;created_at:string;error?:string;summary:boolean; origin?:string; consultation_status?:"open"|"stopped"|"settled"}
 export interface CoordinationView {
   hosts:{id:string;name:string;connected:boolean}[]; queue:CoordinationRun[];
   messages:CoordinationMessage[]; jobs:CoordinationJob[];
