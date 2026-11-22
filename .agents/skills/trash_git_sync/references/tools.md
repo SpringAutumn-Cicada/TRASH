@@ -28,7 +28,7 @@
 
 ## 计划与结果
 
-`git-sync-plan` 接收稳定的 UUID `request_id` 和对象 `content`。复用同请求 ID 只重试同一份计划。协调派单可通过 `coordination-context` 读取 `expects_runs`。它为真时，用 `coordination-draft` 的稳定 `key` 和同一 `content` 登记新方案，或用 `coordination-plan` 传入已有方案的 `plan_id` 和 `version`。成员完成后平台直接调度。
+`git-sync-plan` 接收稳定的 UUID `request_id` 和对象 `content`。复用同请求 ID 只重试同一份计划。协调派单可通过 `coordination-context` 读取 `expects_runs`。用 `coordination-draft` 的稳定 `key` 和同一 `content` 登记新方案，或用 `coordination-plan` 传入已有方案的 `plan_id` 和 `version`。`expects_runs` 为真时，成员完成后平台直接调度。为假时只保存方案。
 
 `content` 至少填写 `title`、`purpose`、`method`、`evaluation_protocol`、`commit_sha`、`profile_id`、`dataset_ids`、`python`（远端绝对路径）、`command`（参数数组）、`gpu`（`cpu` 或设备编号）、`expected_metrics`（包含 `name`、`unit` 的数组）。按任务设置 `config`、`metrics_path`、`artifact_paths`、`seed` 和 `timeout_seconds`。
 

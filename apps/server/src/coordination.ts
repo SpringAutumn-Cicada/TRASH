@@ -293,10 +293,10 @@ export class ExperimentCoordination {
     if(existing)return existing;
     const ref:CoordinationPlan={id:randomUUID(),key,plan_id:plan.plan_id,version:plan.version,title:plan.content.title,
       commit:plan.content.commit_sha,host:plan.profile.name,repository:plan.repository.name??plan.repository.path,
-      command:plan.content.command,gpu:plan.content.gpu,datasets:plan.datasets.map(d=>d.name),preparation,status:"queued",
-      execution_hash:this.executionHash(project,plan,preparation)};
+      command:plan.content.command,gpu:plan.content.gpu,datasets:plan.datasets.map(d=>d.name),preparation,status:job.expects_runs?"queued":"draft",
+      execution_hash:job.expects_runs?this.executionHash(project,plan,preparation):undefined};
     job.plans=[...(job.plans??[]),ref];this.save(job);
-    if(plan.content.preparation_script&&!preparation)this.attachPlan(project,job,plan,key+"-prepare",true);
+    if(job.expects_runs&&plan.content.preparation_script&&!preparation)this.attachPlan(project,job,plan,key+"-prepare",true);
     return ref;
   }
   private workerTool(project:string,task:CodeTask,body:unknown){
@@ -316,17 +316,14 @@ export class ExperimentCoordination {
       job.report_status=input.status;job.report=input.report;this.save(job);return {saved:true};
     }
     if(job.consultation)experimentError("AGENT_TOOL_READONLY",403);
-    if(op==="coordination-plan"||op==="coordination-draft"){
-      if(task.sandbox==="read-only")experimentError("AGENT_TOOL_READONLY",403);
-      if(!job.expects_runs)experimentError("COORDINATION_RUN_NOT_REQUESTED",409);
-    }
     if(op==="coordination-plan"){
+      if(job.expects_runs&&task.sandbox==="read-only")experimentError("AGENT_TOOL_READONLY",403);
       const input=z.object({plan_id:z.string(),version:z.number().int().positive()}).parse(body);
       const plan=this.experiments.data.plan(project,input.plan_id,input.version);
       return this.store.db.transaction(()=>this.attachPlan(project,job,plan,plan.plan_id+":"+plan.version)).immediate();
     }
     if(op==="coordination-draft"){
-      if(!job.repository_id)experimentError("AGENT_TOOL_READONLY",403);
+      if(task.sandbox==="read-only"||!job.repository_id)experimentError("AGENT_TOOL_READONLY",403);
       const input=z.object({key:z.string().trim().min(1).max(80),content:z.record(z.unknown())}).parse(body);
       const payloadHash=createHash("sha256").update(JSON.stringify(input.content)).digest("hex");
       const existing=job.plans?.find(p=>p.key===input.key);
@@ -375,7 +372,7 @@ export class ExperimentCoordination {
         return {...p,run_id:run.run_id,run_status:run.status,result_id:run.result_id,metrics:run.metrics_status,metric_values:result?.metrics?JSON.parse(result.metrics):undefined,has_result:hasResult,exit_code:run.exit_code,
           artifacts:run.artifacts.map(a=>({path:a.path,id:a.downloaded?a.artifact_id:undefined}))};
       });
-      const activePlans=plans?.filter(p=>p.status!=="skipped"&&(job.status!=="withdrawn"||!!p.run_id))??[];
+      const activePlans=plans?.filter(p=>p.status!=="draft"&&p.status!=="skipped"&&(job.status!=="withdrawn"||!!p.run_id))??[];
       const turnDone=!!turn?.finished_at&&!["pending","selected"].includes(turn.decision?.status??"")&&turn.status!=="interrupted";
       const runsDone=activePlans.every(p=>["completed","cancelled","failed"].includes(p.run_status??"")||p.status==="blocked"&&!!p.execution_hash&&!p.run_id);
       const finished=runsDone&&(job.status==="failed"||job.status==="withdrawn"||!!(turnDone&&

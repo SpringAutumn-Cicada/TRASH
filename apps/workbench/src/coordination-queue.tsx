@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { CoordinationView, HostComputeResources } from "@trash/protocol";
 import { Server } from "lucide-react";
 import { api, uiError } from "./api.js";
-const statuses:Record<string,string>={pending:"未排队",authorized:"等待调度",blocked:"需处理",skipped:"已跳过",submitted:"已提交",queued:"已排队",running:"运行中",preflight:"预检查",syncing:"正在上传",collecting:"收集产物",cancel_requested:"正在取消",disconnected:"主机断连",unknown_remote_state:"远端状态待核对",completed:"运行结束",failed:"运行失败",cancelled:"已取消"};
+const statuses:Record<string,string>={draft:"仅方案",pending:"未排队",authorized:"等待调度",blocked:"需处理",skipped:"已跳过",submitted:"已提交",queued:"已排队",running:"运行中",preflight:"预检查",syncing:"正在上传",collecting:"收集产物",cancel_requested:"正在取消",disconnected:"主机断连",unknown_remote_state:"远端状态待核对",completed:"运行结束",failed:"运行失败",cancelled:"已取消"};
 export function CoordinationQueue({data,project,act,busy,openRun}:{data:CoordinationView;project:string;act:(body:object)=>Promise<boolean>;busy:boolean;openRun:(id:string)=>void}){
   const [loading,setLoading]=useState(false),[error,setError]=useState("");
   const [gpu,setGpu]=useState<Record<string,HostComputeResources>>({});
@@ -29,7 +29,7 @@ export function CoordinationQueue({data,project,act,busy,openRun}:{data:Coordina
         {p.artifacts?.filter(a=>a.id).map(a=><a key={a.path} href={"/api/v1"+base+"/experiment-artifacts/"+p.run_id+"/"+a.id} download>{a.path} </a>)}</div>
         {p.run_id?<button className="text-button" onClick={()=>openRun(p.run_id!)}>运行记录</button>:
           <div>{p.status==="pending"&&job.status==="delivered"&&<button className="secondary-button" disabled={busy} onClick={()=>void act({action:"queue-run",id:job.id,ref:p.id,version:p.version})}>加入队列</button>}
-          {p.status!=="skipped"&&job.status==="delivered"&&<button className="text-button" disabled={busy} onClick={()=>void act({action:"skip",id:job.id,ref:p.id,version:p.version})}>跳过</button>}</div>}</div>)}
+          {p.status!=="draft"&&p.status!=="skipped"&&job.status==="delivered"&&<button className="text-button" disabled={busy} onClick={()=>void act({action:"skip",id:job.id,ref:p.id,version:p.version})}>跳过</button>}</div>}</div>)}
     </div>)}
   </section>;
 }
