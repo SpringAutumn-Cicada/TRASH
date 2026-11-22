@@ -435,6 +435,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response, 200, codeAgent.loadChatSkill(projectId, token, body)); return;
       }
       if (body && typeof body === "object" && "operation" in body &&
+        (body.operation === "stage-shared-file" || body.operation === "publish-shared-file")) {
+        sendJson(response, 200, codeAgent.sharedFileTool(projectId, token, body)); return;
+      }
+      if (body && typeof body === "object" && "operation" in body &&
         (body.operation === "paper-code-list" || body.operation === "paper-code-read")) {
         sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
       }

@@ -77,6 +77,8 @@ except urllib.error.HTTPError as error:
 用户明确要求起草或修订某个自研实验的方法设计时，读取 method-skill/SKILL.md。调用 {"operation":"method-experiments"} 确认当前项目中的目标，不凭实验名猜测目录 ID。匹配多个或无法定位时向用户确认。
 使用 {"operation":"method-context","direction_id":"方向ID","scheme_id":"方案ID"} 获取方法正文和对应仓库。可选 source 为用户选定的 research/ 直属 Markdown 相对路径。按需阅读仓库。使用 {"operation":"method-draft","markdown":"完整候选正文","summary":"修改摘要","questions":[]} 将草稿送到该实验的方法设计页。该操作只保存候选正文，正式正文由用户审阅采用。需要先问关键问题时，直接在本轮回复中提出。普通方法讨论直接回复。
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
+普通共享文件用 {"operation":"stage-shared-file","path":"research/方案.md"} 获取本轮独立草稿，编辑返回的 draft，再用 {"operation":"publish-shared-file","path":"research/方案.md"} 发布。已有文件保留原内容，新文件使用已有目录。相同路径各轮可以同时起草，发布会核对起草时的版本。收到 VERSION_CONFLICT 时保留草稿并报告路径，本轮不重复覆盖。后续合并先读取最新正式文件，再与冲突草稿对照。稿件和其他共享文件也使用此流程。
+用 {"operation":"paper-code-list"} 获取有仓库的论文。传入 paper_id 和可选的仓库相对 path 列目录，或者用 {"operation":"paper-code-read","paper_id":"论文ID","path":"src/main.py"} 按需读源码。读取不限于本轮绑定的论文。直接写入和执行仓库代码仅限本轮授予的绑定仓库。
 summary、sources、source（id）读取项目和论文；
 {"operation":"pdf-pages","id":"source_ID"} 获取原始 PDF 页数、页标、逐页文字和 hash；{"operation":"pdf-page","id":"source_ID","page":1} 渲染整页 PNG 返回 path，必须实际用图像工具查看 path；调用工具返回路径不代表已看图。小字图表可在请求中加 scale=4400 生成更大页面，仍不清楚则标记未核实。完整阅读必须覆盖全部页，不能只读文字即称已完整分析。
 navigation 使用 page/limit/query 查询 Wiki 轻量索引（包含标题、别名和适用问题）；relations 使用 id 返回引用依据、相关主题、反向引用和断链；context 使用 query/length（最多16000字符）先返回匹配职责页和一跳知识关联、未读取的evidence_candidates。evidence 使用 id/offset/length 按条读取evidence/ev-*.md，返回source_id、hash、条件、原文定位、反向引用章节和实际读取范围；读取依据不等于重新核验PDF。evidence/get读取独立依据时附带同版本公共范围（最多16000字符）与verification声明；范围缺失、版本不同或超限时根据scope_status和scope_document另行读取，不能推定范围。跨论文背景先归纳候选共识，再按结论查支持与反例，关键数字或争议再查PDF。报告 omitted，不等于全库覆盖。修改前仍 get 获取完整工作副本和 hash。maintenance 返回不调用模型的结构检查，memory-log 按 page 查询实际操作历史。语义维护按问题读取证据；普通问答不自动写文件，用户要求整理、更新或记住研究知识时可以把有来源且可复用的认识补入已有页。
@@ -86,7 +88,7 @@ Wiki 按单篇/综合/方向用途先读取上文对应 skill，直接写 Markdo
 先通过 get 记下原文件 hash（新文件为 null），写好后调用 {"operation":"publish","files":[{"path":"knowledge_base/papers/source_example/whoami.md","expected":null}]}。工具从工作副本读取 Markdown 原样提交，正文不要放进 JSON。更新先重新 get 并保留用户内容；Wiki 使用 references/wiki.md 的明确证据与关系写法，引用依据中的文件须实际 get/context 读取；导航链接不作为证据；冲突保留副本，不重试覆盖。不再生成或读取basic/key/detail旧卡片；使用whoami入口及同篇Wiki职责页。发布后平台回填标题和年月，人工修改冲突保留建议。
 实验结果仍使用 write，kind=experiment-result，input 为原结构化记录及 base_version。不能编造结果。
 不要修改正式知识目录、.trash、数据库、任务文件、原始论文或其他项目。
-${research?`用户明确要求保存研究想法、候选假设、研究方案或讨论笔记时，使用项目的 research/（实际目录 ${JSON.stringify(research)}），文档直接放在该目录下，文件名体现主题。普通讨论直接回复，用户没有要求保存时不写文件。保存后报告相对于项目根目录的路径。论文正文和修订稿走下方稿件规则，正式实验配置和结果放 experiments/，发布知识走前述 Wiki 流程。`:"研究笔记目录不可用。用户要求保存研究想法或方案时说明缺少可用的 research/ 目录，不要改存稿件目录。"}
+${research?`用户明确要求保存研究想法、候选假设、研究方案或讨论笔记时，将目标指定为 research/ 下的直属文件并使用共享文件草稿工具，文件名体现主题。普通讨论直接回复，用户没有要求保存时不写文件。保存后报告相对于项目根目录的路径。论文正文和修订稿走下方稿件规则，正式实验配置和结果放 experiments/，发布知识走前述 Wiki 流程。`:"研究笔记目录不可用。用户要求保存研究想法或方案时说明缺少可用的 research/ 目录，不要改存稿件目录。"}
 ${manuscripts?`论文架位于 ${manuscripts}。先确认本轮所指论文，已有论文按 paper.yaml 找到当前稿，正文和修订稿放该篇的 drafts/，图片放 figures/，公式源放 equations/，表格放 tables/，引文文件放 references/，交付文件放 exports/，一次性工作文件放 work/。新论文由论文页建立主目录，禁止自行指定或修改 paper.yaml。历史稿件按用户指明的路径处理。`:"项目尚未配置论文工作区，先请用户在项目配置中设置。"}Wiki发布后直接可用，无人工采纳步骤；保留未知事实和待验证假设，不自动删除或发起实验。写入不代替用户验收。
 `);
   return path;

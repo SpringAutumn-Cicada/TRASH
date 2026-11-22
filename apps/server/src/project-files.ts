@@ -1,4 +1,4 @@
-import { visibleEntry } from "./project-layout.js";
+import { publicDirectories, visibleEntry } from "./project-layout.js";
 import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync, rmdirSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,10 +18,12 @@ const textExtensions=new Set(['.md','.markdown','.txt','.json','.jsonl','.yaml',
 const mimeTypes:Record<string,string>={'.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp'};
 const internal=new Set(['.trash','.git','project.yaml','raw','files','tasks','code-agent','literature-analysis','agent-workspace','environment-analysis','environment-deployments','dataset-hashes','dataset-upload-sessions','directory-repairs','experiment-bindings','experiment-runs','remote-workspaces','reproductions','reproduction-queues']);
 const draftExtension=/\.(docx?|odt|rtf|tex|md|markdown)$/i;
+export const sharedChatFileInput=z.object({operation:z.enum(['stage-shared-file','publish-shared-file']),path:inputPath.refine(value=>value.length>0)}).strict();
 type FileEntry={name:string;path:string;kind:'directory'|'file'|'symlink';size:number;modified:string;protected:boolean};
 type Recycled={id:string;path:string;deletedAt:string;fingerprint:string;kind:'file'|'directory'};
 export class ProjectFiles {
   private knowledge:KnowledgeStore;
+  private sharedPublishing=new Set<string>();
   constructor(private store:TrashStore,private blocked:(id:string)=>boolean, private methodWriteBlocked=blocked){this.knowledge=new KnowledgeStore(store.db);}
   private root(id:string){const root=join(this.store.root,'projects',id);if(!existsSync(root))fail('FILES_WORKSPACE_MISSING',404);return realpathSync(root);}
   private locate(id:string,value:string,allowMissing=false){
@@ -213,6 +215,71 @@ export class ProjectFiles {
   private bytes(path:string,limit=textLimit){
     const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW);
     try{const stat=fstatSync(fd);if(!stat.isFile()||stat.size>limit)fail('FILES_TOO_LARGE',413);return readFileSync(fd);}finally{closeSync(fd);}
+  }
+  private sharedChatTarget(id:string,path:string,paperRoots:string[]){
+    const logical=path.split('/').filter(Boolean).join('/');
+    const [top,folder]=logical.split('/');
+    if(!folder||!publicDirectories.includes(top)&&!isManuscriptDirectory(top)||top==='code'&&folder==='papers')
+      fail('FILES_MANAGED_READONLY',403);
+    const target=this.writable(id,logical,()=>false);
+    const canonical=relative(this.root(id),target).split(sep).join('/');
+    if(!statSync(this.locate(id,dirname(canonical))).isDirectory())fail('FILES_NOT_DIRECTORY',422);
+    if(paperRoots.some(root=>inside(root,target)))fail('FILES_MANAGED_READONLY',403);
+    return {target,canonical};
+  }
+  private sharedChatDraft(workspace:string,canonical:string,createParents:boolean){
+    const parts=['shared-draft',...canonical.split('/')];
+    let path=workspace;
+    for(const part of parts.slice(0,-1)){
+      path=join(path,part);
+      if(createParents&&!existsSync(path)){
+        try{mkdirSync(path,{mode:0o700});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+      }
+      if(!lstatSync(path).isDirectory())fail('FILES_SYMLINK',403);
+    }
+    return join(path,parts.at(-1)!);
+  }
+  private sharedChatCurrent(target:string){
+    const stat=lstatSync(target,{throwIfNoEntry:false});
+    if(!stat)return {bytes:undefined,version:null,mode:0o600};
+    if(!stat.isFile())fail('FILES_NOT_FILE',422);
+    const bytes=this.bytes(target,uploadLimit);
+    return {bytes,version:hash(bytes),mode:stat.mode&0o777};
+  }
+  sharedChatFile(id:string,input:z.infer<typeof sharedChatFileInput>,workspace:string,versions:Map<string,string|null>,paperRoots:string[]){
+    const {target,canonical}=this.sharedChatTarget(id,input.path,paperRoots);
+    const staged=versions.has(target);
+    if(input.operation==='stage-shared-file'){
+      const draft=this.sharedChatDraft(workspace,canonical,true);
+      if(!staged){
+        const {bytes,version}=this.sharedChatCurrent(target);
+        writeFileSync(draft,bytes??Buffer.alloc(0),{flag:'wx',mode:0o600});
+        versions.set(target,version);
+      }
+      return {path:canonical,draft,version:versions.get(target)};
+    }
+    if(!staged)fail('FILES_DRAFT_REQUIRED');
+    if(this.sharedPublishing.has(target))fail('FILES_PUBLISH_BUSY');
+    const draft=this.sharedChatDraft(workspace,canonical,false);
+    const bytes=this.bytes(draft,uploadLimit);
+    this.sharedPublishing.add(target);
+    try{
+      const current=this.sharedChatCurrent(target);
+      if(current.version!==versions.get(target))fail('VERSION_CONFLICT');
+      const temporary=join(dirname(target),`.trash-publish-${randomUUID()}.tmp`);
+      try{
+        writeFileSync(temporary,bytes,{flag:'wx',mode:current.mode});
+        if(current.version===null){
+          try{linkSync(temporary,target);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')fail('VERSION_CONFLICT');throw error;}
+        }else{
+          if(this.sharedChatCurrent(target).version!==current.version)fail('VERSION_CONFLICT');
+          renameSync(temporary,target);
+        }
+      }finally{if(existsSync(temporary))unlinkSync(temporary);}
+      const version=hash(bytes);
+      versions.set(target,version);
+      return {path:canonical,draft,version,published:true};
+    }finally{this.sharedPublishing.delete(target);}
   }
   preview(id:string,path:string){
     const target=this.locate(id,path);if(!statSync(target).isFile())fail('FILES_NOT_FILE',422);
