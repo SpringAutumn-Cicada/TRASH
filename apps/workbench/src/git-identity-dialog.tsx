@@ -62,6 +62,7 @@ export function GitIdentityDialog({ onClose }: { onClose: () => void }) {
 
   return <ModalLayer><div className="modal-backdrop"><form ref={dialog} className="modal git-identity-dialog"
     role="dialog" aria-modal="true" aria-labelledby={title} aria-busy={loading || saving}
+    autoComplete="off"
     onSubmit={event => { event.preventDefault(); void save(identity); }}
     onKeyDown={event => {
       if (event.key === "Escape") { event.stopPropagation(); if (!saving) onClose(); return; }
@@ -78,9 +79,9 @@ export function GitIdentityDialog({ onClose }: { onClose: () => void }) {
         disabled={saving} onClick={onClose}><X size={18}/></button>
     </header>
     <div className="git-identity-fields">
-      <label>提交者姓名<input ref={nameInput} autoComplete="name" required maxLength={120} value={identity.name}
+      <label>提交者姓名<input ref={nameInput} autoComplete="off" required maxLength={120} value={identity.name}
         disabled={loading || !loaded || saving} onChange={event => edit("name", event.target.value)}/></label>
-      <label>提交者邮箱<input type="email" autoComplete="email" required maxLength={254} value={identity.email}
+      <label>提交者邮箱<input type="email" autoComplete="off" required maxLength={254} value={identity.email}
         disabled={loading || !loaded || saving} onChange={event => edit("email", event.target.value)}/></label>
     </div>
     <p className="git-identity-scope">仓库里已配置完整署名时，优先使用仓库的身份。</p>
