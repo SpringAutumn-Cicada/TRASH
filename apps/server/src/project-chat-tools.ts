@@ -25,7 +25,7 @@ function manuscriptPath(projectRoot:string,workspace:string){
   if(!existsSync(join(projectRoot,'project.yaml')))return;
   const root=realpathSync(projectRoot);
   const target=join(root,manuscriptDirectory(root));
-  mkdirSync(target,{recursive:true});
+  if(!existsSync(target))return;
   if(!lstatSync(target).isDirectory())return;
   const alias=join(workspace,'manuscripts');
   try {
@@ -54,7 +54,9 @@ export function prepareChatWorkspace(store: TrashStore, projectId: string, taskI
   const manuscripts=manuscriptPath(projectRoot,path);
   let research:string|undefined;
   if(existsSync(join(projectRoot,'project.yaml'))){
-    try { research=ensureResearchDirectory(store.root,projectId); }
+    try {
+      if(lstatSync(join(projectRoot,'research')).isDirectory())research=ensureResearchDirectory(store.root,projectId);
+    }
     catch { /* Other chat workflows can still run when this output path is unavailable. */ }
   }
   writeFileSync(join(path, "project_snapshot.json"), JSON.stringify({ at:new Date().toISOString(),project:store.getProject(projectId),source_count:store.listSources(projectId).length,knowledge_count:new MarkdownKnowledge(store).index(projectId).documents.length,note:'仅项目概览，无知识正文。先 list/search 查询索引，再 get 按需读取；综合必须报告实际覆盖范围。' }),{mode:0o600});

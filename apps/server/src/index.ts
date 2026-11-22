@@ -526,6 +526,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
     if (subpath === "chat/tasks" && method === "GET") { sendJson(response,200,codeAgent.chatHistory(projectId)); return; }
+    if (subpath === "chat/write-targets" && method === "GET") {
+      response.setHeader("cache-control","no-store");
+      sendJson(response,200,codeAgent.writeTargets(projectId,files));return;
+    }
     if (subpath === "chat/skills" && method === "GET") { sendJson(response,200,{skills:chatSkills}); return; }
     if (subpath === "chat/model-config" && method === "GET") {
       sendJson(response,200,await codeAgent.chatModelConfig(projectId));return;
