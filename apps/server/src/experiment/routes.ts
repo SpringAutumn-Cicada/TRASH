@@ -8,13 +8,14 @@ import { loadExperimentBindings, saveExperimentBindings, prepareAutomaticExperim
 import { deleteDatasetFiles } from "./delete-dataset.js";
 import { recognizeWorkspace, adoptWorkspace } from "./workspace-migration.js";
 import { ensureRemoteDirectory } from "./workspace.js";
+import { uploadExperimentCode } from "./experiment-code-upload.js";
 import { join, posix } from "node:path";
 /* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { autoDLDirectories, autoDLPaperDirectory, autoDLReproductionDirectory, datasetInputSchema, remotePathSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
+import { autoDLDirectories, autoDLReproductionDirectory, datasetInputSchema, remotePathSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
@@ -84,12 +85,8 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===2&&parts[1]==="upload-progress"&&method==="GET"){const id=z.string().uuid().parse(url.searchParams.get('request_id'));send(response,200,{progress:service.reproductions.progress(projectId,'experiment-code',id)});return true;}
     if(parts.length===2&&parts[1]==="cancel-upload"&&method==="POST"){const input=z.object({request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.reproductions.cancelUpload(projectId,'experiment-code',input.request_id));return true;}
     if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
-      const input=z.object({repository_id:z.string().optional(),profile_id:z.string(),name:z.string().trim().min(1).max(100).optional(),request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));service.data.profile(projectId,input.profile_id);
-      const workspace=service.workspaces.get(projectId,input.profile_id)??experimentError('WORKSPACE_REQUIRED',409),remote=service.terminals.connection(projectId,input.profile_id),release=service.reproductions.acquire(projectId),operation=service.reproductions.beginUpload(projectId,'experiment-code',input.request_id);
-      const report=(stage:string,sent=0,total=0)=>{if(operation.signal.aborted)experimentError('UPLOAD_CANCELLED',409);service.reproductions.report(projectId,'experiment-code',input.request_id,stage,sent,total);};
-      try{report('snapshot');const status=await service.repository.status(projectId,input.repository_id);await service.repository.preflight(projectId,status.head,status.repository.repository_id);const name=autoDLPaperDirectory(status.repository);const snapshot=await service.reproductions.sourceSnapshot(projectId,status.repository.path,name);await service.repository.preflight(projectId,status.head,status.repository.repository_id);if((await service.repository.status(projectId,status.repository.repository_id)).head!==status.head)experimentError('GIT_TREE_DIRTY',409);const parent=posix.join(workspace.root,autoDLDirectories.paperCode);await ensureRemoteDirectory(remote,parent);const deployed=await service.reproductions.deploy(remote,projectId,snapshot,parent,report,operation.signal,name);service.workspaces.recordExperimentUpload(projectId,input.profile_id,workspace.root,{name,path:deployed.path,commit:status.head,snapshot_id:snapshot.snapshot_id,at:new Date().toISOString()});send(response,201,{...deployed,commit:status.head});}
-      catch(error){service.reproductions.report(projectId,'experiment-code',input.request_id,operation.signal.aborted?'cancelled':'failed');throw error;}
-      finally{operation.finish();release();}return true;
+      const input=z.object({repository_id:z.string().optional(),profile_id:z.string(),name:z.string().trim().min(1).max(100).optional(),request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+      send(response,201,await uploadExperimentCode(service,projectId,input));return true;
     }
   }
   if(parts[0]==="reproductions"){

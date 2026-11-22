@@ -26,7 +26,7 @@ export class ReproductionService {
  progress(project:string,id:string,request:string){const value=this.uploads.get(`${project}:${id}`);return value?.request_id===request?value:null;}
  report(project:string,id:string,request:string,stage:string,sent=0,total=0){this.uploads.set(`${project}:${id}`,{request_id:request,stage,sent,total});}
 
- beginUpload(project:string,id:string,request:string){const key=`${project}:${id}:${request}`;const controller=new AbortController();this.uploadControllers.set(key,controller);return {signal:controller.signal,finish:()=>this.uploadControllers.delete(key)};}
+ beginUpload(project:string,id:string,request:string){const key=`${project}:${id}:${request}`;const controller=new AbortController();this.uploadControllers.set(key,controller);return {signal:controller.signal,cancel:()=>controller.abort(),finish:()=>this.uploadControllers.delete(key)};}
  cancelUpload(project:string,id:string,request:string){
   if(id!=="experiment-code")this.get(project,id);const controller=this.uploadControllers.get(`${project}:${id}:${request}`),progress=this.progress(project,id,request);
   if(!controller||!progress)experimentError("UPLOAD_NOT_RUNNING",409);
@@ -111,11 +111,22 @@ export class ReproductionService {
  async tree(project:string,id:string,path:string){return (await readdir(await this.safe(project,id,path),{withFileTypes:true})).filter(e=>e.name!==".git").slice(0,1000).map(e=>({name:e.name,path:path?`${path}/${e.name}`:e.name,directory:e.isDirectory(),symlink:e.isSymbolicLink()}));}
  async file(project:string,id:string,path:string){const target=await this.safe(project,id,path),info=await stat(target);if(!info.isFile())experimentError("NOT_A_FILE");if(info.size>1024*1024)return {path,size_bytes:info.size,preview:false,reason:"文件超过 1 MiB"};const data=await readFile(target);try{if(data.includes(0))throw new Error();return {path,size_bytes:data.length,preview:true,text:new TextDecoder("utf8",{fatal:true}).decode(data)};}catch{return {path,size_bytes:info.size,preview:false,reason:"二进制或非 UTF-8 文件"};}}
  async snapshot(project:string,id:string,analysis=false):Promise<ReproductionSnapshot>{const code=this.get(project,id),snapshot_id=`snapshot_${randomUUID()}`,root=join(this.root(project),"snapshots",snapshot_id);const rel=relative(code.path,root);if(rel===""||!rel.startsWith(`..${sep}`)&&rel!==".."&&!isAbsolute(rel))experimentError("REPRODUCTION_DIRECTORY_INVALID");await mkdir(root,{recursive:true});const path=join(root,"code.zip");try{const manifest=await this.python(analysis?"analysis-snapshot":"snapshot",code.path,path);const bytes=await readFile(path);if(bytes.length>200*1024*1024)experimentError("ARCHIVE_LIMIT");const value:ReproductionSnapshot={snapshot_id,reproduction_id:id,name:code.name,remote_directory:code.remote_directory??autoDLReproductionDirectory(code.name,id),archive_name:code.archive_name??'source.zip',source_id:code.source_id,sha256:createHash("sha256").update(bytes).digest("hex"),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,"manifest.json"),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}}
- async sourceSnapshot(project:string,path:string,name:string):Promise<ReproductionSnapshot>{
+ async sourceSnapshot(project:string,path:string,name:string,commit:string):Promise<ReproductionSnapshot>{
   const snapshot_id='snapshot_'+randomUUID(),root=join(this.root(project),'snapshots',snapshot_id),rel=relative(path,root);
   if(rel===''||!rel.startsWith(`..${sep}`)&&rel!=='..'&&!isAbsolute(rel))experimentError('REPRODUCTION_DIRECTORY_INVALID');
-  await mkdir(root,{recursive:true});const archive=join(root,'code.zip');
-  try{const manifest=await this.python('snapshot',path,archive);const bytes=await readFile(archive);if(bytes.length>200*1024*1024)experimentError('ARCHIVE_LIMIT');const value:ReproductionSnapshot={snapshot_id,reproduction_id:'experiment-code',name,archive_name:name+'.zip',sha256:createHash('sha256').update(bytes).digest('hex'),created_at:new Date().toISOString(),...manifest};writeFileSync(join(root,'manifest.json'),JSON.stringify(value),{mode:0o600});return value;}catch(error){await rm(root,{recursive:true,force:true});throw error;}
+  await mkdir(root,{recursive:true});const archive=join(root,'code.zip'),source=join(root,'source.zip'),tree=join(root,'source');
+  try{
+   await git(path,['archive','--format=zip','--output='+source,commit]);
+   if((await stat(source)).size>200*1024*1024)experimentError('ARCHIVE_LIMIT');
+   await this.python('extract',source,tree);
+   const manifest=await this.python('snapshot',tree,archive);
+   const bytes=await readFile(archive);
+   if(bytes.length>200*1024*1024)experimentError('ARCHIVE_LIMIT');
+   await rm(source);await rm(tree,{recursive:true});
+   const value:ReproductionSnapshot={snapshot_id,reproduction_id:'experiment-code',name,archive_name:name+'.zip',sha256:createHash('sha256').update(bytes).digest('hex'),created_at:new Date().toISOString(),...manifest};
+   writeFileSync(join(root,'manifest.json'),JSON.stringify(value),{mode:0o600});
+   return value;
+  }catch(error){await rm(root,{recursive:true,force:true});throw error;}
  }
  snapshotInfo(project:string,id:string){if(!/^snapshot_[a-f0-9-]+$/.test(id))experimentError("SNAPSHOT_NOT_FOUND",404);const path=join(this.root(project),"snapshots",id,"manifest.json");if(!existsSync(path))experimentError("SNAPSHOT_NOT_FOUND",404);return JSON.parse(readFileSync(path,"utf8")) as ReproductionSnapshot;}
  async bundle(project:string,snapshot:ReproductionSnapshot){const path=join(this.root(project),"snapshots",snapshot.snapshot_id,"code.zip"),bytes=await readFile(path);if(createHash("sha256").update(bytes).digest("hex")!==snapshot.sha256)experimentError("SNAPSHOT_HASH_MISMATCH",409);return {path,sha256:snapshot.sha256,size:bytes.length,cleanup:async()=>{}};}
