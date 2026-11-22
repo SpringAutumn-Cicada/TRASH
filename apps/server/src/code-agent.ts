@@ -32,7 +32,7 @@ const inputSchema = z.object({
   method:methodDraftInput.optional(),
   repository_id:z.string().min(1).optional(),
   write_scope:writeScope.optional(),
-  paper_id:manuscriptId.optional(),
+  paper_id:manuscriptId.nullable().optional(),
   attachments:z.array(z.string().regex(/^artifact_[A-Za-z0-9-]+$/)).max(10).default([]),
   conversation_id: z.string().uuid().optional(), instructions: z.string().trim().min(1).max(30000), model: z.string().trim().max(200).default(""),
   reasoning_effort: reasoningEffort.optional(),
@@ -418,8 +418,8 @@ export class CodeAgent {
     if (legacyWriter && this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(project)) experimentError("PROJECT_HAS_ACTIVE_TASKS", 409);
     if (legacyWriter && this.busy(project,false)) experimentError("CODE_AGENT_BUSY", 409);
     const meta=chatUrl&&input.conversation_id?this.conversationMeta(project,input.conversation_id):undefined;
-    const paperId=chatUrl?(input.conversation_id?meta?.paper_id??undefined:input.paper_id):undefined;
-    if(chatUrl&&input.conversation_id&&input.paper_id!==undefined&&input.paper_id!==paperId)experimentError('CHAT_PAPER_BINDING_CHANGED',409);
+    const paperId=chatUrl?(input.conversation_id?meta?.paper_id:input.paper_id)??undefined:undefined;
+    if(chatUrl&&input.conversation_id&&input.paper_id!==undefined&&(input.paper_id??undefined)!==paperId)experimentError('CHAT_PAPER_BINDING_CHANGED',409);
     if(paperId)this.files.manuscriptPath(project,paperId);
     const previous=chatUrl&&input.conversation_id?this.list(project).find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined;
 
