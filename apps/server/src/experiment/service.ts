@@ -6,13 +6,13 @@ import { ExperimentFailureAnalysis } from './experiment-failure-analysis.js';
 import { DatasetUploadSessions } from "./dataset-upload-sessions.js";
 import { ReproductionQueueService } from "./reproduction-queue.js";
 import { DatasetUploadService } from "./dataset-upload.js";
-import { WorkspaceService, directoryLabel, ensureRemoteDirectory } from "./workspace.js";
+import { WorkspaceService, ensureRemoteDirectory } from "./workspace.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { z } from "zod";
 import { ExperimentStore, KnowledgeStore, experimentError, type TrashStore } from "@trash/storage";
-import { experimentPlanInputSchema, experimentResultSchema, metricSchema, evaluationMetrics, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
+import { autoDLDirectories, autoDLPaperDirectory, autoDLReproductionDirectory, experimentPlanInputSchema, experimentResultSchema, metricSchema, evaluationMetrics, type DatasetRef, type ExperimentPlanVersion, type ExperimentRun, type ExperimentRunState, type SshProfile } from "@trash/protocol";
 import { RepositoryService } from "./repository.js";
 import { SshService, RemoteConnection, redact } from "./ssh.js";
 import { DIAGNOSTICS, REMOTE_RUNNER, RUNNER_VERSION } from "./runner.js";
@@ -145,7 +145,20 @@ export class ExperimentService {
     if(input.preparation&&!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");
     if(!input.preparation&&plan.content.preparation_script&&!this.data.runs(projectId).some(r=>r.preparation&&r.status==="completed"&&r.exit_code===0&&r.plan.plan_id===plan.plan_id&&r.plan.version===plan.version))experimentError("PREPARATION_REQUIRED",409);
     const id=`run_${randomUUID()}`,at=new Date().toISOString();
-    const run:ExperimentRun={run_id:id,project_id:projectId,profile_id:plan.profile.profile_id,host_key:this.hostKey(plan.profile),plan,idempotency_key:input.idempotency_key,status:"queued",remote_dir:this.workspaces.get(projectId,plan.profile.profile_id)?posix.join(this.workspaces.get(projectId,plan.profile.profile_id)!.root,"outputs",plan.reproduction?"reproductions":"experiments",directoryLabel(plan.reproduction?.name??plan.content.method),id):posix.join(plan.profile.remote_root,projectId,id),token:randomUUID(),created_at:at,updated_at:at,artifacts:[],preparation:input.preparation,...(retryOf?{retry_of:retryOf}:{})};
+    const workspace=this.workspaces.get(projectId,plan.profile.profile_id);
+    let remoteDir=posix.join(plan.profile.remote_root,projectId,id);
+    if(workspace){
+      const snapshot=plan.reproduction;
+      if(snapshot){
+        const code=snapshot.remote_directory?undefined:this.reproductions.list(projectId).find(item=>item.id===snapshot.reproduction_id);
+        const label=snapshot.remote_directory??code?.remote_directory??autoDLReproductionDirectory(code?.name??snapshot.name,snapshot.reproduction_id);
+        remoteDir=posix.join(workspace.root,autoDLDirectories.reproductionOutputs,label,id);
+      }else{
+        const repository=this.data.repository(projectId,plan.repository.repository_id)??plan.repository;
+        remoteDir=posix.join(workspace.root,autoDLDirectories.paperOutputs,autoDLPaperDirectory(repository),id);
+      }
+    }
+    const run:ExperimentRun={run_id:id,project_id:projectId,profile_id:plan.profile.profile_id,host_key:this.hostKey(plan.profile),plan,idempotency_key:input.idempotency_key,status:"queued",remote_dir:remoteDir,token:randomUUID(),created_at:at,updated_at:at,artifacts:[],preparation:input.preparation,...(retryOf?{retry_of:retryOf}:{})};
     this.saveRun(run);this.data.event(id,"queued",input.preparation?"已单独授权环境准备脚本":"已确认代码版本、命令、时限与同步范围");void this.tick();return run;
   }
   private async tick():Promise<void>{

@@ -2,19 +2,27 @@ import { projectRuntime } from "../project-layout.js";
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { experimentError, type TrashStore } from "@trash/storage";
-import { remotePathSchema, type RemoteWorkspace } from "@trash/protocol";
+import { autoDLDirectories, remoteDirectoryLabel, remotePathSchema, type RemoteWorkspace } from "@trash/protocol";
 import type { RemoteConnection } from "./ssh.js";
 
-export function directoryLabel(name:string){const value=name.normalize('NFKC').replace(/[^\p{L}\p{N}_.-]+/gu,'_').replace(/^[._-]+|[._-]+$/g,'');let result='';for(const char of value){if(Buffer.byteLength(result+char)>180)break;result+=char;}return result||'project';}
 export class WorkspaceService {
  constructor(private store:TrashStore){}
  private file(project:string,profile:string){return projectRuntime(this.store.root,project,'remote-workspaces',profile+'.json');}
  get(project:string,profile:string):RemoteWorkspace|undefined{const file=this.file(project,profile);return existsSync(file)?JSON.parse(readFileSync(file,'utf8')) as RemoteWorkspace:undefined;}
- suggested(project:string){const name=this.store.listProjects().find(item=>item.project_id===project)?.title??project;return posix.join('/root/autodl-tmp',directoryLabel(name));}
+ suggested(project:string){const name=this.store.listProjects().find(item=>item.project_id===project)?.title??project;return posix.join('/root/autodl-tmp',remoteDirectoryLabel(name));}
  save(project:string,profile:string,path:string){const root=posix.normalize(remotePathSchema.parse(path));if(root==='/'||root.split('/').filter(Boolean).length<2)experimentError('WORKSPACE_PATH_INVALID',400);const old=this.get(project,profile);const value:RemoteWorkspace={project_id:project,profile_id:profile,root,updated_at:new Date().toISOString(),...(old?.root===root?{initialized_at:old.initialized_at,adopted_at:old.adopted_at,source_profile_id:old.source_profile_id,source_root:old.source_root,experiment_uploads:old.experiment_uploads}:{})};const file=this.file(project,profile);mkdirSync(dirname(file),{recursive:true});writeFileSync(file+'.tmp',JSON.stringify(value),{mode:0o600});renameSync(file+'.tmp',file);return value;}
  markAdopted(project:string,profile:string,source?:string,sourceRoot?:string){const value=this.get(project,profile)??experimentError('WORKSPACE_REQUIRED',409);const next={...value,adopted_at:new Date().toISOString(),source_profile_id:source,source_root:sourceRoot};const file=this.file(project,profile);writeFileSync(file+'.tmp',JSON.stringify(next),{mode:0o600});renameSync(file+'.tmp',file);return next;}
  recordExperimentUpload(project:string,profile:string,root:string,upload:NonNullable<RemoteWorkspace['experiment_uploads']>[number]){const value=this.get(project,profile)??experimentError('WORKSPACE_REQUIRED',409);if(value.root!==root)experimentError('WORKSPACE_CHANGED',409);const next={...value,experiment_uploads:[...(value.experiment_uploads??[]),upload].slice(-100)};const file=this.file(project,profile);writeFileSync(file+'.tmp',JSON.stringify(next),{mode:0o600});renameSync(file+'.tmp',file);return next;}
- async initialize(project:string,profile:string,remote:RemoteConnection){const value=this.get(project,profile)??experimentError('WORKSPACE_REQUIRED',409);for(const path of [value.root,...['datasets','reproductions','experiments','outputs'].map(name=>posix.join(value.root,name))])await ensureRemoteDirectory(remote,path);const result={...value,initialized_at:new Date().toISOString()};const file=this.file(project,profile);writeFileSync(file+'.tmp',JSON.stringify(result),{mode:0o600});renameSync(file+'.tmp',file);return result;}
+ async initialize(project:string,profile:string,remote:RemoteConnection){
+  const workspace=this.get(project,profile)??experimentError('WORKSPACE_REQUIRED',409);
+  for(const directory of Object.values(autoDLDirectories))await ensureRemoteDirectory(remote,posix.join(workspace.root,directory));
+  const current=this.get(project,profile);
+  if(current?.root!==workspace.root)experimentError('WORKSPACE_CHANGED',409);
+  const result={...current,initialized_at:new Date().toISOString()};
+  const file=this.file(project,profile);
+  writeFileSync(file+'.tmp',JSON.stringify(result),{mode:0o600});renameSync(file+'.tmp',file);
+  return result;
+ }
 }
 // Follow no symlinks and never replace a file. Existing directories are retained.
 export async function ensureRemoteDirectory(remote:RemoteConnection,path:string){remotePathSchema.parse(path);const sftp=await remote.sftp();try{let current='';for(const part of posix.normalize(path).split('/').filter(Boolean)){current+='/'+part;const info=await new Promise<import('ssh2').Stats|undefined>((resolve,reject)=>sftp.lstat(current,(error,value)=>{if(!error)resolve(value);else if(Number((error as Error&{code?:number}).code)===2)resolve(undefined);else reject(error);}));if(info){if(!info.isDirectory()||info.isSymbolicLink())experimentError('WORKSPACE_PATH_UNSAFE',409);}else await new Promise<void>((resolve,reject)=>sftp.mkdir(current,{mode:0o755},error=>error?reject(error):resolve()));}}finally{sftp.end();}}

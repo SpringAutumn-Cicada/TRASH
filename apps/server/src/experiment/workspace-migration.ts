@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
-import { remotePathSchema, type WorkspaceRecognition } from "@trash/protocol";
+import { autoDLDirectories, remotePathSchema, type WorkspaceRecognition } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import type { ExperimentService } from "./service.js";
 import type { RemoteConnection } from "./ssh.js";
@@ -33,7 +33,7 @@ export async function recognizeWorkspace(service:ExperimentService,project:strin
  if(source===profile)experimentError('WORKSPACE_SOURCE_INVALID',400);
  const directories:WorkspaceRecognition['directories']=[];
  if(!await exists(remote,root))experimentError('REMOTE_DIRECTORY_NOT_FOUND',422);
- for(const name of ['datasets','reproductions','experiments','outputs'])directories.push({name,path:posix.join(root,name),exists:await exists(remote,posix.join(root,name))});
+ for(const name of Object.values(autoDLDirectories))directories.push({name,path:posix.join(root,name),exists:await exists(remote,posix.join(root,name))});
  const resources:WorkspaceRecognition['resources']=[];
  const check=async(kind:'dataset'|'reproduction'|'experiment',id:string,name:string,oldPath:string,snapshot?:string)=>{
   const target=sourceWorkspace?mappedWorkspacePath(sourceWorkspace.root,root,oldPath):undefined;let matched=false,baseline_generated=false,reason='原路径不在来源工作区内，保留原记录';
