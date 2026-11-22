@@ -100,7 +100,7 @@ function ChatSkillPicker({skills,status,value,disabled,onChange}:{
   </>;
 }
 
-export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBrowseResearch:(path:string)=>void}){
+export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:string;focusId?:string;onBrowseResearch:(path:string)=>void}){
   const {height:chatHeight,change:changeChatHeight}=useChatHeight(projectId);
   const transcriptRef=useRef<HTMLDivElement>(null);
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
@@ -185,6 +185,23 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const filtered=sessions.filter(item=>`${sessionTitle(item)}\n${item.first.instructions}\n${item.latest.instructions}`.toLowerCase().includes(query.trim().toLowerCase()));
   const scroll=useChatScroll(conversation,JSON.stringify([messages.length,last?.response,last?.status,last?.output]));
   const {messagesRef,follow,setAway}=scroll;
+  const focusedTurn=useRef<string|undefined>(undefined);
+  useEffect(()=>{
+    if(!focusId||focusedTurn.current===focusId||loading)return;
+    const turn=turns.find(t=>t.task_id===focusId);
+    if(!turn)return;
+    if(conversation!==turn.conversation_id){
+      draftStore.choose(turn.conversation_id);
+      return;
+    }
+    const element=document.getElementById("chat-turn-"+focusId);
+    const container=messagesRef.current;
+    if(element&&container){
+      focusedTurn.current=focusId;
+      container.scrollTo({top:container.scrollTop+element.getBoundingClientRect().top-container.getBoundingClientRect().top-18});
+      follow.current=false;setAway(true);
+    }
+  },[focusId,loading,turns,conversation,draftStore,follow,messagesRef,setAway]);
   const updateDraft=(value:string)=>{
     if(draftStore.getSnapshot().sending[conversation])return;
     draftStore.update(conversation,message=>({...message,text:value}));

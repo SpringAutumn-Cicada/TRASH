@@ -36,3 +36,15 @@
 .coord-approval input { width:auto; }
 @media(max-width:600px){.coord-section {padding:.85rem}.coord-job {padding:.65rem}.coord-section .coord-row {align-items:flex-start}}
 .coord-follow { flex-basis:100%; }
+.coord-message-group { display:grid; gap:1rem; min-width:0; }
+.consult-feedback { margin-block:1rem; border:1px solid var(--chat-line); border-radius:12px; overflow:hidden; }
+.consult-feedback header { display:flex; align-items:center; gap:.5rem; padding:.7rem .9rem; background:var(--chat-canvas); }
+.consult-feedback header svg,.consult-state { color:var(--green); }
+.consult-feedback header small { margin-inline-start:auto; color:var(--muted); }
+.consult-item { padding:.65rem .9rem; border-top:1px solid var(--chat-line); }
+.consult-item summary { cursor:pointer; overflow-wrap:anywhere; }
+.consult-item summary small { display:block; margin:.25rem 0 0 1rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.consult-state { display:inline-block; margin-inline-start:.6rem; font-size:.78rem; }
+.consult-body { margin:.7rem 0 .2rem 1rem; padding-inline-start:.8rem; border-inline-start:2px solid var(--chat-line); }
+.consult-body p { margin:.25rem 0 .65rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+.consult-choices { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.6rem; }

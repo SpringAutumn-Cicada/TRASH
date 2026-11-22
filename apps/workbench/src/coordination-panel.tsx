@@ -3,6 +3,7 @@ import type { CSSProperties, FormEvent } from "react";
 import { ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Search, Settings2, Square, Workflow, X } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
 import type { NavigateOptions } from "./navigation.js";
+import { ConsultationFeedback } from "./consultation-feedback.js";
 import { CoordinationQueue } from "./coordination-queue.js";
 import { ChatDecisionCard } from "./chat-decision-card.js";
 import { ChatAssistantMessage, ChatComposer, ChatSendButton, ChatTranscript, ChatUserMessage, chatStates, useChatScroll } from "./chat-view.js";
@@ -47,6 +48,8 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
   const prompt=drafts[""]?.text??"";
   const {height,change:changeHeight}=useChatHeight(projectId);
   const messages=data?.messages??[];
+  const groups=messages.filter(message=>!message.origin);
+  const experimentJobs=data?.jobs.filter(j=>!j.consultation)??[];
   const last=messages.at(-1);
   const active=messages.find(message=>activeStatuses.includes(message.status));
   const interrupted=last?.status==="interrupted";
@@ -129,7 +132,7 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
   return <section className="project-chat">
     <header className="chat-page-heading">
       <div className="chat-page-icon"><Workflow size={23}/></div>
-      <div><h2>实验协调</h2><p>安排多个论文对话的实验，查看 AutoDL 排队和运行结果。</p></div>
+      <div><h2>实验协调</h2><p>向论文对话了解进展，协调实验和 AutoDL 运行。</p></div>
     </header>
     <div className="coord-tabs" role="tablist" aria-label="实验协调视图">
       {tabs.map(({id,label,Icon},index)=><button key={id} type="button" role="tab" id={ids+"-"+id}
@@ -200,7 +203,7 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
             <div className="chat-thread-info"><strong>协调对话</strong>
               <div className="chat-thread-meta"><span><i className={`chat-connection-dot ${loadError?"offline":""}`} aria-hidden="true"/>
                 {loadError?"连接中断，正在重试":"项目会话"}</span>
-                {messages.length>0&&<span className="chat-thread-count">{messages.length} 轮交流</span>}
+                {messages.length>0&&<span className="chat-thread-count">{groups.length} 轮交流</span>}
               </div>
             </div>
           </div>
@@ -209,27 +212,42 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
           {!data?<div className="chat-loading">{!loadError&&<><LoaderCircle size={20} className="spin"/>正在读取协调对话</>}</div>:
             !messages.length?<div className="chat-welcome">
               <span className="chat-welcome-icon"><Workflow size={31}/></span>
-              <h3>安排接下来的实验</h3>
-              <p>指定参与对话、运行顺序，或询问当前进度。</p>
-            </div>:messages.map((message,index)=>{
-              const current=message.id===(active??last)?.id;
-              return <section key={message.id} className="chat-turn" aria-label={`第 ${index+1} 轮协调`}>
-                {!message.summary&&<ChatUserMessage author="你" at={message.created_at} text={message.prompt}
-                  copied={copied===message.id+"-user"} onCopy={()=>copy(message.id+"-user",message.prompt)} onQuote={()=>quote(message.prompt)}/>}
-                <ChatAssistantMessage author={message.summary?"实验汇总":"协调 Agent"} at={message.created_at} response={message.response}
-                  error={message.error} status={current&&loadError?"offline":message.status} turnStatus={message.status}
-                  current={current} copied={copied===message.id} onCopy={()=>copy(message.id,message.response)}
-                  process={{open:openProcess===message.id,disabled:loadingProcess,log:processes[message.id],
-                    toggle:()=>openProcess===message.id?setOpenProcess(undefined):void readProcess(message.id),
-                    refresh:()=>void readProcess(message.id)}}
-                  actions={<>
-                    {!message.summary&&["failed","cancelled","interrupted"].includes(message.status)&&
-                      <button type="button" className="text-button" disabled={busy} onClick={()=>quote(message.prompt)}>将问题填入输入框</button>}
-                    {message.status==="interrupted"&&<button type="button" className="text-button" disabled={busy}
-                      onClick={()=>{if(window.confirm("已核对本机旧进程确实停止？确认后即可继续使用协调对话。"))
-                        void act({action:"acknowledge",id:message.id,confirm:true});}}>确认旧进程已停止</button>}
-                  </>}/>
-              </section>;
+              <h3>向论文对话提问或安排实验</h3>
+              <p>例如，比较方案1和方案2的进展，看看哪个适合先上机。</p>
+            </div>:groups.map((root,index)=>{
+              const jobs=data.jobs.filter(job=>job.consultation&&job.origin===root.id);
+              const replies=messages.filter(m=>m.origin===root.id);
+              return <div className="coord-message-group" key={root.id}>
+                {[root,...replies].map(message=>{
+                  const current=message.id===(active??last)?.id;
+                  return <section key={message.id} className="chat-turn" aria-label={`第 ${index+1} 轮协调`}>
+                    {!message.summary&&<ChatUserMessage author="你" at={message.created_at} text={message.prompt}
+                      copied={copied===message.id+"-user"} onCopy={()=>copy(message.id+"-user",message.prompt)} onQuote={()=>quote(message.prompt)}/>}
+                    <ChatAssistantMessage author={message.origin?"协调反馈":message.summary?"实验汇总":"协调 Agent"} at={message.created_at} response={message.response}
+                      error={message.error} status={current&&loadError?"offline":message.status} turnStatus={message.status}
+                      current={current} copied={copied===message.id} onCopy={()=>copy(message.id,message.response)}
+                      process={{open:openProcess===message.id,disabled:loadingProcess,log:processes[message.id],
+                        toggle:()=>openProcess===message.id?setOpenProcess(undefined):void readProcess(message.id),
+                        refresh:()=>void readProcess(message.id)}}
+                      actions={<>
+                        {message.id===root.id&&root.consultation_status==="open"&&<button type="button" className="text-button" disabled={busy}
+                          onClick={()=>void act({action:"stop-consultation",id:root.id,confirm:true})}>停止咨询</button>}
+                        {message.origin&&message===replies.at(-1)&&root.consultation_status!=="stopped"&&["failed","cancelled"].includes(message.status)&&
+                          <button type="button" className="text-button" disabled={busy||!!active} onClick={()=>void act({action:"retry-feedback",id:message.id,request_id:crypto.randomUUID()})}>重新处理反馈</button>}
+                        {!message.summary&&["failed","cancelled","interrupted"].includes(message.status)&&
+                          <button type="button" className="text-button" disabled={busy} onClick={()=>quote(message.prompt)}>将问题填入输入框</button>}
+                        {message.status==="interrupted"&&<button type="button" className="text-button" disabled={busy}
+                          onClick={()=>{if(window.confirm("已核对本机旧进程确实停止？确认后即可继续使用协调对话。"))
+                            void act({action:"acknowledge",id:message.id,confirm:true});}}>确认旧进程已停止</button>}
+                      </>}>
+                      {message.id===root.id&&<ConsultationFeedback jobs={jobs} members={members} busy={busy}
+                        select={(id,conversation)=>void act({action:"select-consultation",id,conversation})}
+                        open={(conversation,turn)=>{chatDraftStore(projectId).choose(conversation);onNavigate("chat",{focus:turn});}}/>}
+                      {message.id===root.id&&root.consultation_status==="stopped"&&jobs.length>0&&<small>咨询已停止</small>}
+                    </ChatAssistantMessage>
+                  </section>;
+                })}
+              </div>;
             })}
         </ChatTranscript>
         <ChatHeightControl height={height} onChange={changeHeight} target={transcript}/>
@@ -249,7 +267,7 @@ export function CoordinationPanel({projectId,onNavigate}:{projectId:string;onNav
             choose={async option_id=>{await api(base+"/chat/tasks/"+s.task_id+"/choices/"+s.decision!.id,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({option_id})});await refresh();}}/></div>)}
       </section>}
       {data&&<CoordinationQueue data={data} project={projectId} busy={busy} act={act} openRun={id=>onNavigate("experiments",{tab:"runs",action:"runs",focus:id})}/>}
-      {!!data?.jobs.length&&<section className="coord-section"><header><h3>协调任务</h3></header>{data.jobs.map(job=><div className="coord-row" key={job.id}>
+      {!!experimentJobs.length&&<section className="coord-section"><header><h3>协调任务</h3></header>{experimentJobs.map(job=><div className="coord-row" key={job.id}>
         <div><strong>{job.title}</strong><p>{job.instructions}</p><small>{job.reason||(job.finished?(job.successful?"任务已完成":"已结束 · 请核对结果"):job.report_status==="blocked"?"需要补充信息":states[job.worker_status??""])||"已投递"}</small>
           {(job.report||job.worker_response)&&<p>{job.report||job.worker_response}</p>}
           {job.plans?.map(p=><small key={p.id}>{p.title} · v{p.version} · {p.host}</small>)}

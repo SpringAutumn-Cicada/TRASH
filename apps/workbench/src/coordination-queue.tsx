@@ -20,7 +20,7 @@ export function CoordinationQueue({data,project,act,busy,openRun}:{data:Coordina
     try{const {resources}=await api<{resources:HostComputeResources}>(base+"/ssh-profiles/"+encodeURIComponent(id)+"/compute-resources");
       setGpu(prev=>({...prev,[id]:resources}));}catch(cause){setError(uiError(cause,"读取 GPU 状态失败"));}finally{setLoading(false);}
   };
-  const movable=data.jobs.filter(j=>!j.finished&&!j.plans?.some(p=>p.run_id));
+  const movable=data.jobs.filter(j=>!j.consultation&&!j.finished&&!j.plans?.some(p=>p.run_id));
   return <section className="coord-section"><header><h3><Server size={18}/>AutoDL 排队与运行</h3></header>
     {error&&<p role="alert" className="notice error-notice">{error}</p>}
     {data.hosts.map(h=><div className="coord-row" key={h.id}><div><strong>{h.name}</strong><small>{h.connected?"已连接":"未连接"}</small>
