@@ -14,13 +14,14 @@ import { AutoDlConnectionDialog } from "./autodl-connection-dialog.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, GitBranch, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, BookOpen, BookText, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Settings, Trash2, X } from "lucide-react";
+import { Database, Server, ArrowLeft, ChartColumn, FileText, FlaskConical, GitBranch, Layers, LayoutDashboard, ListTodo, MessagesSquare, NotebookText, PanelLeftOpen, Workflow, BookOpen, BookText, ChevronDown, Download, FolderOpen, Menu, MoreHorizontal, Palette, PanelLeftClose, Plus, RefreshCw, Search, Settings, Trash2, X } from "lucide-react";
 import type { ProjectPage, ResearchProject, Source } from "@trash/protocol";
 import { api, uiError } from "./api.js";
 import { KnowledgePanel, RestoreKnowledge } from "./knowledge.js";
 import { LiteraturePage } from "./literature.js";
 import { ExperimentsPage } from "./experiments.js";
 import { ProjectChat } from "./project-chat.js";
+import { CoordinationPanel } from "./coordination-panel.js";
 import { GitIdentityDialog, gitIdentityOpenEvent } from "./git-identity-dialog.js";
 import { OverviewPage } from "./overview.js";
 import { CreateProjectDialog, DeleteProjectDialog } from "./project-dialogs.js";
@@ -29,7 +30,7 @@ import "./styles.css";
 import "./themes.css";
 import "./workspace.css";
 
-const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:BookText,data:Database,reproductions:GitBranch,experiments:FlaskConical,autodl:Server,results:ChartColumn,paper:NotebookText,files:FolderOpen,tasks:ListTodo,chat:MessagesSquare};
+const pageIcons:Record<ProjectPage,typeof BookOpen>={overview:LayoutDashboard,literature:BookOpen,cards:Layers,wiki:BookText,data:Database,reproductions:GitBranch,experiments:FlaskConical,autodl:Server,results:ChartColumn,paper:NotebookText,files:FolderOpen,tasks:ListTodo,chat:MessagesSquare,coordination:Workflow};
 
 
 function rememberedPage(id:string):ProjectPage {
@@ -42,7 +43,7 @@ function ThemeControl() {
   useEffect(()=>{applyTheme(theme);},[theme]);
   return <label className="theme-control"><Palette size={15}/><span className="sr-only">界面主题</span><select aria-label="界面主题" value={theme} onChange={e=>setTheme(resolveTheme(e.target.value))}>{themes.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></label>;
 }
-function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projectId:string;page:Exclude<ProjectPage,"overview"|"literature"|"experiments"|"reproductions"|"autodl"|"chat"|"paper"|"data"|"files"|"tasks">;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
+function KnowledgePage({projectId,page,action,focusId,status,onNavigate}:{projectId:string;page:Exclude<ProjectPage,"overview"|"literature"|"experiments"|"reproductions"|"autodl"|"chat"|"coordination"|"paper"|"data"|"files"|"tasks">;action?:string;focusId?:string;status?:string;onNavigate:(page:ProjectPage,options?:NavigateOptions)=>void}) {
   const [sources,setSources]=useState<Source[]>();const [error,setError]=useState("");
   useEffect(()=>{let active=true;void api<{sources:Source[]}>(`/projects/${encodeURIComponent(projectId)}/sources`).then(data=>{if(active)setSources(data.sources);}).catch(cause=>{if(active)setError(uiError(cause,"无法读取项目文献。"));});return()=>{active=false;};},[projectId]);
   if(error)return <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>;
@@ -115,7 +116,8 @@ function App() {
       const last=parseProjectRoute(readPreference("trash-last-location")??"/");
       const target=projects.find(item=>item.project_id===last?.projectId);
       if(target)navigate(projectPath(target.project_id,last?.page??rememberedPage(target.project_id),{tab:last?.tab}),true,true);
-    }else if(project&&route&&!route.page)navigate(projectPath(project.project_id,rememberedPage(project.project_id)),true,true);
+    }else if(project&&route?.legacyCoordination)navigate(projectPath(project.project_id,"coordination"),true,true);
+    else if(project&&route&&!route.page)navigate(projectPath(project.project_id,rememberedPage(project.project_id)),true,true);
   },[loaded,projects,path,navigate]);
   useEffect(()=>{
     if(!project||!route?.page)return;
@@ -206,7 +208,7 @@ function App() {
       <main className="workspace-content">
         {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+(page==="experiments"?"":":"+path)}>
-          {page==="tasks"?<TaskWorkspace key={project.project_id} projectId={project.project_id} focusId={route.focusId}/>:page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} onOpenSettings={()=>setWorkspaceOpen(true)} projectUpdatedAt={project.updated_at} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"?<ExperimentsPage projectId={project.project_id} section={route.tab??"catalog"} experimentKey={route.experiment} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onBrowseArchive={focus=>goPage("files",{action:"directory",focus})}/>:page==="files"?<ProjectFilesPage key={project.project_id+":"+(route.action==="directory"?route.focusId??"":"")} projectId={project.project_id} initialDirectory={route.action==="directory"?route.focusId:undefined} focusId={route.action==="directory"?undefined:route.focusId} onNavigate={goPage}/>:page==="paper"?<ManuscriptPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="chat"?<ProjectChat projectId={project.project_id} onBrowseResearch={focus=>goPage("files",{action:"directory",focus})}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
+          {page==="tasks"?<TaskWorkspace key={project.project_id} projectId={project.project_id} focusId={route.focusId}/>:page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} onOpenSettings={()=>setWorkspaceOpen(true)} projectUpdatedAt={project.updated_at} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"?<ExperimentsPage projectId={project.project_id} section={route.tab??"catalog"} experimentKey={route.experiment} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onBrowseArchive={focus=>goPage("files",{action:"directory",focus})}/>:page==="files"?<ProjectFilesPage key={project.project_id+":"+(route.action==="directory"?route.focusId??"":"")} projectId={project.project_id} initialDirectory={route.action==="directory"?route.focusId:undefined} focusId={route.action==="directory"?undefined:route.focusId} onNavigate={goPage}/>:page==="paper"?<ManuscriptPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="coordination"?<CoordinationPanel projectId={project.project_id} onNavigate={goPage}/>:page==="chat"?<ProjectChat projectId={project.project_id} onBrowseResearch={focus=>goPage("files",{action:"directory",focus})}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>

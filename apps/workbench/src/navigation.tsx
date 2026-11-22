@@ -4,11 +4,11 @@ import type { ProjectPage } from "@trash/protocol";
 
 export const projectPages: { id: ProjectPage; label: string }[] = [
   { id: "overview", label: "概览" }, { id: "literature", label: "文献" }, { id: "cards", label: "卡片" },
-  { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "files", label: "项目文件" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }
+  { id: "wiki", label: "Wiki" }, { id: "data", label: "数据" }, { id: "reproductions", label: "文献复现" }, { id: "experiments", label: "实验" }, { id: "autodl", label: "AutoDL 工作区" }, { id: "files", label: "项目文件" }, { id: "paper", label: "论文" }, { id: "tasks", label: "任务" }, { id: "chat", label: "Agent 对话" }, { id: "coordination", label: "实验协调" }
 ];
-export const projectSidebarPages = ["overview","literature","experiments","paper","chat","files"] as const;
+export const projectSidebarPages = ["overview","literature","experiments","paper","chat","coordination","files"] as const;
 export const experimentTabs = [
-  {id:"compute",label:"AutoDL"},{id:"coordination",label:"实验协调"},{id:"catalog",label:"实验列表"},{id:"runs",label:"计划与运行"},
+  {id:"compute",label:"AutoDL"},{id:"catalog",label:"实验列表"},{id:"runs",label:"计划与运行"},
   {id:"reproductions",label:"文献复现"},{id:"datasets",label:"数据集"},{id:"results",label:"实验结果"}
 ] as const;
 export type ExperimentTab=typeof experimentTabs[number]["id"] | "code" | "method";
@@ -44,7 +44,8 @@ export function parseProjectRoute(value: string) {
     const url = new URL(value, window.location.origin);
     const match = url.pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?\/?$/);
     if (!match) return undefined;
-    const page=match[2]==="results"?"results":projectPages.find(p => p.id === match[2])?.id;
+    const legacyCoordination=match[2]==="experiments"&&url.searchParams.get("tab")==="coordination";
+    const page=legacyCoordination?"coordination":match[2]==="results"?"results":projectPages.find(p => p.id === match[2])?.id;
     if (match[2] && !page) return undefined;
     const tabParam=url.searchParams.get("tab");
     const tab=tabParam==="method"?(url.searchParams.get("experiment")?"method":"catalog"):tabParam==="code"?"code":experimentTabs.find(item=>item.id===tabParam)?.id;
@@ -52,7 +53,7 @@ export function parseProjectRoute(value: string) {
       tab,action:url.searchParams.get("action")??undefined,focus:url.searchParams.get("focus")??undefined,
       status:url.searchParams.get("status")??undefined,experiment:url.searchParams.get("experiment")??undefined
     });
-    return {projectId:decodeURIComponent(match[1]),page:normalized,tab:options.tab,action:options.action,focusId:options.focus,status:options.status,experiment:options.experiment};
+    return {projectId:decodeURIComponent(match[1]),legacyCoordination,page:normalized,tab:options.tab,action:options.action,focusId:options.focus,status:options.status,experiment:options.experiment};
   } catch { return undefined; }
 }
 export function projectPath(id: string, page: ProjectPage, options:NavigateOptions={}) {
