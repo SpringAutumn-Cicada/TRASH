@@ -48,8 +48,8 @@ function manuscriptPath(projectRoot:string,workspace:string){
   return 'manuscripts/';
 }
 
-export function prepareChatWorkspace(store: TrashStore, projectId: string, selectedSkill?: ChatSkillId) {
-  const path = projectRuntime(store.root,projectId,'agent-workspace'); mkdirSync(path, { recursive: true });
+export function prepareChatWorkspace(store: TrashStore, projectId: string, taskId: string, selectedSkill?: ChatSkillId) {
+  const path = projectRuntime(store.root,projectId,'agent-workspace','turns',taskId); mkdirSync(path, { recursive: true });
   const projectRoot=join(store.root,'projects',projectId);
   const manuscripts=manuscriptPath(projectRoot,path);
   let research:string|undefined;
@@ -69,7 +69,6 @@ except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
 `);
   stageChatSkills(path, selectedSkill);
-  const oldDraft=join(path,'knowledge-draft');if(existsSync(oldDraft)){const preserved=projectRuntime(store.root,projectId,'tasks',`preserved-chat-draft-${Date.now()}`);mkdirSync(join(preserved,'..'),{recursive:true});renameSync(oldDraft,preserved);};
   // Do not stage project-wide bodies. get creates only the requested working copy.
   writeFileSync(join(path, "PROJECT_TOOLS.md"), `# 当前论文项目工具
 研究地图读取 map-skill/SKILL.md，大背景读取 background-skill/SKILL.md，多主题发现、主题比较及关系维护读取 synthesis-skill/SKILL.md；候选方向筛选读取 research-skill/SKILL.md，单篇生成读取 literature-skill/SKILL.md。简单问答无需发布，不自动串行执行全部技能。
@@ -91,7 +90,7 @@ ${manuscripts?`论文架位于 ${manuscripts}。先确认本轮所指论文，�
   return path;
 }
 
-export async function projectChatTool(store: TrashStore, projectId: string, body: unknown, writable: boolean) {
+export async function projectChatTool(store: TrashStore, projectId: string, body: unknown, { workspace, writable }: { workspace: string; writable: boolean }) {
   const value = z.object({ operation: z.enum(["summary", "sources", "source", "list", "search", "get", "write", "publish", "pdf-pages", "pdf-page", "navigation", "relations", "context", "maintenance", "memory-log", "evidence"]), page:z.number().int().positive().optional(),limit:z.number().int().min(1).max(50).optional(),query:z.string().max(500).optional(),offset:z.number().int().min(0).optional(),length:z.number().int().min(1).max(16000).optional(),scale:z.union([z.literal(2200),z.literal(4400)]).optional(),kind: knowledgeKindSchema.optional(), id: z.string().min(1).optional(), input: knowledgeWriteSchema.optional(), files:z.array(z.object({path:z.string(),expected:z.string().nullable()}).strict()).min(1).max(120).optional() }).strict().parse(body);
   const knowledge = new KnowledgeStore(store.db);
   if (value.operation === "summary") return { project: store.getProject(projectId) };
@@ -114,22 +113,22 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
   if(value.operation==='context'){
     if(!value.query?.trim())experimentError('INVALID_REQUEST',400);
     const result=markdown.context(projectId,value.query,value.length??16000);
-    const workspace=projectRuntime(store.root,projectId,'agent-workspace'),ledger=join(workspace,'knowledge-reads.json');
+    const ledger=join(workspace,'knowledge-reads.json');
     for(const doc of result.documents)rememberRead(ledger,doc.path,doc.hash,0,doc.text.length,doc.text.length);
     if(writable)markdown.recordOperation(projectId,'query',result.documents.map(({id,path,hash})=>({id,path,hash})),`读取 ${result.documents.length} 页，${result.characters} 字符；遗漏 ${result.omitted.length} 页。`);
     return result;
   }
   if(value.operation==='publish'){
     if(!writable)experimentError('AGENT_READ_ONLY',403);if(!value.files)experimentError('INVALID_REQUEST',400);
-    const files=value.files.map(file=>{markdown.locate(projectId,file.path);const draft=projectRuntime(store.root,projectId,'agent-workspace','knowledge-draft',file.path);let current=projectRuntime(store.root,projectId,'agent-workspace');for(const part of ['knowledge-draft',...file.path.split('/')]){current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())experimentError('KNOWLEDGE_PATH_INVALID',403);}if(lstatSync(draft).size>1024*1024)experimentError('KNOWLEDGE_FILE_INVALID',422);return {...file,text:readFileSync(draft,'utf8')};});
+    const files=value.files.map(file=>{markdown.locate(projectId,file.path);const draft=join(workspace,'knowledge-draft',file.path);let current=workspace;for(const part of ['knowledge-draft',...file.path.split('/')]){current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())experimentError('KNOWLEDGE_PATH_INVALID',403);}if(lstatSync(draft).size>1024*1024)experimentError('KNOWLEDGE_FILE_INVALID',422);return {...file,text:readFileSync(draft,'utf8')};});
     if(!files.some(file=>/^knowledge_base\/papers\/[^/]+\/index\.md$/.test(file.path))&&files.some(file=>file.path.startsWith('literature/cards/')||/knowledge_base\/papers\/[^/]+\/(basic|detail|key)\.md$/.test(file.path))&&!['basic','detail','key'].every(type=>files.some(file=>file.path.endsWith(`-${type}.md`)||file.path.endsWith('/'+type+'.md'))))experimentError('CARD_PAIR_REQUIRED',400);
-    const ledger=projectRuntime(store.root,projectId,'agent-workspace','knowledge-reads.json');let refs:ReadReceipt[]=[];try{refs=JSON.parse(readFileSync(ledger,'utf8'));}catch{/* No read dependencies. */}
+    const ledger=join(workspace,'knowledge-reads.json');let refs:ReadReceipt[]=[];try{refs=JSON.parse(readFileSync(ledger,'utf8'));}catch{/* No read dependencies. */}
     const index=markdown.index(projectId).documents;
     const evidence=new Set(files.flatMap(file=>(markdown.parse(projectId,file.path,file.text).links??[]).filter(l=>l.evidence).map(l=>l.path)));
     refs=[...new Map(refs.filter(ref=>evidence.has(ref.path)).map(ref=>[ref.path,ref])).values()];
     for(const path of evidence){if(files.some(file=>file.path===path))continue;const current=index.find(d=>d.path===path);if(!current)experimentError('DEPENDENCY_NOT_FOUND',404);const read=refs.find(ref=>ref.path===path);if(!read||current.hash!==read.hash)experimentError('VERSION_CONFLICT',409);if(!read.total||!read.ranges?.some(([start,end])=>start===0&&end>=read.total!))experimentError('EVIDENCE_NOT_FULLY_READ',422);}
 
-    const baselines=JSON.parse(readFileSync(projectRuntime(store.root,projectId,'agent-workspace','bibliography-baselines.json'),'utf8'));for(const file of files.filter(f=>f.path.endsWith('-basic.md'))){const id=markdown.parse(projectId,file.path,file.text).source_id!;if(!baselines[id]||baselines[id].content_hash!==sourceContentHash(store.getSource(id)))experimentError('VERSION_CONFLICT',409);}
+    const baselines=JSON.parse(readFileSync(join(workspace,'bibliography-baselines.json'),'utf8'));for(const file of files.filter(f=>f.path.endsWith('-basic.md'))){const id=markdown.parse(projectId,file.path,file.text).source_id!;if(!baselines[id]||baselines[id].content_hash!==sourceContentHash(store.getSource(id)))experimentError('VERSION_CONFLICT',409);}
     const records=markdown.commit(projectId,files,baselines);
     for(const record of records.filter(r=>r.kind==='wiki-page')){
       const declared=new Set((record.links??[]).filter(link=>link.evidence).map(link=>link.path));
@@ -143,7 +142,7 @@ export async function projectChatTool(store: TrashStore, projectId: string, body
       const candidate=markdown.read(projectId,value.id??'');
       const evidence=value.operation==='evidence'||('page_role' in candidate&&candidate.page_role==='evidence')?markdown.evidence(projectId,value.id??''):undefined;
       const record=evidence?.record??markdown.read(projectId,value.id??''),offset=value.offset??0,length=value.length??12000;
-      const workspace=projectRuntime(store.root,projectId,'agent-workspace'),draft=join(workspace,'knowledge-draft',record.path);mkdirSync(join(draft,'..'),{recursive:true});
+      const draft=join(workspace,'knowledge-draft',record.path);mkdirSync(join(draft,'..'),{recursive:true});
       // Never overwrite an existing working copy: it may contain unsaved agent edits.
       if(!existsSync(draft))writeFileSync(draft,record.text,{mode:0o600});
       const ledger=join(workspace,'knowledge-reads.json');

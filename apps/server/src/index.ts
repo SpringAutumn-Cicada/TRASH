@@ -439,7 +439,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response, 200, codeAgent.methodChatTool(projectId, token, body as Record<string,unknown>)); return;
       }
       const permission = codeAgent.authorizeTool(projectId, token);
-      const result = await projectChatTool(store, projectId, body, permission.writable);
+      const result = await projectChatTool(store, projectId, body, permission);
       codeAgent.recordTool(projectId, token, result); sendJson(response, 200, result); return;
     }
     if(subpath==='chat/attachments'&&method==='POST'){
