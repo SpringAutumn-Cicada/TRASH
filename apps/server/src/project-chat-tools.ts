@@ -79,6 +79,7 @@ except urllib.error.HTTPError as error:
 用户明确要求起草或修订某个自研实验的方法设计时，读取 method-skill/SKILL.md。调用 {"operation":"method-experiments"} 确认当前项目中的目标，不凭实验名猜测目录 ID。匹配多个或无法定位时向用户确认。
 使用 {"operation":"method-context","direction_id":"方向ID","scheme_id":"方案ID"} 获取方法正文和对应仓库。可选 source 为用户选定的 research/ 直属 Markdown 相对路径。按需阅读仓库。使用 {"operation":"method-draft","markdown":"完整候选正文","summary":"修改摘要","questions":[]} 将草稿送到该实验的方法设计页。该操作只保存候选正文，正式正文由用户审阅采用。需要先问关键问题时，直接在本轮回复中提出。普通方法讨论直接回复。
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
+用户明确要求按文件提交、以 Git bundle 同步实验代码、按固定版本准备实验或导回远端 Git 提交时，读取 git-sync-skill/SKILL.md。
 需要用户在明确的备选方案间选择时，用 {"operation":"request-choice","title":"选择目标","description":"简述各项区别","options":[{"id":"first","label":"选择 A","primary":true},{"id":"second","label":"选择 B"}]}。可以提供 details 键值列表，以及每个选项的 detail。收到 waiting_for_user 后结束本轮，等用户在对话卡片中选择。平台会用已选结果开启同一会话的下一轮；提案工具本身没有执行选项。
 绑定仓库有改动而用户要上传代码，且需要用户确认提交时，用 {"operation":"request-git-autodl-choice","message":"chore：改用本地与 AutoDL 部署"}。多个已连接实例时传入用户指定的 profile_id。如果用户还明确要求上传数据，可以附 data_files，每项为 {"source":{"scope":"project","path":"data/result.csv"},"destination":"data/result.csv"}，这时卡片才提供「这次只上传数据」。工具读取并记录待提交文件和目标，提案阶段不暂存、不提交、不上传。收到 waiting_for_user 后结束本轮。选择后由平台执行对应动作，续接时只汇报已有结果或在文件变化时重新提案。
 如果提交工具返回 GIT_IDENTITY_REQUIRED，提示用户点击本轮的「设置 Git 身份」。用户的默认署名由 TRASH 平台设置管理，禁止替用户猜测身份或修改全局 Git 配置。

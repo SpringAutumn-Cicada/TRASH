@@ -26,6 +26,7 @@ function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail
 export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
 const skillReferences = {
   'trash-experiment-method': [],
+  'trash_git_sync': ['references/tools.md'],
   'trash-literature-wiki': ['references/paper-wiki.md'],
   'trash-literature-synthesis': ['references/wiki.md', 'references/synthesis.md'],
   'trash-research-exploration': ['references/research-exploration.md'],
