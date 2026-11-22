@@ -2,13 +2,13 @@
 
 均使用本轮 `project_tool.py`，替换示例值。
 
-## 确认本地提交
+## 本地提交
 
 ```json
-{"operation":"request-git-commit-choice","message":"fix：修复实验运行重试","files":["path/to/code.py"]}
+{"operation":"git-commit","message":"fix：修复实验运行重试","files":["path/to/code.py"]}
 ```
 
-`files` 为本轮选中的仓库相对文件路径。绑定仓库的基线、文件变化、Git 身份由平台复核。有合并冲突、已暂存与工作区内容混杂等情况时，先明确要提交的版本。对应仓库还没有初始提交时，按用户授权先建立明确的基线。
+`files` 为本轮选中的仓库相对文件路径。绑定仓库的基线、文件变化、Git 身份由平台复核。成功返回 `commit`、`baseline`、`files` 和 `verified: true`。若已创建提交但返回 `verified: false`，先核对返回的 SHA 与实际差异。遇到合并冲突或选中文件的暂存区与工作区内容混杂时，先明确要提交的版本。对应仓库还没有初始提交时，按用户授权先建立明确的基线。
 
 ## 独立同步
 

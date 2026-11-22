@@ -67,7 +67,7 @@ payload=json.load(sys.stdin)
 request=urllib.request.Request(os.environ['TRASH_PROJECT_TOOL_URL'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+os.environ['TRASH_PROJECT_TOOL_TOKEN']},method='POST')
 try:
  operation=payload.get('operation')
- timeout=310+payload.get('timeout_seconds',120) if operation=='paper-code-run' else 7200 if operation in ('autodl-upload-file','autodl-upload-code','git-sync-upload') else 30
+ timeout=310+payload.get('timeout_seconds',120) if operation=='paper-code-run' else 7200 if operation in ('autodl-upload-file','autodl-upload-code','git-sync-upload') else 690 if operation in ('git-commit','request-git-commit-choice') else 30
  with urllib.request.urlopen(request,timeout=timeout) as response: print(response.read().decode())
 except urllib.error.HTTPError as error:
  print(error.read().decode());sys.exit(1)
@@ -81,7 +81,7 @@ except urllib.error.HTTPError as error:
 以 python3 project_tool.py 执行，stdin 传入 JSON，所有操作仅限当前项目。
 用户明确要求按文件提交、以 Git bundle 同步实验代码、按固定版本准备实验或导回远端 Git 提交时，读取 git-sync-skill/SKILL.md。对于用户已交代的独立 Git 同步，核对绑定仓库、目标主机、工作区和完整 SHA 后直接调用 git-sync-upload，无需发起选择卡。
 需要用户在明确的备选方案间选择时，用 {"operation":"request-choice","title":"选择目标","description":"简述各项区别","options":[{"id":"first","label":"选择 A","primary":true},{"id":"second","label":"选择 B"}]}。可以提供 details 键值列表，以及每个选项的 detail。收到 waiting_for_user 后结束本轮，等用户在对话卡片中选择。平台会用已选结果开启同一会话的下一轮；提案工具本身没有执行选项。
-绑定仓库有改动而用户要上传代码，且需要用户确认提交时，用 {"operation":"request-git-autodl-choice","message":"chore：改用本地与 AutoDL 部署"}。多个已连接实例时传入用户指定的 profile_id。如果用户还明确要求上传数据，可以附 data_files，每项为 {"source":{"scope":"project","path":"data/result.csv"},"destination":"data/result.csv"}，这时卡片才提供「这次只上传数据」。工具读取并记录待提交文件和目标，提案阶段不暂存、不提交、不上传。收到 waiting_for_user 后结束本轮。选择后由平台执行对应动作，续接时只汇报已有结果或在文件变化时重新提案。
+用户已授权本地提交时，核对绑定仓库与本次改动，用 {"operation":"git-commit","message":"fix：修复实验运行重试","files":["path/to/code.py"]} 直接提交选定文件。读取回执中的 commit、baseline、files 和 verified。若已返回 commit 但 verified 为 false，先核对 Git 历史并报告校验问题。用户同时要求同步时，核对目标后使用已验证的完整 SHA 调用 git-sync-upload。
 如果提交工具返回 GIT_IDENTITY_REQUIRED，提示用户点击本轮的「设置 Git 身份」。用户的默认署名由 TRASH 平台设置管理，禁止替用户猜测身份或修改全局 Git 配置。
 code/papers/ 外的普通共享文件（包括 code/reproductions/ 下的复现代码）可以并行读取。写入用 {"operation":"stage-shared-file","path":"research/方案.md"} 获取本轮独立草稿，编辑返回的 draft，再用 {"operation":"publish-shared-file","path":"research/方案.md"} 发布。相同路径各轮可以同时起草，发布会核对起草时的版本。收到 VERSION_CONFLICT 时保留草稿并报告路径，本轮不重复覆盖。后续合并先读取最新正式文件，再与冲突草稿对照。稿件和其他共享文件也使用此流程。
 code/papers/ 下的 Git 仓库按会话绑定。用 {"operation":"paper-code-list","path":"src"} 列出绑定仓库内目录，用 {"operation":"paper-code-read","path":"src/main.py"} 读其中源码，读取不占仓库锁。允许写入时，用 {"operation":"paper-code-run","argv":["git","apply","-"],"stdin":"补丁正文","timeout_seconds":120} 在绑定仓库内修改文件或执行命令。命令结束后释放仓库锁。共用 Git 元数据的工作树也会互斥。同一仓库有其他写入或执行操作时，请等待工具返回。查看和编辑内容时可先在本轮目录准备补丁，命令也可读取本轮目录中的文件；执行结果中的退出码和错误需要核对。
