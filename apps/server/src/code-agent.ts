@@ -1,3 +1,4 @@
+import { commitShaSchema } from "@trash/protocol";
 import { methodDraftInput, methodDraftOutput, methodSkillDirectory, methodSkillId, readMethodContext, type MethodContext, type MethodDraft } from "./experiment/method-agent.js";
 import { experimentSelection, listExperiments } from "./experiment/catalog.js";
 import { readChatModelConfig, reasoningEffort } from "./chat-model-config.js";
@@ -55,6 +56,8 @@ const autoDLToolInput=z.discriminatedUnion('operation',[
   z.object({operation:z.literal('autodl-targets')}).strict(),
   z.object({operation:z.literal('autodl-upload-file'),source:autoDLSource,destination:z.string().min(1).max(4096),...autoDLUploadOptions}).strict(),
   z.object({operation:z.literal('autodl-upload-code'),...autoDLUploadOptions}).strict(),
+  z.object({operation:z.literal('git-sync-versions')}).strict(),
+  z.object({operation:z.literal('git-sync-upload'),commit:commitShaSchema,...autoDLUploadOptions}).strict(),
 ]);
 const gitUploadChoiceInput=z.object({
   operation:z.literal('request-git-autodl-choice'),
@@ -88,7 +91,7 @@ const uploadErrorLabels:Record<string,string>={
   UPLOAD_CANCELLED:'上传已停止',
   GIT_TREE_DIRTY:'Git 仓库有未提交改动',
 };
-type AutoDLReceipt={path:string;reused:boolean;verified:boolean;sha256:string;size_bytes:number;commit?:string;snapshot_id?:string};
+type AutoDLReceipt={id?:string;path:string;reused:boolean;verified:boolean;sha256:string;size_bytes:number;commit?:string;snapshot_id?:string};
 export type CoordinationTurn = { kind:"coordinator"|"assignment"|"summary"; id:string };
 export interface CodeTask {
   coordination?:CoordinationTurn;
@@ -419,6 +422,7 @@ export class CodeAgent {
     const item=this.activeTool(project,token);
     const input=autoDLToolInput.parse(body);
     if(input.operation==='autodl-targets')return {targets:this.autoDLTargets(project)};
+    if(input.operation==='git-sync-versions')return {versions:this.experiments.gitSync.versions(project,this.boundChatRepository(item))};
     if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
     if(item.autoDLUpload)experimentError('AUTODL_UPLOAD_ACTIVE',409);
     const {target,profile}=this.pickAutoDLTarget(project,input.profile_id);
@@ -433,6 +437,8 @@ export class CodeAgent {
         const {snapshot,...result}=await uploadExperimentCode(this.experiments,project,{profile_id:target.profile_id,repository_id:repo.repository_id,request_id:requestId},report,uploadSignal);
         return {...result,snapshot_id:snapshot.snapshot_id,sha256:snapshot.sha256,size_bytes:snapshot.size_bytes};
       }
+      : input.operation==='git-sync-upload'
+      ? report=>this.experiments.gitSync.sync(project,this.boundChatRepository(item),profile,root,input.commit,report,uploadSignal)
       : (report:UploadProgress)=>uploadAutoDLFile(remote,root,`${profile.host.toLowerCase()}:${profile.port}`,
         this.autoDLSourceFile(item,input.source),input.destination,report,uploadSignal,()=>{
           if(this.experiments.workspaces.get(project,target.profile_id)?.root!==root)experimentError('WORKSPACE_CHANGED',409);

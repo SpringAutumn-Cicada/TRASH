@@ -458,7 +458,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
       }
       if(body&&typeof body==="object"&&"operation" in body&&
-        ["paper-code-run","autodl-targets","autodl-upload-file","autodl-upload-code"].includes(String(body.operation))){
+        ["paper-code-run","autodl-targets","autodl-upload-file","autodl-upload-code","git-sync-upload","git-sync-versions"].includes(String(body.operation))){
         const controller=new AbortController();
         const disconnect=()=>controller.abort();
         response.once('close',disconnect);
