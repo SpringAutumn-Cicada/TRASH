@@ -1,6 +1,6 @@
 import { MethodSnapshot } from "./method-snapshot.js";
 import { ExperimentMethod } from "./experiment-method.js";
-import { ExperimentCatalog, experimentKeyOf } from "./experiment-catalog.js";
+import { ExperimentCatalog, experimentKeyOf, findExperimentRepository } from "./experiment-catalog.js";
 import { sshConnectionErrors } from './ssh-errors.js';
 import { ExperimentCodeUpload } from "./experiment-code-upload.js";
 import { RemoteWorkspaceSettings } from "./remote-workspace.js";
@@ -80,10 +80,9 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
   const reproductionScope = experimentKey?.startsWith("reproduction:") ? experimentKey.slice(13) : undefined;
   const experiment = catalog.find(item => experimentKeyOf(item) === experimentKey);
   const scopedReproduction = reproductions.find(item => item.id === reproductionScope);
-  const repositoryId = experimentKey
-    ? experiment?.repository_id ?? repositoryList.find(item => experiment?.paper_id && item.paper_id === experiment.paper_id)?.repository_id
-    : selectedRepositoryId || defaultRepositoryId;
-  const repo = repositoryList.find(item => item.repository_id === repositoryId);
+  const repo = experimentKey
+    ? experiment && findExperimentRepository(experiment, repositoryList)
+    : repositoryList.find(item => item.repository_id === (selectedRepositoryId || defaultRepositoryId));
   const recycleExperiment = async (entry: ExperimentCatalogEntry) => {
     let recycled = false;
     await run(async () => {
@@ -272,7 +271,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
         <RefreshCw size={16} aria-hidden="true"/>
       </button>
     </header>
-    {section==="catalog" && <ExperimentCatalog experiments={catalog} discovered={discovered} reproductions={reproductions} busy={busy}
+    {section==="catalog" && <ExperimentCatalog experiments={catalog} repositories={repositoryList} discovered={discovered} reproductions={reproductions} busy={busy}
       loading={loadingContext} recycle={recycleExperiment}
       create={(title, id) => saveCatalogExperiment("/experiment-catalog", { title, id })}
       register={name => saveCatalogExperiment("/experiment-catalog/register", { name, confirm:true })}

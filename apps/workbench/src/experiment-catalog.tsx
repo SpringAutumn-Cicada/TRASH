@@ -1,12 +1,22 @@
 import { useRef, useState } from "react";
 import { ChevronRight, FlaskConical, GitBranch, Plus, Trash2 } from "lucide-react";
-import type { DiscoveredExperiment, ExperimentCatalogEntry, ReproductionCode } from "@trash/protocol";
+import type { DiscoveredExperiment, ExperimentCatalogEntry, ProjectRepository, ReproductionCode } from "@trash/protocol";
 import { ModalLayer } from "./modal-layer.js";
 
 export const experimentKeyOf = (item: Pick<ExperimentCatalogEntry, "direction_id" | "scheme_id">) => `${item.direction_id}/${item.scheme_id}`;
 
-export function ExperimentCatalog({ experiments, discovered, reproductions, busy, loading, create, register, recycle, open, openReproduction }: {
+export function findExperimentRepository(experiment: ExperimentCatalogEntry, repositories: ProjectRepository[]) {
+  if (experiment.repository_id) {
+    return repositories.find(repository => repository.repository_id === experiment.repository_id);
+  }
+  if (experiment.paper_id) {
+    return repositories.find(repository => repository.paper_id === experiment.paper_id);
+  }
+}
+
+export function ExperimentCatalog({ experiments, repositories, discovered, reproductions, busy, loading, create, register, recycle, open, openReproduction }: {
   experiments: ExperimentCatalogEntry[];
+  repositories: ProjectRepository[];
   discovered: DiscoveredExperiment[];
   reproductions: ReproductionCode[];
   busy: boolean;
@@ -24,11 +34,14 @@ export function ExperimentCatalog({ experiments, discovered, reproductions, busy
   const submission = useRef(false);
   const [creating, setCreating] = useState(false);
   const cards = [
-    ...(filter === "reproduction" ? [] : experiments.map(item => ({
-      id: experimentKeyOf(item), title: item.title, icon: FlaskConical, kind: "自研",
-      detail: item.entrypoint ?? (item.repository_id ? "已关联仓库" : "待关联代码"),
-      onOpen: () => open(item), experiment: item,
-    }))),
+    ...(filter === "reproduction" ? [] : experiments.map(item => {
+      const repository = findExperimentRepository(item, repositories);
+      return {
+        id: experimentKeyOf(item), title: item.title, icon: FlaskConical, kind: "自研", repository,
+        detail: item.entrypoint ?? (repository ? undefined : item.repository_id ? "关联仓库不可用" : "待关联代码"),
+        onOpen: () => open(item), experiment: item,
+      };
+    })),
     ...(filter === "reproduction" ? [] : discovered.map(item => ({
       id: item.path, title: item.name, icon: FlaskConical, kind: "自研",
       detail: item.has_git ? "待登记" : "待初始化 Git",
@@ -54,7 +67,14 @@ export function ExperimentCatalog({ experiments, discovered, reproductions, busy
       {cards.map(card => <article className="experiment-catalog-card" key={card.id}>
         <button type="button" className="experiment-catalog-open" onClick={card.onOpen}>
           <span className="experiment-catalog-icon"><card.icon size={19} aria-hidden="true"/></span>
-          <span className="experiment-catalog-copy"><small>{card.kind}</small><strong>{card.title}</strong><small>{card.detail}</small></span>
+          <span className="experiment-catalog-copy">
+            <small>{card.kind}</small><strong>{card.title}</strong>
+            {"repository" in card && card.repository && <small className="experiment-catalog-repository" title={card.repository.path}>
+              <GitBranch size={13} aria-hidden="true"/>
+              <span>仓库 · {card.repository.name ?? (card.repository.path.split(/[\\/]/).filter(Boolean).at(-1) || card.repository.path)}</span>
+            </small>}
+            {card.detail && <small>{card.detail}</small>}
+          </span>
           <ChevronRight size={16} aria-hidden="true"/>
         </button>
         {card.experiment && <button type="button" className="icon-button experiment-catalog-delete"
