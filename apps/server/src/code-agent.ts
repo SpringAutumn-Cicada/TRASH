@@ -62,10 +62,16 @@ const gitUploadChoiceInput=z.object({
   profile_id:autoDLUploadOptions.profile_id,
   data_files:z.array(z.object({source:autoDLSource,destination:z.string().min(1).max(4096)}).strict()).max(10).default([]),
 }).strict();
+const gitCommitChoiceInput=z.object({
+  operation:z.literal('request-git-commit-choice'),
+  message:z.string().trim().max(180).regex(/^[a-z][a-z-]*(?:\([a-z0-9_-]+\))?[：:]\s*[^\r\n\0]+$/),
+  files:z.array(relativeUploadPath).min(1).max(200),
+}).strict();
 type GitUploadDecision={
   repository_id:string;repository_path:string;message:string;head:string;ref:string;fingerprint:string;worktree:string;
   identity?:ResolvedGitIdentity;
-  target:{profile_id:string;name:string;root:string;host:string;port:number;fingerprint?:string};
+  files?:string[];
+  target?:{profile_id:string;name:string;root:string;host:string;port:number;fingerprint?:string};
   data:{path:string;destination:string;sha256:string}[];
 };
 const uploadStageLabels:Record<string,string>={
@@ -282,13 +288,34 @@ export class CodeAgent {
   async requestGitUploadChoice(project:string,token:string,body:unknown){
     const item=this.activeTool(project,token);
     if(item.task.sandbox==='read-only')experimentError('AGENT_TOOL_READONLY',403);
-    const input=gitUploadChoiceInput.parse(body);
+    const commitOnly=typeof body==='object'&&body!==null&&'operation' in body&&body.operation==='request-git-commit-choice';
+    const input=commitOnly?gitCommitChoiceInput.parse(body):gitUploadChoiceInput.parse(body);
     const repo=this.boundChatRepository(item);
     const identity=await this.requireGitIdentity(item,repo.path);
-    const {target,profile}=this.pickAutoDLTarget(project,input.profile_id);
     const message=input.message.replace(/^([a-z][a-z-]*)[：:]\s*/,'$1：');
-    const baseline=await gitUploadBaseline(repo.path);
+    const files=input.operation==='request-git-commit-choice'?input.files:undefined;
+    const baseline=await gitUploadBaseline(repo.path,files);
     if(!baseline.files.length)experimentError('CHAT_GIT_NO_CHANGES',409);
+    if(input.operation==='request-git-commit-choice'){
+      const diff=await gitRead(repo.path,['--literal-pathspecs','diff','--no-ext-diff','--no-textconv','HEAD','--',...baseline.files])
+        .catch(()=>gitRead(repo.path,['--literal-pathspecs','diff','--stat','HEAD','--',...baseline.files]));
+      const preview=redact(diff.trim());
+      const untracked=(await gitRead(repo.path,['--literal-pathspecs','ls-files','--others','--exclude-standard','--',...baseline.files])).trim();
+      return this.saveChoice(item,{
+        title:'确认本地 Git 提交', description:'提交选中的文件。',
+        details:[{label:'仓库',value:repo.name||basename(repo.path)},{label:'分支',value:baseline.ref},
+          {label:'基线 SHA',value:baseline.head},{label:'提交信息',value:message},
+          ...(preview?[{label:'差异预览',value:preview.length>6000?preview.slice(0,6000)+'\n（后续差异已省略）':preview}]:[]),
+          ...(untracked?[{label:'新增未跟踪文件',value:untracked.slice(0,6000)}]:[]),
+          {label:'署名',value:`${identity.author.name} <${identity.author.email}>`},
+          ...(identity.author.name!==identity.committer.name||identity.author.email!==identity.committer.email
+            ?[{label:'提交者',value:`${identity.committer.name} <${identity.committer.email}>`}]:[])],
+        files:baseline.files,
+        options:[{id:'commit-only',label:'确认提交',primary:true},{id:'skip',label:'暂不提交'}],
+      },{repository_id:repo.repository_id,repository_path:repo.path,message,head:baseline.head,ref:baseline.ref,
+        fingerprint:baseline.fingerprint,worktree:baseline.worktree,identity,files:baseline.files,data:[]});
+    }
+    const {target,profile}=this.pickAutoDLTarget(project,input.profile_id);
     const data:GitUploadDecision['data']=[];
     const dataDetails=[];
     for(const file of input.data_files){
@@ -602,16 +629,20 @@ export class CodeAgent {
     if(decision.option_id==='skip')return '用户选择暂不提交，已跳过提交和上传。';
     let committed:string|undefined;
     try{
-      const {target,profile}=this.pickAutoDLTarget(task.project_id,approval.target.profile_id);
+      const approvedTarget=approval.target;
+      const destination=approvedTarget?this.pickAutoDLTarget(task.project_id,approvedTarget.profile_id):undefined;
       const checkTarget=()=>{
+        if(!approvedTarget||!destination)return;
+        const {target}=destination;
         const current=this.experiments.data.profile(task.project_id,target.profile_id);
         const root=this.experiments.workspaces.get(task.project_id,target.profile_id)?.root;
-        if(current.host!==approval.target.host||current.port!==approval.target.port||
-          current.fingerprint!==approval.target.fingerprint||root!==approval.target.root)
+        if(current.host!==approvedTarget.host||current.port!==approvedTarget.port||
+          current.fingerprint!==approvedTarget.fingerprint||root!==approvedTarget.root)
           experimentError('CHAT_DECISION_TARGET_CHANGED',409);
       };
       checkTarget();
-      if(decision.option_id==='data-only'){
+      if(decision.option_id==='data-only'&&destination){
+        const {target,profile}=destination;
         for(const file of approval.data){
           const actual=await decisionFileHash(file.path).catch(()=>undefined);
           if(actual?.sha256!==file.sha256)experimentError('CHAT_DECISION_FILE_CHANGED',409);
@@ -639,7 +670,7 @@ export class CodeAgent {
           return current;
         };
         const identity=await checkIdentity();
-        const baseline=await gitUploadBaseline(repo.path).catch(()=>undefined);
+        const baseline=await gitUploadBaseline(repo.path,approval.files).catch(()=>undefined);
         if(baseline?.fingerprint!==approval.fingerprint)experimentError('CHAT_DECISION_FILE_CHANGED',409);
         const original=await readGitIndex(repo.path);
         const git=async(args:string[],stdin?:string)=>{
@@ -650,13 +681,21 @@ export class CodeAgent {
           if(result.exit_code!==0)experimentError('CHAT_GIT_COMMIT_FAILED',409);
           return result.stdout.trim();
         };
+        const matchesCommit=async(sha:string,tree:string)=>{
+          if((await gitRead(repo.path,['rev-parse',sha+'^'])).trim()!==approval.head)return false;
+          if(!approval.files)return (await gitRead(repo.path,['rev-parse',sha+'^{tree}'])).trim()===tree;
+          const changes=(await gitRead(repo.path,['diff-tree','--no-commit-id','--no-renames','--name-only','-r','-z',sha])).split('\0').filter(Boolean);
+          if(changes.length!==approval.files.length||changes.some(path=>!approval.files!.includes(path)))return false;
+          const entries=(object:string)=>gitRead(repo.path,['--literal-pathspecs','ls-tree','-r','-z',object,'--',...approval.files!]);
+          return await entries(sha)===await entries(tree);
+        };
         let staged:Buffer|undefined;
         let expectedTree:string|undefined;
         let committing=false;
         try{
           await git(['add','-A','--pathspec-from-file=-','--pathspec-file-nul'],baseline.files.join('\0')+'\0');
           staged=(await readGitIndex(repo.path)).bytes;
-          const check=await gitUploadBaseline(repo.path).catch(()=>undefined);
+          const check=await gitUploadBaseline(repo.path,approval.files).catch(()=>undefined);
           if(check?.worktree!==approval.worktree||check.head!==approval.head||check.ref!==approval.ref)
             experimentError('CHAT_DECISION_FILE_CHANGED',409);
           expectedTree=await git(['write-tree']);
@@ -664,12 +703,13 @@ export class CodeAgent {
           checkTarget();
           await checkIdentity();
           committing=true;
-          await git(['commit','-m',approval.message]);
+          await git(['commit','-m',approval.message,...(approval.files?['--only','--pathspec-from-file=-','--pathspec-file-nul']:[])],
+            approval.files?approval.files.join('\0')+'\0':undefined);
           committed=(await gitRead(repo.path,['rev-parse','HEAD'])).trim();
           const actualMessage=(await gitRead(repo.path,['log','-1','--format=%s'])).trim();
           const actualIdentity=(await gitRead(repo.path,['log','-1','--format=%an%x00%ae%x00%cn%x00%ce'])).trim();
           this.recordChoiceOperation(task,'Git 提交',actualMessage+'\n'+committed,'completed');
-          if((await gitRead(repo.path,['rev-parse','HEAD^','HEAD^{tree}'])).trim()!==approval.head+'\n'+expectedTree||
+          if(!await matchesCommit(committed,expectedTree)||
             (await gitRead(repo.path,['rev-parse','--symbolic-full-name','HEAD'])).trim()!==approval.ref||actualMessage!==approval.message||
             actualIdentity!==Object.values(gitIdentityEnv(identity)).join('\0'))
             experimentError('CHAT_DECISION_COMMIT_CHANGED',409);
@@ -679,9 +719,9 @@ export class CodeAgent {
           if(staged&&head===approval.head)
             await restoreGitIndex(original.index,staged,original.bytes).catch(()=>{ /* Preserve any concurrent index update. */ });
           if(committing&&!committed&&head&&head!==approval.head&&expectedTree){
-            const proof=(await gitRead(repo.path,['rev-parse','HEAD^','HEAD^{tree}']).catch(()=>undefined))?.trim();
+            const proof=await matchesCommit(head,expectedTree).catch(()=>false);
             const message=(await gitRead(repo.path,['log','-1','--format=%s']).catch(()=>undefined))?.trim();
-            if(proof===approval.head+'\n'+expectedTree&&message===approval.message){
+            if(proof&&message===approval.message){
               committed=head;
               this.recordChoiceOperation(task,'Git 提交',approval.message+'\n'+committed,'completed');
             }
@@ -689,6 +729,8 @@ export class CodeAgent {
           throw error;
         }
       });
+      if(!destination)return '已在本地提交 '+commit+'，基线 '+approval.head+'。';
+      const {target}=destination;
       checkTarget();
       const requestId=randomUUID();
       const result=await this.recordAutoDLTransfer(task,requestId,target,async report=>{
@@ -712,7 +754,7 @@ export class CodeAgent {
         decision.reason=reason;
         this.save(source);
       }
-      const text=committed?`已提交 ${committed}，上传未完成（${code}）。`:decision.reason??`选择操作未完成（${code}）。`;
+      const text=committed?`已产生提交 ${committed}，${approval.target?"上传":"提交校验"}未完成（${code}）。`:decision.reason??`选择操作未完成（${code}）。`;
       this.recordChoiceOperation(task,'确认操作',text,'failed');
       return text;
     }

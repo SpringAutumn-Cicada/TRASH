@@ -443,7 +443,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-choice"){
         sendJson(response,200,codeAgent.requestChoice(projectId,token,body));return;
       }
-      if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-git-autodl-choice"){
+      if(body&&typeof body==="object"&&"operation" in body&&(body.operation==="request-git-autodl-choice"||body.operation==="request-git-commit-choice")){
         sendJson(response,200,await codeAgent.requestGitUploadChoice(projectId,token,body));return;
       }
       if (body && typeof body === "object" && "operation" in body && body.operation === "load-chat-skill") {

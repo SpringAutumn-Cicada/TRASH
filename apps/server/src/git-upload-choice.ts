@@ -32,7 +32,7 @@ export async function decisionFileHash(path:string){
   }finally{await file.close();}
 }
 
-export async function gitUploadBaseline(path:string){
+export async function gitUploadBaseline(path:string,selected?:string[]){
   const head=(await gitRead(path,["rev-parse","HEAD"])).trim();
   const ref=(await gitRead(path,["rev-parse","--symbolic-full-name","HEAD"])).trim();
   const gitDir=(await gitRead(path,["rev-parse","--absolute-git-dir"])).trim();
@@ -44,8 +44,12 @@ export async function gitUploadBaseline(path:string){
   const status=await gitRead(path,statusArgs);
   const indexArgs=["diff","--cached","--raw","-z","--no-abbrev","--no-renames","--no-ext-diff"];
   const staged=await gitRead(path,indexArgs);
-  const records=status.split("\0").filter(Boolean);
-  if(records.some(entry=>!entry.startsWith("??")&&entry[0]!==" "&&entry[1]!==" "))
+  const all=status.split("\0").filter(Boolean);
+  const choices=selected&&new Set(selected);
+  const records=choices?all.filter(entry=>choices.has(entry.slice(3))):all;
+  if(choices&&records.length!==choices.size)experimentError("CHAT_GIT_SELECTED_FILES_CHANGED",409);
+  if(all.some(entry=>entry.startsWith("UU")||entry.startsWith("AA")||entry.startsWith("DD")||entry.slice(0,2).includes("U"))||
+    records.some(entry=>!entry.startsWith("??")&&entry[0]!==" "&&entry[1]!==" "))
     experimentError("CHAT_GIT_MIXED_CHANGES",409);
   const files=records.map(entry=>entry.slice(3)).sort();
   const checks=[];
