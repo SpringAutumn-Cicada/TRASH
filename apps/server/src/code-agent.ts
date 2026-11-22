@@ -1,7 +1,7 @@
 import { methodDraftInput, methodDraftOutput, methodSkillDirectory, methodSkillId, readMethodContext, type MethodContext, type MethodDraft } from "./experiment/method-agent.js";
 import { experimentSelection, listExperiments } from "./experiment/catalog.js";
 import { readChatModelConfig, reasoningEffort } from "./chat-model-config.js";
-import { projectRuntime, publicDirectories } from "./project-layout.js";
+import { projectRuntime } from "./project-layout.js";
 import { resolveChatAttachments, type ChatAttachment } from "./chat-attachments.js";
 import { readChatOutput, type ChatOutput } from "./chat-output.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { homedir } from "node:os";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import type { TrashStore } from "@trash/storage";
@@ -16,13 +17,13 @@ import { experimentError } from "@trash/storage";
 import type { ExperimentService } from "./experiment/service.js";
 import { redact } from "./experiment/ssh.js";
 import { prepareChatWorkspace } from "./project-chat-tools.js";
-import { projectManuscriptPath, isManuscriptDirectory, manuscriptDirectory } from "./manuscript-layout.js";
-import type { ProjectFiles } from "./project-files.js";
+import { manuscriptDirectory, manuscriptId } from "./manuscript-layout.js";
+import { ProjectFiles } from "./project-files.js";
 import { autoChatSkillInstruction, chatSkillId, chatSkillInstruction, stageScholarChatSkill, type ChatSkillId } from "./project-chat-skills.js";
 
 const execute = promisify(execFile);
 const writeScope = z.union([
-  z.enum(['drafts','project','repository']),
+  z.enum(['drafts','project','repository','paper-code']),
   z.object({directory:z.string().trim().min(1).max(1024)}).strict(),
   z.object({repository_id:z.string().min(1).max(128)}).strict()
 ]);
@@ -31,6 +32,7 @@ const inputSchema = z.object({
   method:methodDraftInput.optional(),
   repository_id:z.string().min(1).optional(),
   write_scope:writeScope.optional(),
+  paper_id:manuscriptId.optional(),
   attachments:z.array(z.string().regex(/^artifact_[A-Za-z0-9-]+$/)).max(10).default([]),
   conversation_id: z.string().uuid().optional(), instructions: z.string().trim().min(1).max(30000), model: z.string().trim().max(200).default(""),
   reasoning_effort: reasoningEffort.optional(),
@@ -45,6 +47,7 @@ export interface CodeTask {
   purpose?: "project-chat" | "experiment-method"; conversation_id?: string; session_id?: string; repository_path?: string; repository_id?: string;
   task_id: string; project_id: string; path: string; instructions: string; model: string; sandbox: Input["sandbox"];
   write_scope?: Input["write_scope"];
+  paper_id?: string;
   write_roots?: string[];
   waiting_for?: string;
   status: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -69,7 +72,6 @@ const contains = (parent:string, path:string) => {
   return child===''||(!isAbsolute(child)&&child!=='..'&&!child.startsWith('..'+sep));
 };
 const conversationKey=(project:string,id:string)=>project+'/'+id;
-const sharedProjectFolders=publicDirectories.filter(name=>!['literature','knowledge_base'].includes(name));
 
 export class CodeAgent {
   private active = new Map<string, ActiveCodeTask>();
@@ -78,8 +80,10 @@ export class CodeAgent {
   private readonly queueTimer: ReturnType<typeof setInterval>;
   onSettled?: () => void;
   private closed = false;
+  private files: ProjectFiles;
   private command = process.env.TRASH_CODEX_COMMAND || "codex";
   constructor(private store: TrashStore, private experiments: ExperimentService, private knowledgeBusy:()=>boolean=()=>false) {
+    this.files=new ProjectFiles(store,()=>false);
     this.queueTimer=setInterval(()=>{
       try{this.pump();}catch(error){console.warn('Agent 任务队列暂时无法读取',error);}
     },1000);
@@ -113,7 +117,7 @@ export class CodeAgent {
       try { return [JSON.parse(readFileSync(join(this.directory(project), name), "utf8")) as CodeTask]; } catch { return []; }
     }).sort((a, b) => b.created_at.localeCompare(a.created_at));
   }
-  private conversationMeta(project:string,id:string):{title?:string;deleted?:true}{
+  private conversationMeta(project:string,id:string):{title?:string;deleted?:true;paper_id?:string|null}{
     if(!z.string().uuid().safeParse(id).success)return {};
     const file=join(projectRuntime(this.store.root,project,'chat-conversations'),id+'.json');
     try{return JSON.parse(readFileSync(file,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return {};throw error;}
@@ -126,21 +130,28 @@ export class CodeAgent {
       if(!conversations.has(id))conversations.set(id,this.conversationMeta(project,id));
       return !conversations.get(id)?.deleted;
     });
-    return {tasks:tasks.map(({method_draft: _draft, ...task})=>({...task,logs:''})),titles:Object.fromEntries([...conversations]
-      .flatMap(([id,meta])=>meta.title&&!meta.deleted?[[id,meta.title]]:[]))};
+    return {
+      tasks:tasks.map(({method_draft:_draft,...task})=>({...task,logs:''})),
+      titles:Object.fromEntries([...conversations].flatMap(([id,meta])=>meta.title&&!meta.deleted?[[id,meta.title]]:[])),
+      paper_bindings:Object.fromEntries([...conversations].flatMap(([id,meta])=>meta.paper_id===undefined||meta.deleted?[]:[[id,meta.paper_id]]))
+    };
   }
-  changeConversation(project:string,id:string,change:{title:string}|{deleted:true}){
+  changeConversation(project:string,id:string,change:{title:string}|{deleted:true}|{paper_id:string|null}){
     const parsed=z.string().uuid().safeParse(id);
     if(!parsed.success)experimentError('CHAT_SESSION_NOT_FOUND',404);
     const meta=this.conversationMeta(project,id);
     const turns=this.list(project).filter(task=>task.purpose==='project-chat'&&task.conversation_id===id);
     if(!turns.length||meta.deleted)experimentError('CHAT_SESSION_NOT_FOUND',404);
-    if('deleted' in change&&(this.continuing.has(conversationKey(project,id))||turns.some(task=>['queued','running','cancelling','interrupted'].includes(task.status))))
+    if(('deleted' in change||'paper_id' in change)&&(this.continuing.has(conversationKey(project,id))||turns.some(task=>['queued','running','cancelling','interrupted'].includes(task.status))))
       experimentError('CHAT_SESSION_ACTIVE',409);
+    if('paper_id' in change&&change.paper_id)this.files.manuscriptPath(project,change.paper_id);
+    this.saveConversationMeta(project,id,{...meta,...change});
+  }
+  private saveConversationMeta(project:string,id:string,meta:ReturnType<CodeAgent['conversationMeta']>){
     const directory=projectRuntime(this.store.root,project,'chat-conversations');
     mkdirSync(directory,{recursive:true});
     const path=join(directory,id+'.json');
-    writeFileSync(path+'.tmp',JSON.stringify({...meta,...change}),{mode:0o600});
+    writeFileSync(path+'.tmp',JSON.stringify(meta),{mode:0o600});
     renameSync(path+'.tmp',path);
   }
   chatModelConfig(project:string){
@@ -168,6 +179,24 @@ export class CodeAgent {
   authorizeTool(project: string, token: string): { workspace: string; writable: boolean } {
     const item = this.activeTool(project, token);
     return { workspace: item.task.path, writable: item.task.sandbox !== "read-only" };
+  }
+  async paperCodeTool(project:string,token:string,body:unknown){
+    this.activeTool(project,token);
+    const input=z.object({operation:z.enum(['paper-code-list','paper-code-read']),paper_id:manuscriptId.optional(),path:z.string().max(4096).optional()}).strict().parse(body);
+    if(input.operation==='paper-code-list'&&!input.paper_id&&!input.path)
+      return {papers:this.writeTargets(project,this.files).papers.filter(paper=>paper.repository_path)};
+    if(!input.paper_id||input.operation==='paper-code-read'&&!input.path)experimentError('INVALID_REQUEST',400);
+    this.files.manuscriptPath(project,input.paper_id);
+    const repo=this.experiments.repository.forPaper(project,input.paper_id);
+    if(!repo)experimentError('REPOSITORY_NOT_BOUND',404);
+    const root=realpathSync(repo.path);
+    const path=input.path??'';
+    const target=await this.experiments.repository.safePath(project,path,repo.repository_id);
+    const protectedRoots=this.paperCodeRoots().filter(other=>!contains(other,root));
+    if(protectedRoots.some(other=>contains(other,target)))experimentError('REPOSITORY_PATH_INVALID',403);
+    return input.operation==='paper-code-list'
+      ? {entries:await this.experiments.repository.tree(project,path,repo.repository_id)}
+      : this.experiments.repository.file(project,path,repo.repository_id);
   }
   loadChatSkill(project: string, token: string, body: unknown) {
     const item = this.activeTool(project, token);
@@ -240,31 +269,57 @@ export class CodeAgent {
     const paths=new Set(repositories.map(repo=>repo.path));
     const manuscriptRoot=join(root,manuscriptDirectory(root));
     const papers=existsSync(manuscriptRoot)&&realpathSync(manuscriptRoot)===manuscriptRoot&&statSync(manuscriptRoot).isDirectory()
-      ? files.manuscripts(project).papers.map(paper=>({name:paper.title,path:paper.path})) : [];
+      ? files.manuscripts(project).papers.map(paper=>({id:paper.id,name:paper.title,path:paper.path,repository_path:this.experiments.repository.forPaper(project,paper.id)?.path})) : [];
     return {repositories,code_directories:codeDirectories.filter(entry=>!paths.has(join(root,entry.path))),papers};
   }
-  private writeGrants(project:string, root:string, repository:string|undefined, scope:Input["write_scope"]) {
-    if(!scope||scope==='drafts')return [];
-    if(scope==='repository')return [repository??experimentError('REPOSITORY_NOT_BOUND',409)];
-    if(typeof scope==='object'){
-      if('repository_id' in scope){
-        const fallback=this.experiments.data.repository(project);
-        const selected=this.experiments.data.repository(project,scope.repository_id)??(fallback?.repository_id===scope.repository_id?fallback:undefined);
-        if(!selected||!existsSync(selected.path)||!statSync(selected.path).isDirectory())experimentError('REPOSITORY_NOT_BOUND',409);
-        return [realpathSync(selected.path)];
+  private paperCodeRoots() {
+    const roots=new Set<string>();
+    for(const project of this.store.listProjects()){
+      const base=join(this.store.root,'projects',project.project_id,'code','papers');
+      if(existsSync(base)&&statSync(base).isDirectory()){
+        for(const child of readdirSync(base,{withFileTypes:true})){
+          const path=join(base,child.name);
+          if((child.isDirectory()||child.isSymbolicLink())&&existsSync(path)&&statSync(path).isDirectory())roots.add(realpathSync(path));
+        }
       }
-      const parts=scope.directory.replace(/\/+$/,'').split('/');
-      if((!sharedProjectFolders.includes(parts[0])&&!isManuscriptDirectory(parts[0]))||parts.some(part=>!part||part==='.'||part==='..'||part.startsWith('.')||part.includes('\\')))
-        experimentError('CHAT_WRITE_SCOPE_INVALID',400);
-      const target=join(root,projectManuscriptPath(root,parts.join('/')));
-      if(!existsSync(target)||realpathSync(target)!==target||!statSync(target).isDirectory())experimentError('CHAT_WRITE_SCOPE_INVALID',400);
-      return [target];
+      for(const repo of this.experiments.data.repositories(project.project_id)){
+        if(repo.paper_id&&existsSync(repo.path)&&statSync(repo.path).isDirectory())roots.add(realpathSync(repo.path));
+      }
     }
-    const folders=sharedProjectFolders.map(name=>join(root,projectManuscriptPath(root,name))).filter(path=>{
-      if(!existsSync(path))return false;
-      return realpathSync(path)===path&&statSync(path).isDirectory();
-    });
-    return [...new Set(repository?[...folders,repository]:folders)];
+    return [...roots].sort((a,b)=>a.localeCompare(b));
+  }
+  private managedCommand(task:CodeTask,writableRoots:string[],args:string[]){
+    if(process.platform!=='linux')experimentError('CHAT_PAPER_SANDBOX_UNAVAILABLE',503);
+    const codexHome=process.env.CODEX_HOME||join(homedir(),'.codex');
+    const privateRoots=[task.path,writableRoots[0],codexHome,realpathSync('/tmp')].filter((path):path is string=>Boolean(path));
+    const bases=this.store.listProjects().map(project=>join(this.store.root,'projects',project.project_id,'code','papers'))
+      .filter(path=>existsSync(path)&&statSync(path).isDirectory()).map(path=>realpathSync(path));
+    const repository=writableRoots[0];
+    const protectedRoots=this.paperCodeRoots();
+    if(repository&&protectedRoots.some(path=>path!==repository&&contains(repository,path)))
+      experimentError('CHAT_PAPER_LAYOUT_CONFLICT',409);
+    const hidden=[...new Set([...bases,...protectedRoots])].filter(path=>path!==repository);
+    const masks=hidden.filter(path=>!hidden.some(parent=>parent!==path&&contains(parent,path)));
+    if(masks.some(path=>privateRoots.some(root=>contains(root,path)||root!==writableRoots[0]&&contains(path,root))))
+      experimentError('CHAT_PAPER_LAYOUT_CONFLICT',409);
+    const mounts=masks.flatMap(path=>['--tmpfs',path]);
+    return ['--die-with-parent','--unshare-pid','--ro-bind','/','/','--dev','/dev','--proc','/proc','--tmpfs','/tmp',
+      '--bind-try',codexHome,codexHome,'--bind',task.path,task.path,...mounts,
+      ...(repository?['--bind',repository,repository]:[]),
+      ...(existsSync('/run/WSL')?['--tmpfs','/run/WSL']:[]),'--unsetenv','WSL_INTEROP',
+      '--chdir',task.path,'--',this.command,...args];
+  }
+  private paperScope(project:string, paperId:string|undefined, scope:Input['write_scope']){
+    const repo=paperId?this.experiments.repository.forPaper(project,paperId):undefined;
+    if(!scope||scope==='drafts'||scope==='project')return {scope:'drafts' as const,roots:[] as string[]};
+    if(typeof scope==='object'&&'directory' in scope){
+      const path=join(this.store.root,'projects',project,scope.directory);
+      if(!existsSync(path)||!this.paperCodeRoots().some(root=>contains(root,realpathSync(path))))return {scope:'drafts' as const,roots:[] as string[]};
+      if(!repo||!existsSync(repo.path)||!contains(realpathSync(repo.path),realpathSync(path)))experimentError('CHAT_PAPER_BINDING_REQUIRED',409);
+    }
+    if(!repo||!existsSync(repo.path)||!statSync(repo.path).isDirectory())experimentError('CHAT_PAPER_BINDING_REQUIRED',409);
+    if(typeof scope==='object'&&'repository_id' in scope&&scope.repository_id!==repo.repository_id)experimentError('CHAT_PAPER_BINDING_REQUIRED',409);
+    return {scope:'paper-code' as const,roots:[realpathSync(repo.path)]};
   }
   private blockerLabel(blocker:CodeTask, project:string) {
     const id=blocker.conversation_id;
@@ -344,9 +399,10 @@ export class CodeAgent {
   }
   async start(project: string, value: unknown, chatUrl?: string, continuation = false): Promise<CodeTask> {
     const input = inputSchema.parse(value);
+    if(chatUrl&&input.sandbox==='danger-full-access')input.sandbox='workspace-write';
     if (input.method && (chatUrl || input.experiment || input.repository_id || input.conversation_id || input.sandbox !== "read-only"))
       experimentError("INVALID_REQUEST", 400);
-    if(!chatUrl&&(input.attachments.length||input.skill_id||input.write_scope))experimentError("INVALID_REQUEST",400);
+    if(!chatUrl&&(input.attachments.length||input.skill_id||input.write_scope||input.paper_id))experimentError("INVALID_REQUEST",400);
     const attachments=chatUrl?resolveChatAttachments(this.store,project,input.attachments):[];
     const conversation=chatUrl?(input.conversation_id??randomUUID()):undefined;
     const key=conversation?conversationKey(project,conversation):undefined;
@@ -355,15 +411,18 @@ export class CodeAgent {
     const legacyWriter=!chatUrl&&input.sandbox!=='read-only';
     if (legacyWriter && this.store.db.prepare("SELECT 1 FROM knowledge_tasks WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(project)) experimentError("PROJECT_HAS_ACTIVE_TASKS", 409);
     if (legacyWriter && this.busy(project,false)) experimentError("CODE_AGENT_BUSY", 409);
+    const meta=chatUrl&&input.conversation_id?this.conversationMeta(project,input.conversation_id):undefined;
+    const paperId=chatUrl?(input.conversation_id?meta?.paper_id??undefined:input.paper_id):undefined;
+    if(chatUrl&&input.conversation_id&&input.paper_id!==undefined&&input.paper_id!==paperId)experimentError('CHAT_PAPER_BINDING_CHANGED',409);
+    if(paperId)this.files.manuscriptPath(project,paperId);
     const previous=chatUrl&&input.conversation_id?this.list(project).find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined;
-    if(previous&&input.repository_id&&input.repository_id!==previous.repository_id)experimentError('CHAT_REPOSITORY_CHANGED',409);
+
     const method = input.method ? readMethodContext(this.store, this.experiments, project, input.method) : undefined;
     const projectRoot = join(this.store.root, "projects", project);
-    const repo = method ? method.repository : previous
-      ? previous.repository_id?this.experiments.data.repository(project,previous.repository_id):undefined
-      : input.repository_id||!chatUrl?this.experiments.repository.bound(project,input.repository_id):this.experiments.data.repository(project);
-    const repositoryPath=repo?.path??previous?.repository_path;
-    const canonicalRepo=repositoryPath&&existsSync(repositoryPath)?realpathSync(repositoryPath):undefined;
+    const repo=method?method.repository:chatUrl
+      ? paperId?this.experiments.repository.forPaper(project,paperId):undefined
+      : this.experiments.repository.bound(project,input.repository_id);
+    const repositoryPath=repo?.path;
     if(chatUrl&&input.conversation_id){
       if(this.conversationMeta(project,input.conversation_id).deleted)experimentError('CHAT_SESSION_NOT_FOUND',404);
       if(!previous&&!this.chatHistory(project).tasks.some(task=>task.conversation_id===conversation))experimentError('CHAT_SESSION_NOT_FOUND',409);
@@ -380,10 +439,8 @@ export class CodeAgent {
       [...this.queued.values()].some(({item})=>sameConversation(item.task))))experimentError('CHAT_NOT_READY',409);
     if(this.list(project).some(task=>task.status==='interrupted'&&(chatUrl?sameConversation(task):legacyWriter&&task.sandbox!=='read-only')))experimentError('CODE_AGENT_RECOVERY_REQUIRED',409);
     if(chatUrl&&input.conversation_id&&this.conversationMeta(project,input.conversation_id).deleted)experimentError('CHAT_SESSION_NOT_FOUND',404);
-    const scope=chatUrl&&input.sandbox==='workspace-write'?input.write_scope??'drafts':undefined;
-    const writableRoots=input.sandbox!=='workspace-write'?[]:chatUrl
-      ? this.writeGrants(project,realpathSync(projectRoot),canonicalRepo,scope)
-      : [path];
+    const granted=chatUrl&&input.sandbox==='workspace-write'?this.paperScope(project,paperId,input.write_scope):undefined;
+    const writableRoots=input.sandbox!=='workspace-write'?[]:granted?.roots??[path];
     let methodContext = "";
     if (input.experiment) {
       const {direction_id, scheme_id} = input.experiment;
@@ -394,7 +451,7 @@ export class CodeAgent {
       const document = join(root, "experiments", direction_id, scheme_id, "README.md");
       methodContext = `本次自研实验的方法档案位于 ${JSON.stringify(document)}。涉及算法或评价时先阅读该档案，报告对应的假设、代码位置与配置。区分已有实现和待确认动机。只有工程性改动时无需修订方法。\n`;
     }
-    const task: CodeTask = { experiment:input.method ? {direction_id:input.method.direction_id, scheme_id:input.method.scheme_id} : input.experiment, task_id, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "",repository_id:repo?.repository_id??previous?.repository_id };
+    const task: CodeTask = { experiment:input.method ? {direction_id:input.method.direction_id, scheme_id:input.method.scheme_id} : input.experiment, task_id, project_id: project, path, instructions: input.instructions, model: input.model, reasoning_effort:input.reasoning_effort, sandbox: input.sandbox, status: "running", created_at: new Date().toISOString(), logs: "", response: "",repository_id:repo?.repository_id };
     if (method) {
       task.purpose = "experiment-method";
       task.skill_id = methodSkillId;
@@ -403,7 +460,7 @@ export class CodeAgent {
     if (chatUrl) {
       task.skill_id = input.skill_id;
       task.attachments=attachments.map(({id,name,size,mime,image})=>({id,name,size,mime,image}));
-      task.purpose = "project-chat"; task.conversation_id = conversation; task.repository_path = repositoryPath; task.write_scope=scope;
+      task.purpose = "project-chat"; task.conversation_id = conversation; task.repository_path=repositoryPath;task.write_scope=granted?.scope;task.paper_id=paperId;
       task.write_roots=writableRoots;
       task.session_id = previous?.session_id;
     }
@@ -414,6 +471,7 @@ export class CodeAgent {
       task.status='queued';task.waiting_for=blocked;
       this.save(task);this.queued.set(task.task_id,{item,input});
     }else this.launch(item,input,methodContext);
+    if(chatUrl&&!input.conversation_id&&paperId)this.saveConversationMeta(project,conversation!,{paper_id:paperId});
     return task;
   }
   async append(project: string, id: string, value: unknown, chatUrl: string): Promise<CodeTask> {
@@ -430,7 +488,7 @@ export class CodeAgent {
       await item.done;
       return await this.start(project, { ...input, conversation_id: item.task.conversation_id,
         instructions: input.instructions,
-        model: item.task.model, reasoning_effort:item.task.reasoning_effort, sandbox: item.task.sandbox, write_scope:item.task.write_scope }, chatUrl, true);
+        model: item.task.model, reasoning_effort:item.task.reasoning_effort, sandbox: item.task.sandbox, write_scope:item.task.write_scope, paper_id:item.task.paper_id }, chatUrl, true);
     } finally { this.continuing.delete(key); }
   }
   acknowledge(project: string, id: string) {
@@ -471,7 +529,7 @@ export class CodeAgent {
       const paperRoot=join(this.store.root,"projects",task.project_id);
       const attachments=chat?resolveChatAttachments(this.store,task.project_id,input.attachments):[];
       const imageArgs=attachments.filter(file=>file.image).flatMap(file=>['--image',file.path]);
-      const args = ["exec", "--sandbox", task.sandbox, "-c", 'approval_policy="never"', "-C", task.path, ...(task.model ? ["--model", task.model] : []),
+      const args = ["exec", "--sandbox", chat?'workspace-write':task.sandbox, "-c", 'approval_policy="never"', "-C", task.path, ...(task.model ? ["--model", task.model] : []),
         ...(task.reasoning_effort?["-c",`model_reasoning_effort=${JSON.stringify(task.reasoning_effort)}`]:[]),
         ...(chat ? ["--skip-git-repo-check", "-c", 'sandbox_workspace_write.network_access=true', ...item.writableRoots.flatMap(path=>["--add-dir",path])] : ["--ephemeral", ...(method ? ["--skip-git-repo-check", "--output-schema", join(methodSkillDirectory, "output.schema.json")] : [])]),
         ...(chat && task.session_id ? ["resume", "--json",...imageArgs, task.session_id, "-"] : ["--json", "--color", "never",...imageArgs, "-"])];
@@ -485,7 +543,7 @@ ${JSON.stringify({title:method.experiment.title, repository:method.repository?.p
 用户本轮要求
 ${input.instructions}`;
       if (chat) item.scholarSkill = stageScholarChatSkill(task.path, input.skill_id);
-      const child = spawn(this.command, args, { cwd: task.path, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(chat ? { TRASH_PROJECT_TOOL_TOKEN: item.toolToken, TRASH_PROJECT_TOOL_URL: item.toolUrl } : {}) } }); item.child = child;
+      const child = spawn(chat?'bwrap':this.command, chat?this.managedCommand(task,item.writableRoots,args):args, { cwd: task.path, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(chat ? { TRASH_PROJECT_TOOL_TOKEN: item.toolToken, TRASH_PROJECT_TOOL_URL: item.toolUrl } : {}) } }); item.child = child;
       let pending = ""; let reportedFailure = "";
       child.stdout?.setEncoding("utf8"); child.stderr?.setEncoding("utf8");
       const append = (value: string) => {

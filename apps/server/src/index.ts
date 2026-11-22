@@ -1,3 +1,4 @@
+import { manuscriptId } from "./manuscript-layout.js";
 import { methodDraftInput } from "./experiment/method-agent.js";
 import { CodeDirectoryMigration, codeMigrationPending } from './code-directory-migration.js';
 import { ManuscriptEvidence } from './manuscript-evidence.js';
@@ -434,6 +435,10 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response, 200, codeAgent.loadChatSkill(projectId, token, body)); return;
       }
       if (body && typeof body === "object" && "operation" in body &&
+        (body.operation === "paper-code-list" || body.operation === "paper-code-read")) {
+        sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
+      }
+      if (body && typeof body === "object" && "operation" in body &&
         ["method-experiments", "method-context", "method-draft"].includes(String(body.operation))) {
         sendJson(response, 200, codeAgent.methodChatTool(projectId, token, body as Record<string,unknown>)); return;
       }
@@ -534,13 +539,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (subpath === "chat/model-config" && method === "GET") {
       sendJson(response,200,await codeAgent.chatModelConfig(projectId));return;
     }
-    const conversationRoute=subpath.match(/^chat\/conversations\/([^/]+)\/(rename|delete)$/);
+    const conversationRoute=subpath.match(/^chat\/conversations\/([^/]+)\/(rename|delete|paper)$/);
     if(conversationRoute&&method==='POST'){
       const [,id,action]=conversationRoute;
       const body=await readJson(request);
       if(action==='rename'){
         const {title}=z.object({title:z.string().trim().min(1).max(120)}).strict().parse(body);
         codeAgent.changeConversation(projectId,id,{title});
+      }else if(action==='paper'){
+        const input=z.object({paper_id:manuscriptId.nullable()}).strict().parse(body);
+        codeAgent.changeConversation(projectId,id,input);
       }else{
         z.object({confirm:z.literal(true)}).strict().parse(body);
         codeAgent.changeConversation(projectId,id,{deleted:true});
