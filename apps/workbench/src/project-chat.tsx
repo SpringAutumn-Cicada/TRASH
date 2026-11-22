@@ -10,18 +10,19 @@ import { ChatMarkdown } from './chat-markdown.js';
 import './project-chat.css';
 
 type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string};
-type WriteTargets={repositories:{id:string;name:string;path:string}[];code_directories:{name:string;path:string}[];papers:{name:string;path:string}[]};
-const nextWriteScope=(scope?:ChatWriteScope):ChatWriteScope=>scope==='project'?'drafts':scope??'drafts';
-type Turn={write_scope?:ChatWriteScope;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
+type WriteTargets={papers:{id:string;name:string;path:string;repository_path?:string}[]};
+const nextWriteScope=(scope:unknown):ChatWriteScope=>scope==='paper-code'?'paper-code':'drafts';
+const nextSandbox=(sandbox:unknown)=>sandbox==='read-only'?'read-only':'workspace-write';
+type Turn={write_scope?:unknown;paper_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
 type Session={id:string;first:Turn;latest:Turn;count:number};
-type History={tasks:Turn[];titles:Record<string,string>};
+type History={tasks:Turn[];titles:Record<string,string>;paper_bindings:Record<string,string|null>};
 type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
 type SkillsStatus='loading'|'ready'|'failed';
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
 const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
 const states:Record<string,string>={queued:'等待资源',running:'正在处理',cancelling:'正在停止',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'};
 const waitingResource=(turn:Turn)=>turn.waiting_for?.trim()||'正在确认占用情况';
-const errors:Record<string,string>={CHAT_WRITE_SCOPE_INVALID:"请选择项目中已有的普通子目录。",REPOSITORY_NOT_BOUND:"这个会话尚未绑定代码仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理这段对话中的任务，再删除。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
+const errors:Record<string,string>={CHAT_WRITE_SCOPE_INVALID:"论文仓库目录不可用，请到论文页检查仓库。",CHAT_PAPER_BINDING_REQUIRED:"请先为当前会话绑定一篇已关联代码仓库的论文。",CHAT_PAPER_BINDING_CHANGED:"会话绑定已变化，请刷新后重试。",CHAT_PAPER_LAYOUT_CONFLICT:"论文仓库路径与其他受保护目录重叠。",CHAT_PAPER_SANDBOX_UNAVAILABLE:"当前环境无法隔离论文代码目录。",MANUSCRIPT_NOT_FOUND:"绑定论文已不可用，请重新选择。",REPOSITORY_NOT_BOUND:"该论文尚未关联代码仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理当前对话中的任务。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
 const suggestions=[{title:'梳理研究方向',text:'请根据当前项目的研究问题和已有文献，梳理研究方向、已有证据以及需要补充的材料。'},{title:'比较文献方法',text:'请比较当前项目已有文献的方法、实验条件与局限，标明来源和不确定之处。'},{title:'整理研究 Wiki',text:'请基于现有文献卡片整理研究 Wiki，保留来源与版本引用，生成待审内容。'},{title:'讨论论文结构',text:'请结合当前研究问题和已有证据，和我讨论论文结构，区分已有结论与待验证假设。'}];
 const time=(value:string)=>new Date(value).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
 const date=(value:string)=>new Date(value).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
@@ -110,14 +111,17 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const selectedSkill=drafts[conversation]?.skill??'';
   const [turns,setTurns]=useState<Turn[]>([]);
   const [titles,setTitles]=useState<Record<string,string>>({});
+  const [paperBindings,setPaperBindings]=useState<Record<string,string|null>>({});
   const [skills,setSkills]=useState<ChatSkill[]>([]);
   const [skillsStatus,setSkillsStatus]=useState<SkillsStatus>('loading');
   const [targets,setTargets]=useState<WriteTargets>(),[targetError,setTargetError]=useState(false);
   const [config,setConfig]=useState<ModelConfig>(),[configLoading,setConfigLoading]=useState(false),[configError,setConfigError]=useState('');
   const [sessionAction,setSessionAction]=useState<{id:string;type:'rename'|'delete';title:string}>();
   const [model,setModel]=useState(''),[effort,setEffort]=useState(''),[lastSandbox,setLastSandbox]=useState('workspace-write'),[lastWriteScope,setLastWriteScope]=useState<ChatWriteScope>('drafts');
-  const sandbox=drafts[conversation]?.sandbox??lastSandbox;
-  const writeScope=drafts[conversation]?.writeScope??lastWriteScope;
+  const sandbox=nextSandbox(drafts[conversation]?.sandbox??lastSandbox);
+  const writeScope=nextWriteScope(drafts[conversation]?.writeScope??lastWriteScope);
+  const paperId=(conversation?paperBindings[conversation]:drafts[conversation]?.paperId)??'';
+  const paper=targets?.papers.find(entry=>entry.id===paperId);
   const [actingBusy,setBusy]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true),[connected,setConnected]=useState(true),[query,setQuery]=useState(''),[history,setHistory]=useState(true),[options,setOptions]=useState(false),[indexOpen,setIndexOpen]=useState(false),[away,setAway]=useState(false),[unread,setUnread]=useState(false),[copied,setCopied]=useState('');
   const busy=actingBusy||sending;
   const [logs,setLogs]=useState<Record<string,string>>({}),[openLogs,setOpenLogs]=useState<Record<string,boolean>>({});
@@ -131,7 +135,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
     const data=await response.json().catch(()=>{throw new Error('服务返回了非 JSON 响应，请检查本分支服务是否正常运行。');});
     if(!response.ok)throw new Error(errors[data.error]??`对话请求失败（HTTP ${response.status}${typeof data.error==='string'?`，${data.error}`:''}），请保留输入并查看服务日志。`);return data as T;
   };
-  const refresh=async()=>{const data=await call<History>('/chat/tasks');if(alive.current){setTurns(data.tasks);setTitles(data.titles??{});setConnected(true);}return data.tasks;};
+  const refresh=async()=>{const data=await call<History>('/chat/tasks');if(alive.current){setTurns(data.tasks);setTitles(data.titles??{});setPaperBindings(data.paper_bindings??{});setConnected(true);}return data.tasks;};
   useEffect(()=>{
     const controller=new AbortController();
     setSkillsStatus('loading');
@@ -148,7 +152,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       if(polling)return;polling=true;const revision=historyRevision.current;
       try{
         const data=await call<History>('/chat/tasks');if(!mounted||revision!==historyRevision.current)return;
-        setTurns(data.tasks);setTitles(data.titles??{});setConnected(true);
+        setTurns(data.tasks);setTitles(data.titles??{});setPaperBindings(data.paper_bindings??{});setConnected(true);
         const draftState=draftStore.getSnapshot();
         if(!initial.current&&!draftState.sending[draftState.conversation??'']){
           initial.current=true;
@@ -174,20 +178,12 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const active=activeByConversation.get(conversation),session=sessions.find(item=>item.id===conversation),last=messages.at(-1);
   const currentTurn=active??last;
   const selectedSandbox=active?.sandbox??sandbox;
-  const selectedScope=active?.sandbox==='workspace-write'?active.write_scope??'project':writeScope;
-  const directoryScope=typeof selectedScope==='object'&&'directory' in selectedScope?selectedScope.directory:undefined;
-  const chosenDirectory=[...(targets?.code_directories??[]),...(targets?.papers??[])].find(target=>target.path===directoryScope);
-  const scopeValue=typeof selectedScope==='string'?selectedScope:'repository_id' in selectedScope
-    ? 'repo:'+selectedScope.repository_id : chosenDirectory?'dir:'+chosenDirectory.path:'directory';
-  const scopeMissing=!active&&sandbox==='workspace-write'&&directoryScope!==undefined&&!directoryScope.trim();
-  const repositoryTarget=typeof selectedScope==='object'&&'repository_id' in selectedScope
-    ? targets?.repositories.find(repo=>repo.id===selectedScope.repository_id) : undefined;
+  const selectedScope=active?nextWriteScope(active.write_scope):writeScope;
+  const scopeMissing=!active&&sandbox==='workspace-write'&&writeScope==='paper-code'&&!paper?.repository_path;
   const writeSummary=selectedSandbox==='read-only'?'只读 · 不占写锁'
-    : selectedSandbox==='danger-full-access'?'完整本机权限'
-    : directoryScope!==undefined?directoryScope||'请选择项目子目录'
-    : typeof selectedScope==='object'?repositoryTarget?.path??active?.write_roots?.[0]??'所选实验仓库'
-    : selectedScope==='repository'?active?.write_roots?.[0]??'当前绑定仓库'
-    : selectedScope==='project'?'整个项目与绑定仓库':'本轮独立草稿与知识库发布';
+    : selectedSandbox==='danger-full-access'?'旧任务 · 完整本机权限'
+    : selectedScope==='paper-code'?active?.write_roots?.[0]??paper?.repository_path??'请先为绑定论文关联代码仓库'
+    :'按文件发布共享草稿';
   const sessionTitle=(item:Session)=>titles[item.id]||item.first.instructions.slice(0,70);
   const filtered=sessions.filter(item=>`${sessionTitle(item)}\n${item.first.instructions}\n${item.latest.instructions}`.toLowerCase().includes(query.trim().toLowerCase()));
   const scrollBottom=(smooth=false)=>{const node=messagesRef.current;if(node)node.scrollTo({top:node.scrollHeight,behavior:smooth?'smooth':'auto'});follow.current=true;setAway(false);setUnread(false);};
@@ -266,8 +262,8 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
   const defaultEffort=config?.reasoning_effort??selectedModel?.default_effort;
   const shownEffort=effort||defaultEffort;
   const modelSummary = (shownModel ?? '模型设置') + (shownEffort ? ` · ${effortLabels[shownEffort] ?? shownEffort}` : '');
-  const permissionLabel=selectedSandbox==='read-only'?'只读交流':selectedSandbox==='danger-full-access'?'完整本机权限'
-    :selectedScope==='drafts'?'独立草稿':selectedScope==='project'?'项目读写':'指定范围写入';
+  const permissionLabel=selectedSandbox==='read-only'?'只读交流':selectedSandbox==='danger-full-access'?'旧任务 · 完整本机权限'
+    :selectedScope==='drafts'?'共享文件':'论文代码';
   const threadTitle = session ? sessionTitle(session) : '新对话';
   const supportedEfforts=selectedModel?.efforts.length?selectedModel.efforts:Object.keys(effortLabels);
   const modelChoices=[...new Set([...(config?.models.map(item=>item.id)??[]),model])]
@@ -293,6 +289,19 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       setSessionAction(undefined);
     });
   };
+  const changePaper=(id:string)=>{
+    if(!conversation){
+      draftStore.update('',message=>({...message,paperId:id,writeScope:'drafts'}));
+      return;
+    }
+    void act(async()=>{
+      await call(`/chat/conversations/${encodeURIComponent(conversation)}/paper`,{paper_id:id||null});
+      draftStore.update(conversation,message=>({...message,writeScope:'drafts'}));
+      if(!alive.current)return;
+      historyRevision.current++;
+      setPaperBindings(old=>({...old,[conversation]:id||null}));
+    });
+  };
   const send=async(event:React.FormEvent)=>{
     event.preventDefault();
     const state=draftStore.getSnapshot();
@@ -307,13 +316,15 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
       const data=await call<{task:Turn}>(active?`/chat/tasks/${active.task_id}/append`:'/chat/tasks',{
         instructions,attachments:attachments.entries.map(item=>item.id),skill_id:selectedSkill||undefined,
         model,reasoning_effort:effort||undefined,sandbox,confirm:true,timeout_seconds:1800,
-        ...(!active&&sandbox==='workspace-write'?{write_scope:writeScope}:{}),...(conversation?{conversation_id:conversation}:{})
+        ...(!active&&sandbox==='workspace-write'?{write_scope:writeScope}:{}),
+        ...(conversation?{conversation_id:conversation}:{paper_id:paperId||undefined})
       });
       const stillSelected=draftStore.getSnapshot().conversation===conversation;
       draftStore.discard(conversation,data.task.conversation_id);
       if(!alive.current)return;
       historyRevision.current++;
       setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);
+      if(!conversation&&data.task.paper_id)setPaperBindings(old=>({...old,[data.task.conversation_id]:data.task.paper_id!}));
       if(stillSelected){setLastSandbox(data.task.sandbox);setLastWriteScope(nextWriteScope(data.task.write_scope));follow.current=true;setIndexOpen(false);input.current?.focus();}
     }catch(cause){
       if(alive.current&&draftStore.getSnapshot().conversation===conversation)setError(cause instanceof Error?cause.message:'发送失败，草稿已保留。');
@@ -376,6 +387,7 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
                 <span><i className={`chat-connection-dot ${connected?'':'offline'}`} aria-hidden="true"/>
                   {connected?'项目会话':'连接中断，正在重试'}</span>
                 {messages.length>0 && <span className="chat-thread-count">{messages.length} 轮交流</span>}
+                {paperId&&<span className="chat-thread-count" title={paper?.name??paperId}>论文 · {paper?.name??paperId}</span>}
               </div>
             </div>
           </div>
@@ -405,37 +417,24 @@ export function ProjectChat({projectId,onBrowseResearch}:{projectId:string;onBro
               <option value={effort===defaultEffort?effort:''}>{defaultEffort?effortLabels[defaultEffort]??defaultEffort:'Auto'}</option>
               {effortChoices.map(value=><option value={value} key={value}>{effortLabels[value]??value}</option>)}
             </select></label>
-            <label>对话权限<select value={selectedSandbox} disabled={busy||Boolean(active)} onChange={event=>{const sandbox=event.target.value;draftStore.update(conversation,message=>({...message,sandbox}));}}>
-              <option value="read-only">只读交流</option><option value="workspace-write">按范围写入</option><option value="danger-full-access">完整本机权限</option>
+            <label>绑定论文<select value={paperId} disabled={busy||loading||Boolean(active)||last?.status==='interrupted'||!targets}
+              onChange={event=>changePaper(event.target.value)}>
+              <option value="">未绑定</option>
+              {paperId&&!paper&&<option value={paperId}>{paperId}</option>}
+              {targets?.papers.map(entry=><option value={entry.id} key={entry.id}>{entry.name}</option>)}
             </select></label>
-            {selectedSandbox==='workspace-write'&&<label>写入范围<select
-              value={scopeValue} disabled={busy||Boolean(active)}
-              onChange={event=>{
-                const value=event.target.value;
-                const writeScope:ChatWriteScope=value==='directory'?{directory:''}
-                  :value.startsWith('repo:')?{repository_id:value.slice(5)}
-                  :value.startsWith('dir:')?{directory:value.slice(4)}:value as ChatWriteScope;
-                draftStore.update(conversation,message=>({...message,writeScope}));
-              }}>
-              <option value="drafts">独立草稿与知识库发布</option>
-              {Boolean(targets?.repositories.length||targets?.code_directories.length)&&<optgroup label="实验代码">
-                {targets?.repositories.map(repo=><option key={repo.id} value={'repo:'+repo.id}>{repo.name}</option>)}
-                {targets?.code_directories.map(entry=><option key={entry.path} value={'dir:'+entry.path}>{entry.name}</option>)}
-              </optgroup>}
-              {Boolean(targets?.papers.length)&&<optgroup label="论文目录">
-                {targets?.papers.map(paper=><option key={paper.path} value={'dir:'+paper.path}>{paper.name}</option>)}
-              </optgroup>}
-              {typeof selectedScope==='object'&&'repository_id' in selectedScope&&!repositoryTarget&&
-                <option value={scopeValue}>已选仓库</option>}
-              <option value="directory">指定项目子目录</option>
-              <option value="repository">当前绑定仓库</option>
-              <option value="project">整个项目与绑定仓库</option>
+            <label>对话权限<select value={selectedSandbox} disabled={busy||Boolean(active)} onChange={event=>{const sandbox=event.target.value;draftStore.update(conversation,message=>({...message,sandbox}));}}>
+              <option value="read-only">只读交流</option>
+              <option value="workspace-write">允许写入</option>
+              {selectedSandbox==='danger-full-access'&&<option value="danger-full-access">旧任务 · 完整本机权限</option>}
+            </select></label>
+            {selectedSandbox==='workspace-write'&&<label>操作范围<select value={selectedScope} disabled={busy||Boolean(active)}
+              onChange={event=>{const writeScope=nextWriteScope(event.target.value);draftStore.update(conversation,message=>({...message,writeScope}));}}>
+              <option value="drafts">共享文件与知识库</option>
+              <option value="paper-code" disabled={!paper?.repository_path}>写入或执行绑定论文代码</option>
             </select></label>}
-            {selectedSandbox==='workspace-write'&&directoryScope!==undefined&&<label>项目子目录<input
-              value={directoryScope} placeholder="research 或 code/papers/实验名"
-              disabled={busy||Boolean(active)} onChange={event=>{const directory=event.target.value;draftStore.update(conversation,message=>({...message,writeScope:{directory}}));}}/></label>}
           </div>
-          {targetError&&selectedSandbox==='workspace-write'&&<p role="status">暂时无法读取实验和论文目录，可直接填写项目子目录。</p>}
+          {targetError?<p role="status">暂时无法读取论文列表。</p>:paperId&&paper&&!paper.repository_path&&<p role="status">在论文页关联代码仓库后，可写入和执行该论文代码。</p>}
         </div>}
         {indexOpen&&<nav id={messageIndexId} className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
       </div>
