@@ -1,3 +1,4 @@
+import { CoordinationPanel } from "./coordination-panel.js";
 import { MethodSnapshot } from "./method-snapshot.js";
 import { ExperimentMethod } from "./experiment-method.js";
 import { ExperimentCatalog, experimentKeyOf, findExperimentRepository } from "./experiment-catalog.js";
@@ -44,7 +45,7 @@ async function request<T>(base:string,path:string,body?:unknown,method=body===un
 }
 const stateNames:Record<string,string>={queued:"排队",preflight:"预检查",syncing:"同步代码",running:"运行中",collecting:"收集产物",completed:"已完成",failed:"失败",cancel_requested:"取消请求中",cancelled:"已取消",disconnected:"连接中断",unknown_remote_state:"远端状态待确认"};
 const terminal=["completed","failed","cancelled"];
-const experimentTabIcons = {method:ClipboardList,compute:Server,runs:ClipboardList,catalog:Code2,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
+const experimentTabIcons = {method:ClipboardList,compute:Server,coordination:Columns2,runs:ClipboardList,catalog:Code2,code:Code2,reproductions:GitBranch,datasets:Database,results:ChartColumn} satisfies Record<ExperimentTab,typeof Server>;
 const codeTabs=[{id:"overview",label:"仓库与 Git"},{id:"code",label:"文件浏览"},{id:"agent",label:"代码 Agent"}] as const;
 const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"settings",label:"工作区设置"},{id:"workspace",label:"AutoDL 工作区"}] as const;
 type Navigate=(page:ProjectPage,options?:NavigateOptions)=>void;
@@ -271,6 +272,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
         <RefreshCw size={16} aria-hidden="true"/>
       </button>
     </header>
+    {section==="coordination" && <CoordinationPanel key={projectId} projectId={projectId} onNavigate={onNavigate}/>}
     {section==="catalog" && <ExperimentCatalog experiments={catalog} repositories={repositoryList} discovered={discovered} reproductions={reproductions} busy={busy}
       loading={loadingContext} recycle={recycleExperiment}
       create={(title, id) => saveCatalogExperiment("/experiment-catalog", { title, id })}

@@ -224,4 +224,5 @@ export interface PdfFigure {
 export {markdownReferences} from './markdown-references.js';
 export * from './autodl-layout.js';
 
+export * from "./coordination.js";
 export type { ChatDecision, ChatDecisionOption } from "./chat-decision.js";

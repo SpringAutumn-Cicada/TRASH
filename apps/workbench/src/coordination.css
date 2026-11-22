@@ -1,0 +1,10 @@
+.coordination-panel { display:grid; gap:1rem; min-width:0; margin-block:1rem; }
+.coord-section { min-width:0; padding:1rem 1.2rem; background:var(--surface); border:1px solid var(--line); border-radius:.85rem; }
+.coord-section header,.coord-row { display:flex; align-items:center; flex-wrap:wrap; justify-content:space-between; gap:.65rem; }
+.coord-section h3,.coord-row small { display:flex; align-items:center; gap:.45rem; margin:0; }
+.coord-section h3 { font-size:1rem; }
+.coord-section header { margin-bottom:.75rem; }
+.coord-row { padding:.65rem 0; border-top:1px solid var(--line); }
+.coord-row>div { min-width:0; overflow-wrap:anywhere; }
+.coord-row small,.coord-section>p { color:var(--muted); font-size:.8rem; }
+.coord-row small { margin-top:.25rem; }

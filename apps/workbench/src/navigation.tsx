@@ -8,7 +8,7 @@ export const projectPages: { id: ProjectPage; label: string }[] = [
 ];
 export const projectSidebarPages = ["overview","literature","experiments","paper","chat","files"] as const;
 export const experimentTabs = [
-  {id:"compute",label:"AutoDL"},{id:"catalog",label:"实验列表"},{id:"runs",label:"计划与运行"},
+  {id:"compute",label:"AutoDL"},{id:"coordination",label:"实验协调"},{id:"catalog",label:"实验列表"},{id:"runs",label:"计划与运行"},
   {id:"reproductions",label:"文献复现"},{id:"datasets",label:"数据集"},{id:"results",label:"实验结果"}
 ] as const;
 export type ExperimentTab=typeof experimentTabs[number]["id"] | "code" | "method";

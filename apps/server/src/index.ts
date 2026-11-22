@@ -1,6 +1,7 @@
 import { methodDraftInput } from "./experiment/method-agent.js";
 import { CodeDirectoryMigration, codeMigrationPending } from './code-directory-migration.js';
 import { ManuscriptEvidence } from './manuscript-evidence.js';
+import { ExperimentCoordination } from "./coordination.js";
 import { chatSkills } from "./project-chat-skills.js";
 import {legacyMaterialTitle} from './research-exploration-format.js';
 import {topicVersions} from './topic-wiki.js';
@@ -140,7 +141,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, exploration:ResearchExploration, workspaces: ProjectWorkspaces, files: ProjectFiles): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, exploration:ResearchExploration, workspaces: ProjectWorkspaces, files: ProjectFiles, coordination: ExperimentCoordination): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if(url.pathname.startsWith('/api/v1/pdf-assets/')&&method==='GET'){try{const path=url.pathname.slice('/api/v1/pdf-assets/'.length);const bytes=await pdfViewerAsset(path);response.writeHead(200,{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':bytes.length,'cache-control':'public, max-age=86400'});response.end(bytes);}catch{sendJson(response,404,{error:'NOT_FOUND'});}return;}
@@ -557,6 +558,15 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
+    if (subpath === "coordination") {
+      response.setHeader("cache-control","no-store");
+      if (method === "GET") { sendJson(response,200,coordination.view(projectId)); return; }
+      if (method === "POST") {
+        const origin=request.headers.origin, host=request.headers.host;
+        if (!host || !origin || ![`http://${host}`,`https://${host}`].includes(origin) || request.headers.authorization) { sendJson(response,403,{error:"ORIGIN_NOT_ALLOWED"}); return; }
+        sendJson(response,200,await coordination.action(projectId,await readJson(request))); return;
+      }
+    }
     if (subpath === "chat/tasks" && method === "GET") { sendJson(response,200,codeAgent.chatHistory(projectId)); return; }
     if (subpath === "chat/write-targets" && method === "GET") {
       response.setHeader("cache-control","no-store");
@@ -874,6 +884,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
   const codeAgent = new CodeAgent(store, experiments,()=>agent.hasRunningTasks());
+  const coordination = new ExperimentCoordination(store,codeAgent,experiments);
   agent.canStart=()=>!codeAgent.hasUnrestrictedWriter();
   codeAgent.onSettled=()=>{for(const project of store.listProjects())agent.resumeQueued(project.project_id);};
   const analysis = new LiteratureAnalysis(store, knowledge, agent);
@@ -905,7 +916,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     let tracked:string|undefined;
     try{tracked=match?decodeURIComponent(match[1]):undefined;}catch{sendJson(response,400,{error:"INVALID_REQUEST"});return;}
     if(tracked)workspaces.requests.set(tracked,(workspaces.requests.get(tracked)??0)+1);
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, exploration, workspaces, files).catch(onError).finally(()=>{
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, exploration, workspaces, files, coordination).catch(onError).finally(()=>{
       if(tracked){const count=(workspaces.requests.get(tracked)??1)-1;if(count)workspaces.requests.set(tracked,count);else workspaces.requests.delete(tracked);}
     });
   });
