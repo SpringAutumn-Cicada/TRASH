@@ -430,6 +430,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
       codeAgent.authorizeTool(projectId, token);
       const body = await readJson(request);
+      if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-choice"){
+        sendJson(response,200,codeAgent.requestChoice(projectId,token,body));return;
+      }
       if (body && typeof body === "object" && "operation" in body && body.operation === "load-chat-skill") {
         sendJson(response, 200, codeAgent.loadChatSkill(projectId, token, body)); return;
       }
@@ -574,6 +577,17 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if (subpath === "chat/tasks" && method === "POST") {
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
       sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request), toolUrl) }); return;
+    }
+    const chatChoice = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/choices\/([a-f0-9-]+)$/);
+    if(chatChoice&&method==="POST"){
+      const host=request.headers.host;
+      const origin=request.headers.origin;
+      if(request.headers.authorization||!host||(origin!==`http://${host}`&&origin!==`https://${host}`)||
+        request.headers["sec-fetch-site"]&&request.headers["sec-fetch-site"]!=="same-origin"){
+        sendJson(response,403,{error:"ORIGIN_NOT_ALLOWED"});return;
+      }
+      const toolUrl=`http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
+      sendJson(response,200,await codeAgent.choose(projectId,chatChoice[1],chatChoice[2],await readJson(request),toolUrl));return;
     }
     const chatAppend = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/append$/);
     if (chatAppend && method === "POST") {
