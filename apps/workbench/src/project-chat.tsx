@@ -16,7 +16,7 @@ import { ChatAssistantMessage, ChatComposer, ChatTranscript, ChatUserMessage, ch
 type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string;progress?:{label:string;sent:number;total:number}};
 type WriteTargets={repositories:{id:string;name:string;path:string}[]};
 const nextSandbox=(sandbox:unknown)=>sandbox==='read-only'||sandbox==='danger-full-access'?sandbox:'workspace-write';
-type Turn={coordination?:{kind:string;consultation?:boolean};decision?:ChatDecision;git_identity_required?:boolean;finished_at?:string;repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
+type Turn={resume_of?:string;resume_root?:string;execution_started?:boolean;coordination?:{kind:string;consultation?:boolean};decision?:ChatDecision;git_identity_required?:boolean;finished_at?:string;repository_id?:string;write_roots?:string[];waiting_for?:string;attachments?:ChatAttachment[];skill_id?:string;skill_origin?:'auto';output?:ChatOutput[];task_id:string;conversation_id:string;session_id?:string;instructions:string;response:string;status:string;sandbox:string;model:string;reasoning_effort?:string;error?:string;created_at:string;logs:string};
 type Session={id:string;first:Turn;latest:Turn;count:number};
 type History={tasks:Turn[];titles:Record<string,string>;repository_bindings:Record<string,string|null>};
 type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
@@ -26,7 +26,7 @@ const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low
 const isActiveTurn=(turn:Turn)=>['queued','running','cancelling'].includes(turn.status);
 const isWaiting=(turn:Turn)=>turn.status==='queued'||turn.status==='running'&&Boolean(turn.waiting_for);
 const waitingResource=(turn:Turn)=>turn.waiting_for?.trim()||'正在确认占用情况';
-const errors:Record<string,string>={CHAT_DECISION_NOT_FOUND:"这条选择已不可用，请刷新对话。",CHAT_DECISION_ALREADY_SELECTED:"这条选择已有记录。",ORIGIN_NOT_ALLOWED:"请在当前 TRASH 工作台提交选择。",CHAT_WRITE_SCOPE_INVALID:"绑定的 Git 仓库目录不可用。",CHAT_REPOSITORY_BINDING_REQUIRED:"请先为当前会话选择论文代码的 Git 仓库。",CHAT_REPOSITORY_BINDING_CHANGED:"会话绑定的仓库已变化，请刷新后重试。",CHAT_REPOSITORY_UNAVAILABLE:"所选 Git 仓库不可用，请重新选择。",CHAT_PAPER_LAYOUT_CONFLICT:"论文仓库路径与其他受保护目录重叠。",CHAT_PAPER_SANDBOX_UNAVAILABLE:"当前环境无法隔离论文代码目录。",REPOSITORY_NOT_BOUND:"当前会话尚未绑定 Git 仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理当前对话中的任务。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
+const errors:Record<string,string>={CHAT_RECOVERY_SUPERSEDED:"对话已有更新，请从最新一轮继续。",CHAT_RECOVERY_UNAVAILABLE:"当前任务无法恢复，请查看任务状态。",CHAT_RECOVERY_SESSION_UNAVAILABLE:"原执行没有可续接的 Codex 会话，请核对已有进展后编辑并重发。",CHAT_DECISION_NOT_FOUND:"这条选择已不可用，请刷新对话。",CHAT_DECISION_ALREADY_SELECTED:"这条选择已有记录。",ORIGIN_NOT_ALLOWED:"请在当前 TRASH 工作台提交选择。",CHAT_WRITE_SCOPE_INVALID:"绑定的 Git 仓库目录不可用。",CHAT_REPOSITORY_BINDING_REQUIRED:"请先为当前会话选择论文代码的 Git 仓库。",CHAT_REPOSITORY_BINDING_CHANGED:"会话绑定的仓库已变化，请刷新后重试。",CHAT_REPOSITORY_UNAVAILABLE:"所选 Git 仓库不可用，请重新选择。",CHAT_PAPER_LAYOUT_CONFLICT:"论文仓库路径与其他受保护目录重叠。",CHAT_PAPER_SANDBOX_UNAVAILABLE:"当前环境无法隔离论文代码目录。",REPOSITORY_NOT_BOUND:"当前会话尚未绑定 Git 仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理当前对话中的任务。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
 const suggestions=[{title:'梳理研究方向',text:'请根据当前项目的研究问题和已有文献，梳理研究方向、已有证据以及需要补充的材料。'},{title:'比较文献方法',text:'请比较当前项目已有文献的方法、实验条件与局限，标明来源和不确定之处。'},{title:'整理研究 Wiki',text:'请基于现有文献卡片整理研究 Wiki，保留来源与版本引用，生成待审内容。'},{title:'讨论论文结构',text:'请结合当前研究问题和已有证据，和我讨论论文结构，区分已有结论与待验证假设。'}];
 const date=(value:string)=>new Date(value).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
 
@@ -374,6 +374,17 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
     }finally{acting.current=false;if(alive.current)setBusy(false);}
   };
   const copy=(id:string,text:string)=>void copyText(text).then(()=>{if(alive.current)setCopied(id);}).catch(()=>setError('复制失败，请手动选择内容复制。'));
+  const canResume=(turn?:Turn)=>Boolean(turn&&connected&&!active&&turn.task_id===last?.task_id&&
+    ['cancelled','failed','interrupted'].includes(turn.status)&&(turn.session_id||turn.execution_started===false||turn.status==='interrupted')&&
+    !['pending','selected'].includes(turn.decision?.status??''));
+  const resume=(turn:Turn)=>void act(async()=>{
+    const {task}=await call<{task:Turn}>(`/chat/tasks/${turn.task_id}/resume`,{});
+    if(!alive.current)return;
+    historyRevision.current++;
+    setTurns(old=>[task,...old.filter(item=>item.task_id!==task.task_id)]);
+    follow.current=true;
+    await refresh();
+  });
   const readLogs=(turn:Turn)=>void act(async()=>{const data=await call<{task:Turn}>(`/code-agent/tasks/${turn.task_id}`);if(alive.current){setLogs(old=>({...old,[turn.task_id]:data.task.logs}));setOpenLogs(old=>({...old,[turn.task_id]:true}));}});
   return <section className="project-chat">
     <header className="chat-page-heading"><div className="chat-page-icon"><Bot size={23}/></div><div><h2>Agent 对话</h2><p>围绕文献、研究思路和论文写作，持续推进当前项目。</p></div><button type="button" className="secondary-button" disabled={busy||uploading} onClick={()=>void act(async()=>{
@@ -485,14 +496,14 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
             const quoteTurn=()=>quote(turn.instructions);
             const canResend=turn.task_id===last?.task_id&&turn.status==='cancelled'&&!!turn.finished_at&&!turn.coordination;
             return <section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
-            <ChatUserMessage author={turn.coordination?.kind==="assignment"?"来自实验协调":"你"} at={turn.created_at}
+            {!turn.resume_of&&<ChatUserMessage author={turn.coordination?.kind==="assignment"?"来自实验协调":"你"} at={turn.created_at}
               text={turn.instructions} details={turn.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>
                 {turn.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===turn.skill_id)?.title??turn.skill_id}</div>}
               copied={copied===turn.task_id+'-user'} onCopy={()=>copy(turn.task_id+'-user',turn.instructions)} onQuote={quoteTurn}
               resend={canResend?{disabled:busy||uploading||!connected||Boolean(active),send:text=>
                 postMessage(text,turn.attachments??[],turn.skill_origin==='auto'?undefined:turn.skill_id,true)}:undefined}>
               <ChatAttachmentList base={base} entries={turn.attachments??[]}/>
-            </ChatUserMessage>
+            </ChatUserMessage>}
             <ChatAssistantMessage author="论文助手" at={turn.created_at} response={turn.response} error={turn.error}
               status={status} turnStatus={turn.status} current={isCurrent} copied={copied===turn.task_id}
               onCopy={()=>copy(turn.task_id,turn.response)}
@@ -531,7 +542,7 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
           tools={<><ChatAttachmentButtons disabled={busy||uploading} onUpload={files=>void attachments.upload(files)}/>
             <ChatSkillPicker key={conversation} skills={skills} status={skillsStatus} value={selectedSkill} disabled={busy}
               onChange={skill=>draftStore.update(conversation,message=>({...message,skill}))}/></>}
-          controls={<><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,repository_id:repositoryId||null,confirm:true,timeout_seconds:1800});if(!alive.current)return;historyRevision.current++;setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button></>}
+          controls={<><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复执行" title="恢复原任务" disabled={busy||!canResume(last)} onClick={()=>last&&resume(last)}><Play size={15}/></button></>}
           send={{busy,append:active?.status==='running',title:active?'停止当前轮，并在同一会话中处理追加指令':undefined,
             disabled:busy||uploading||loading||Boolean(active&&(active.status!=='running'||!active.session_id))}}
           summary={<span className="chat-write-summary" title={active?.write_roots?.join("、")||repository?.path||writeSummary}>写入范围 · {writeSummary}</span>}/>

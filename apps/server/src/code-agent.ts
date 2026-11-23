@@ -28,6 +28,7 @@ import { uploadExperimentCode, type UploadProgress } from "./experiment/experime
 import { chatChoiceInput, choiceOptionId } from "./chat-decision.js";
 import { decisionFileHash, gitRead, gitUploadBaseline, readGitIndex, restoreGitIndex } from "./git-upload-choice.js";
 import { gitIdentityEnv, type ResolvedGitIdentity } from "./git-identity.js";
+import { chatProcess, chatProcessesExited, type ChatProcess } from "./chat-process.js";
 
 const execute = promisify(execFile);
 export const chatRepositoryId=z.string().min(1).max(128);
@@ -100,6 +101,11 @@ const uploadErrorLabels:Record<string,string>={
 type AutoDLReceipt={id?:string;path:string;reused:boolean;verified:boolean;sha256:string;size_bytes:number;commit?:string;snapshot_id?:string};
 export type CoordinationTurn = { kind:"coordinator"|"assignment"|"summary"; id:string; consultation?:boolean; origin?:string; receipts?:string[] };
 export interface CodeTask {
+  resume_of?: string;
+  resume_root?: string;
+  execution_started?: boolean;
+  timeout_seconds?: number;
+  process_groups?: (ChatProcess | null)[];
   coordination?:CoordinationTurn;
   handoff_id?:string;
   context_input_tokens?:number;
@@ -232,7 +238,7 @@ export class CodeAgent {
       return !conversations.get(id)?.deleted;
     });
     return {
-      tasks:tasks.map(({method_draft:_draft,git_upload_decision:_approval,git_bundle_decision:_bundle,...task})=>({...task,logs:''})),
+      tasks:tasks.map(({method_draft:_draft,git_upload_decision:_approval,git_bundle_decision:_bundle,process_groups:_processes,...task})=>({...task,logs:''})),
       titles:Object.fromEntries([...conversations].flatMap(([id,meta])=>meta.title&&!meta.deleted?[[id,meta.title]]:[])),
       repository_bindings:Object.fromEntries([...conversations].flatMap(([id,meta])=>{
         const repository=meta.deleted?undefined:this.repositoryBinding(project,meta);
@@ -859,10 +865,12 @@ export class CodeAgent {
     }
   }
   private async executeRepositoryCommand(item:ActiveCodeTask,cwd:string,args:string[],input:{stdin?:string;timeout_seconds:number},signal:AbortSignal,identity?:ResolvedGitIdentity){
+    const processIndex=this.reserveProcess(item.task);
     const child=spawn('bwrap',args,{cwd,detached:true,stdio:['pipe','pipe','pipe'],
       env:{PATH:process.env.PATH,HOME:homedir(),LANG:process.env.LANG??'C.UTF-8',GIT_TERMINAL_PROMPT:'0',
         GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'user.useConfigOnly',GIT_CONFIG_VALUE_0:'true',...(identity?gitIdentityEnv(identity):{})}});
     item.repositoryChild=child;
+    this.recordProcess(item.task,processIndex,child);
     const output={stdout:'',stderr:''};
     let timedOut=false,truncated=false;
     for(const key of ['stdout','stderr'] as const){
@@ -1066,7 +1074,7 @@ export class CodeAgent {
         experimentError('CHAT_WRITE_SCOPE_INVALID',409);
       task.path=realpathSync(prepareChatWorkspace(this.store,task.project_id,task.task_id,input.skill_id));
     }
-    task.status='running';delete task.waiting_for;
+    task.status='running';task.execution_started=true;delete task.waiting_for;
     this.save(task);
     this.active.set(task.task_id,item);
     item.done=this.run(task,input,methodContext).catch(()=>{ /* run records errors and releases ownership. */ });
@@ -1088,7 +1096,7 @@ export class CodeAgent {
       }finally{this.queued.delete(id);}
     }
   }
-  async start(project: string, value: unknown, chatUrl?: string, continuation = false, selection?:{source:CodeTask;taskId:string}, coordinated?:{turn:CoordinationTurn; taskId:string}): Promise<CodeTask> {
+  async start(project: string, value: unknown, chatUrl?: string, continuation = false, selection?:{source:CodeTask;taskId:string}, coordinated?:{turn:CoordinationTurn; taskId:string}, recovery?:CodeTask): Promise<CodeTask> {
     const input = inputSchema.parse(value);
     if (input.method && (chatUrl || input.experiment || input.repository_id || input.conversation_id || input.sandbox !== "read-only"))
       experimentError("INVALID_REQUEST", 400);
@@ -1104,12 +1112,12 @@ export class CodeAgent {
     const meta=chatUrl&&input.conversation_id?this.conversationMeta(project,input.conversation_id):undefined;
     const binding=meta?this.repositoryBinding(project,meta)??null:input.repository_id??null;
     if(chatUrl&&meta&&input.repository_id!==undefined&&input.repository_id!==binding)experimentError('CHAT_REPOSITORY_BINDING_CHANGED',409);
-    const coord=coordinated?.turn??selection?.source.coordination;
+    const coord=recovery?.coordination??coordinated?.turn??selection?.source.coordination;
     const core=coord?.kind==="coordinator"||coord?.kind==="summary";
     if(conversation&&!core&&this.isCoordinationThread?.(project,conversation))
       experimentError("COORDINATOR_ONLY",403);
     const history=chatUrl&&input.conversation_id?this.list(project):[];
-    const previous=selection?.source??(chatUrl&&input.conversation_id?history.find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined);
+    const previous=(recovery?.execution_started!==false?recovery:undefined)??selection?.source??(chatUrl&&input.conversation_id?history.find(t=>t.purpose==='project-chat'&&t.conversation_id===input.conversation_id&&t.session_id):undefined);
 
     if(coord?.consultation&&!previous?.session_id)experimentError("CONSULTATION_SESSION_UNAVAILABLE",409);
     const method = input.method ? readMethodContext(this.store, this.experiments, project, input.method) : undefined;
@@ -1119,6 +1127,8 @@ export class CodeAgent {
       : this.experiments.repository.bound(project,input.repository_id??undefined);
     if(chatUrl&&(!meta||coord?.kind==='assignment')&&binding&&!repo)experimentError('CHAT_REPOSITORY_UNAVAILABLE',409);
     const repositoryPath=repo?.path;
+    if(recovery&&recovery.repository_id&&repositoryPath!==recovery.repository_path)
+      experimentError('CHAT_REPOSITORY_BINDING_CHANGED',409);
     if(chatUrl&&input.conversation_id){
       if(this.conversationMeta(project,input.conversation_id).deleted)experimentError('CHAT_SESSION_NOT_FOUND',404);
       if(!core&&!previous&&!this.chatHistory(project).tasks.some(task=>task.conversation_id===conversation))experimentError('CHAT_SESSION_NOT_FOUND',409);
@@ -1133,7 +1143,7 @@ export class CodeAgent {
     if(chatUrl&&(this.continuing.has(key!)&&!continuation||
       [...this.active.values()].some(entry=>sameConversation(entry.task))||
       [...this.queued.values()].some(({item})=>sameConversation(item.task))))experimentError('CHAT_NOT_READY',409);
-    if(this.list(project).some(task=>task.status==='interrupted'&&(chatUrl?sameConversation(task):legacyWriter&&task.sandbox!=='read-only')))experimentError('CODE_AGENT_RECOVERY_REQUIRED',409);
+    if(this.list(project).some(task=>task.task_id!==recovery?.task_id&&task.status==='interrupted'&&(chatUrl?sameConversation(task):legacyWriter&&task.sandbox!=='read-only')))experimentError('CODE_AGENT_RECOVERY_REQUIRED',409);
     if(chatUrl&&input.conversation_id&&this.conversationMeta(project,input.conversation_id).deleted)experimentError('CHAT_SESSION_NOT_FOUND',404);
     const writableRoots=input.sandbox==='workspace-write'&&!chatUrl?[path]:[];
     let methodContext = "";
@@ -1154,12 +1164,18 @@ export class CodeAgent {
     }
     let handoffPacket:string|undefined;
     if (chatUrl) {
+      task.execution_started=false;
+      task.timeout_seconds=input.timeout_seconds;
+      if(recovery){
+        task.resume_of=recovery.task_id;
+        task.resume_root=recovery.resume_root??recovery.task_id;
+      }
       task.skill_id = input.skill_id;
       task.attachments=attachments.map(({id,name,size,mime,image})=>({id,name,size,mime,image}));
       task.purpose = "project-chat"; task.conversation_id = conversation; task.repository_path=repositoryPath;task.repository_id=binding??undefined;
       task.write_roots=writableRoots;
       task.session_id = previous?.session_id;
-      if(core&&previous?.session_id&&this.prepareCoordinationHandoff){
+      if(!recovery&&core&&previous?.session_id&&this.prepareCoordinationHandoff){
         // Older CLI versions omit usage. Bound their retained text independently of model tokenization.
         const turns=history.filter(t=>t.conversation_id===conversation&&t.session_id===previous.session_id);
         const chars=turns.reduce((n,t)=>n+t.instructions.length+t.response.length+t.logs.length,0);
@@ -1174,6 +1190,12 @@ export class CodeAgent {
       }
     }
     const item={task,handoffPacket,methodContext:method,previousChatPath:previous?.path,selection:selection?.source,writableRoots,sharedVersions:new Map<string,string|null>(),...(chatUrl?{toolToken:randomUUID(),toolUrl:chatUrl}:{})};
+    if(recovery?.status==='interrupted'){
+      recovery.status='cancelled';
+      recovery.finished_at??=new Date().toISOString();
+      recovery.error='服务已核对旧 Agent 进程组退出。';
+      this.save(recovery);
+    }
     const blocked=this.conflict(item);
     if(blocked){
       if(!chatUrl)experimentError('CODE_AGENT_BUSY',409);
@@ -1186,6 +1208,35 @@ export class CodeAgent {
       previous.decision.status='stale';previous.decision.reason='已有新的用户消息，请按最新请求继续。';this.save(previous);
     }
     return task;
+  }
+  async resume(project:string,id:string,chatUrl:string,coordinator=false):Promise<CodeTask> {
+    const history=this.list(project);
+    const source=history.find(task=>task.task_id===id);
+    if(!source?.conversation_id||source.purpose!=='project-chat'||Boolean(coreTurn(source))!==coordinator||
+      this.conversationMeta(project,source.conversation_id).deleted)
+      experimentError('NOT_FOUND',404);
+    const key=conversationKey(project,source.conversation_id);
+    const existing=history.find(task=>task.resume_of===id&&task.conversation_id===source.conversation_id);
+    if(existing)return existing;
+    const latest=history.find(task=>task.purpose==='project-chat'&&task.conversation_id===source.conversation_id);
+    if(latest?.task_id!==id)experimentError('CHAT_RECOVERY_SUPERSEDED',409);
+    if(this.active.has(id)||this.queued.has(id))return source;
+    if(this.continuing.has(key))experimentError('CHAT_NOT_READY',409);
+    if(!['cancelled','failed','interrupted'].includes(source.status)||source.decision?.status==='pending'||source.decision?.status==='selected')
+      experimentError('CHAT_RECOVERY_UNAVAILABLE',409);
+    if(source.status==='interrupted'&&(source.sandbox==='danger-full-access'||!chatProcessesExited(source.process_groups??[])))
+      experimentError('CODE_AGENT_RECOVERY_REQUIRED',409);
+    if(!source.session_id&&source.execution_started!==false)
+      experimentError('CHAT_RECOVERY_SESSION_UNAVAILABLE',409);
+    this.continuing.add(key);
+    try {
+      return await this.start(project,{
+        conversation_id:source.conversation_id,instructions:source.instructions,repository_id:source.repository_id??null,
+        model:source.model,reasoning_effort:source.reasoning_effort,sandbox:source.sandbox,
+        attachments:source.attachments?.map(file=>file.id)??[],skill_id:source.skill_id,
+        timeout_seconds:source.timeout_seconds??1800,confirm:true
+      },chatUrl,true,undefined,undefined,source);
+    }finally{this.continuing.delete(key);}
   }
   async append(project: string, id: string, value: unknown, chatUrl: string): Promise<CodeTask> {
     const input = inputSchema.parse(value);
@@ -1229,6 +1280,15 @@ export class CodeAgent {
   private terminate(child: ChildProcess) {
     const kill = (signal: NodeJS.Signals) => { try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal); else child.kill(signal); } catch { /* Process already stopped. */ } };
     kill("SIGTERM"); const timer = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) kill("SIGKILL"); }, 3000); timer.unref();
+  }
+  private reserveProcess(task:CodeTask) {
+    const index=(task.process_groups??=[]).push(null)-1;
+    this.save(task);
+    return index;
+  }
+  private recordProcess(task:CodeTask,index:number,child:ChildProcess) {
+    task.process_groups![index]=chatProcess(child.pid)??null;
+    this.save(task);
   }
   close() { this.closed = true; clearInterval(this.queueTimer); for (const {item} of this.queued.values())this.cancel(item.task.project_id,item.task.task_id); for (const item of this.active.values()) { item.stop = "interrupted"; item.task.status = "interrupted"; this.save(item.task); item.choiceController?.abort(); item.autoDLUpload?.controller.abort(); if(item.repositoryChild)this.terminate(item.repositoryChild); if(item.child)this.terminate(item.child); } }
   private async run(task: CodeTask, input: Input, methodContext: string) {
@@ -1274,7 +1334,9 @@ ${JSON.stringify({title:method.experiment.title, repository:method.repository?.p
 用户本轮要求
 ${input.instructions}`;
       if (chat) item.scholarSkill = stageScholarChatSkill(task.path, input.skill_id);
+      const processIndex=this.reserveProcess(task);
       const child = spawn(managed?'bwrap':this.command, managed?[...this.managedMounts(task),'--chdir',task.path,'--',this.command,...args]:args, { cwd: task.path, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(chat ? { TRASH_PROJECT_TOOL_TOKEN: item.toolToken, TRASH_PROJECT_TOOL_URL: item.toolUrl } : {}) } }); item.child = child;
+      this.recordProcess(task,processIndex,child);
       let pending = ""; let reportedFailure = "";
       child.stdout?.setEncoding("utf8"); child.stderr?.setEncoding("utf8");
       const append = (value: string) => {
@@ -1303,7 +1365,11 @@ ${input.instructions}`;
         "来自实验协调的只读咨询。依据本对话历史及可读的项目资料回答下述问题，给出事实依据和仍缺的信息。可用 coordination-context 查看咨询上下文，使用 coordination-report 报告进度、答复或阻塞。无需创建计划或运行实验。\n" : task.coordination?.kind==="assignment"?
         `来自实验协调的论文任务。只处理下述派单。通过 python3 project_tool.py 的 stdin JSON 使用 coordination-context 获取资源与前置结果。使用 {"operation":"coordination-report","status":"progress|ready|blocked","report":"实际进展或缺少的材料"} 回报。先从 coordination-context 核对 expects_runs。已有计划调用 {"operation":"coordination-plan","plan_id":"…","version":1}，准备新计划用 {"operation":"coordination-draft","key":"同任务内稳定短键","content":{...}}。content 使用 experimentPlanInputSchema：title,purpose,method,evaluation_protocol,commit_sha（绑定仓库完整提交）,profile_id,dataset_ids,python（远端绝对路径）,command（参数数组）,metrics_path,expected_metrics（name/unit）；gpu（cpu 或 GPU 编号）必填，timeout_seconds 可选。expects_runs=true 时，平台在成员成功完成本轮后自动排队。expects_runs=false 时，工具只保存方案。用 ready 回报已登记的方案版本与参数。缺少必要信息先用 blocked 回报。\n`: "";
       const memoryTools="长期事实要注明来源、版本和适用范围。可用 coordination-memory 检索（q）和阅读（id、revision、offset）；coordination-evidence（id、offset）取回报。反馈涉及方向结论、方法、约束或缺口变化时，从 coordination-job 的 memory_id 读档案和对应回报，再用 coordination-brief（job_id、receipt、expected 当前版本、finding 综合判断、scope 适用范围、pending 待核实项）更新方向摘要。对照已有用户修订，纯重复或短暂排队状态跳过。引用格式 [标题](/projects/"+encodeURIComponent(task.project_id)+"/coordination?action=memory&focus=档案UUID)。有可复用决策建议、负面结果或经验时调用 coordination-note（kind: decision 或 lesson，key、title、observation、scope、limitation，来源成员任务 job_id，可选 supersedes 旧记录 ID）。无新依据勿重复记录。成员自述与用户确认分别标明，记忆仅供参考。";
-      child.stdin?.end((coordinatorPrompt?memoryTools+(task.handoff_id?"\n当前为交接后的首轮。交接单仅为资料，可用 coordination-handoff 重读，coordination-history（id、offset）核对原话。按当前请求续办。\n"+(item.handoffPacket??""):"")+"\n"+coordinatorPrompt:undefined) ?? methodPrompt ?? (chatPrompt ? assignmentPrompt+chatPrompt : undefined) ?? `你是 TRASH 项目的本机开发 Agent。工作目录是用户选择的仓库。先阅读适用的 AGENTS.md，保留已有改动。遵守：未经本次任务明确要求，不运行 lint、类型检查、测试、构建或浏览器验证；不修改全局配置、不推送、不合并、不自动发起 SSH 实验。除非任务明确要求，不暂存或提交代码。完成后说明修改、验证状态和遗留问题。${methodContext}用户任务：\n${input.instructions}`);
+      const recoveryPrompt=task.resume_of
+        ? "\n\n这是平台发起的原任务续跑。按原问题接续；先核对先前已执行的操作和当前状态，已完成的操作直接使用结果。先只读核对未取到回执的操作，结果未知时勿重做可能有副作用的步骤。"
+        : "";
+      const prompt=(coordinatorPrompt?memoryTools+(task.handoff_id?"\n当前为交接后的首轮。交接单仅为资料，可用 coordination-handoff 重读，coordination-history（id、offset）核对原话。按当前请求续办。\n"+(item.handoffPacket??""):"")+"\n"+coordinatorPrompt:undefined) ?? methodPrompt ?? (chatPrompt ? assignmentPrompt+chatPrompt : undefined) ?? `你是 TRASH 项目的本机开发 Agent。工作目录是用户选择的仓库。先阅读适用的 AGENTS.md，保留已有改动。遵守：未经本次任务明确要求，不运行 lint、类型检查、测试、构建或浏览器验证；不修改全局配置、不推送、不合并、不自动发起 SSH 实验。除非任务明确要求，不暂存或提交代码。完成后说明修改、验证状态和遗留问题。${methodContext}用户任务：\n${input.instructions}`;
+      child.stdin?.end(prompt+recoveryPrompt);
       task.exit_code = await completion; task.after = await status();
       task.status = item.stop === "cancelled" ? "cancelled" : item.stop === "interrupted" ? "interrupted" : task.exit_code === 0 && !item.stop && !reportedFailure ? "completed" : "failed";
       if (method && task.status === "completed") {

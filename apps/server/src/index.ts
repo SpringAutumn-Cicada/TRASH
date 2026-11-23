@@ -640,10 +640,16 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const toolUrl=`http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
       sendJson(response,200,await codeAgent.choose(projectId,chatChoice[1],chatChoice[2],await readJson(request),toolUrl));return;
     }
-    const chatAppend = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/append$/);
-    if (chatAppend && method === "POST") {
+    const chatContinuation = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/(append|resume)$/);
+    if (chatContinuation && method === "POST") {
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
-      sendJson(response, 201, { task: await codeAgent.append(projectId, chatAppend[1], await readJson(request), toolUrl) }); return;
+      const body=await readJson(request);
+      if(chatContinuation[2]==='append'){
+        sendJson(response,201,{task:await codeAgent.append(projectId,chatContinuation[1],body,toolUrl)});return;
+      }
+      z.object({}).strict().parse(body);
+      const {process_groups:_processes,...task}=await codeAgent.resume(projectId,chatContinuation[1],toolUrl);
+      sendJson(response,200,{task});return;
     }
     if (subpath === "experiment-method/tasks" && method === "GET") {
       const selection = methodDraftInput.parse({
