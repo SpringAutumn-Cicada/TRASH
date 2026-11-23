@@ -323,34 +323,40 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
       setRepositoryBindings(old=>({...old,[conversation]:id||null}));
     });
   };
-  const send=async(event:React.FormEvent)=>{
-    event.preventDefault();
+  const postMessage=async(instructions:string,files:ChatAttachment[],skill:string|undefined,edited=false)=>{
     const state=draftStore.getSnapshot();
-    const current=state.messages[conversation];
-    const draft=current?.text??'',files=current?.attachments??[];
-    if((!draft.trim()&&!files.length)||state.uploading[conversation]||state.sending[conversation]||
-      (active&&(active.status!=='running'||!active.session_id))||acting.current||loading)return;
-    const instructions=draft.trim()?draft:'请查看并分析本条消息所附的材料。';
+    if((state.conversation??'')!==conversation||state.uploading[conversation]||state.sending[conversation]||
+      (active&&(edited||active.status!=='running'||!active.session_id))||acting.current||loading)
+      throw new Error('当前会话暂时无法发送，请等操作结束后重试。');
     if(state.conversation===undefined)draftStore.choose('');
     draftStore.flush();
     draftStore.setPending('sending',conversation,true);
     setError('');
     try{
       const data=await call<{task:Turn}>(active?`/chat/tasks/${active.task_id}/append`:'/chat/tasks',{
-        instructions,attachments:files.map(item=>item.id),skill_id:current?.skill||undefined,
+        instructions,attachments:files.map(item=>item.id),skill_id:skill||undefined,
         model,reasoning_effort:effort||undefined,sandbox,confirm:true,timeout_seconds:1800,
         ...(!active?{repository_id:repositoryId||null}:{}),...(conversation?{conversation_id:conversation}:{})
       });
       const stillSelected=draftStore.getSnapshot().conversation===conversation;
-      draftStore.discard(conversation,data.task.conversation_id);
+      if(!edited)draftStore.discard(conversation,data.task.conversation_id);
       if(!alive.current)return;
       historyRevision.current++;
       setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);
       if(!conversation&&data.task.repository_id)setRepositoryBindings(old=>({...old,[data.task.conversation_id]:data.task.repository_id!}));
       if(stillSelected){setLastSandbox(data.task.sandbox);follow.current=true;setIndexOpen(false);input.current?.focus();}
+    }finally{draftStore.setPending('sending',conversation,false);}
+  };
+  const send=async(event:React.FormEvent)=>{
+    event.preventDefault();
+    const current=draftStore.getSnapshot().messages[conversation];
+    const draft=current?.text??'',files=current?.attachments??[];
+    if(!draft.trim()&&!files.length)return;
+    try{
+      await postMessage(draft.trim()?draft:'请查看并分析本条消息所附的材料。',files,current?.skill);
     }catch(cause){
       if(alive.current&&draftStore.getSnapshot().conversation===conversation)setError(cause instanceof Error?cause.message:'发送失败，草稿已保留。');
-    }finally{draftStore.setPending('sending',conversation,false);}
+    }
   };
   const submitChoice=async(turn:Turn,optionId:string)=>{
     if(acting.current||active||sending||!turn.decision)throw new Error('请等待当前对话操作完成后重试。');
@@ -477,11 +483,14 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
             const isCurrent = turn.task_id === currentTurn?.task_id;
             const status = isCurrent && !connected ? 'offline' : isWaiting(turn)?'queued':turn.finished_at&&turn.status!=='interrupted'&&turn.decision?.status==='pending'?'decision':turn.status;
             const quoteTurn=()=>quote(turn.instructions);
+            const canResend=turn.task_id===last?.task_id&&turn.status==='cancelled'&&!!turn.finished_at&&!turn.coordination;
             return <section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
             <ChatUserMessage author={turn.coordination?.kind==="assignment"?"来自实验协调":"你"} at={turn.created_at}
               text={turn.instructions} details={turn.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>
                 {turn.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===turn.skill_id)?.title??turn.skill_id}</div>}
-              copied={copied===turn.task_id+'-user'} onCopy={()=>copy(turn.task_id+'-user',turn.instructions)} onQuote={quoteTurn}>
+              copied={copied===turn.task_id+'-user'} onCopy={()=>copy(turn.task_id+'-user',turn.instructions)} onQuote={quoteTurn}
+              resend={canResend?{disabled:busy||uploading||!connected||Boolean(active),send:text=>
+                postMessage(text,turn.attachments??[],turn.skill_origin==='auto'?undefined:turn.skill_id,true)}:undefined}>
               <ChatAttachmentList base={base} entries={turn.attachments??[]}/>
             </ChatUserMessage>
             <ChatAssistantMessage author="论文助手" at={turn.created_at} response={turn.response} error={turn.error}

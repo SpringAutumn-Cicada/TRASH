@@ -585,3 +585,11 @@
 .chat-decision-result { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
 .chat-decision-result svg { color: var(--green); }
 .chat-decision-result button { margin-left: auto; }
+
+.chat-user.chat-user-editing{width:min(100%,640px)}
+.chat-message-editor textarea{display:block;box-sizing:border-box;width:100%;min-height:6rem;max-height:18rem;resize:vertical;
+  padding:.65rem .8rem;border:1px solid var(--chat-line);border-radius:.65rem;background:var(--chat-paper);color:var(--ink);font:inherit;line-height:1.65}
+.chat-message-editor textarea:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+.chat-message-editor-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.5rem;margin-top:.65rem}
+.chat-user-actions button:disabled{opacity:.5;cursor:default}
+.chat-user-editing .chat-attachments{margin-top:.65rem}

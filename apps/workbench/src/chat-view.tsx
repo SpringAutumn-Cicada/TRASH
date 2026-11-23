@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowDown, Bot, Check, ChevronDown, Copy, LoaderCircle, Send } from "lucide-react";
+import { ArrowDown, Bot, Check, ChevronDown, Copy, LoaderCircle, Pencil, Send } from "lucide-react";
 import { ChatMarkdown } from "./chat-markdown.js";
 import type { ChatDraftStore } from "./chat-drafts.js";
 import "./project-chat.css";
@@ -13,22 +13,75 @@ function MessageTime({at}:{at?:string}) {
   return at ? <time dateTime={at}>{new Date(at).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}</time> : null;
 }
 
-export function ChatUserMessage({author,at,text,details,children,copied,onCopy,onQuote}:{
+export function ChatUserMessage({author,at,text,details,children,copied,onCopy,onQuote,resend}:{
   author:string; at?:string; text:string; details?:React.ReactNode; children?:React.ReactNode;
   copied:boolean; onCopy:()=>void; onQuote:()=>void;
+  resend?:{disabled:boolean;send:(text:string)=>Promise<void>};
 }) {
-  return <article className="chat-message chat-user">
+  const [editing,setEditing]=useState(false);
+  const editButton=useRef<HTMLButtonElement>(null);
+  const cancelEdit=()=>{
+    setEditing(false);
+    requestAnimationFrame(()=>editButton.current?.focus());
+  };
+  return <article className={`chat-message chat-user${editing?" chat-user-editing":""}`}>
     <header><span>{author}</span><MessageTime at={at}/></header>
     {details}
-    <div className="chat-user-body">{text}</div>
+    {editing?<ChatMessageEditor text={text} disabled={!resend||resend.disabled} onCancel={cancelEdit}
+      onSend={async value=>{
+        if(!resend)throw new Error("这轮对话已有后续消息。");
+        await resend.send(value);
+        setEditing(false);
+      }}/>:
+      <div className="chat-user-body">{text}</div>}
     {children}
-    <footer className="chat-user-actions">
+    {!editing&&<footer className="chat-user-actions">
       <button type="button" onClick={onQuote}>引用</button>
       <button type="button" aria-label="复制用户消息" onClick={onCopy}>
         {copied?<Check size={13}/>:<Copy size={13}/>} {copied?"已复制":"复制"}
       </button>
-    </footer>
+      {resend&&<button ref={editButton} type="button" disabled={resend.disabled} onClick={()=>setEditing(true)}>
+        <Pencil size={13} aria-hidden="true"/> 编辑并重发
+      </button>}
+    </footer>}
   </article>;
+}
+
+function ChatMessageEditor({text,disabled,onCancel,onSend}:{
+  text:string;disabled:boolean;onCancel:()=>void;onSend:(value:string)=>Promise<void>;
+}) {
+  const [value,setValue]=useState(text);
+  const [error,setError]=useState("");
+  const [sending,setSending]=useState(false);
+  const pending=useRef(false);
+  const composing=useRef(false);
+  return <form className="chat-message-editor" onSubmit={async event=>{
+    event.preventDefault();
+    if(disabled||pending.current||composing.current||!value.trim()||value.length>30000)return;
+    pending.current=true;
+    setSending(true);
+    setError("");
+    try{await onSend(value);}
+    catch(cause){setError(cause instanceof Error?cause.message:"发送失败，已保留编辑内容。");}
+    finally{pending.current=false;setSending(false);}
+  }}>
+    <textarea autoFocus aria-label="编辑已停止的消息" rows={4} maxLength={30000} value={value} readOnly={sending}
+      onChange={event=>setValue(event.target.value)}
+      onCompositionStart={()=>{composing.current=true;}} onCompositionEnd={()=>{composing.current=false;}}
+      onBlur={()=>{composing.current=false;}}
+      onKeyDown={event=>{
+        if(composing.current||event.nativeEvent.isComposing||event.keyCode===229)return;
+        if(event.key==="Escape"&&!pending.current){event.preventDefault();onCancel();}
+        if((event.ctrlKey||event.metaKey)&&event.key==="Enter"){event.preventDefault();event.currentTarget.form?.requestSubmit();}
+      }}/>
+    {error&&<p className="chat-error" role="alert">{error}</p>}
+    <div className="chat-message-editor-actions">
+      <button type="button" className="secondary-button" disabled={sending} onClick={onCancel}>取消</button>
+      <button type="submit" className="chat-send-button" disabled={disabled||sending||!value.trim()||value.length>30000}>
+        {sending?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>} 发送新消息
+      </button>
+    </div>
+  </form>;
 }
 
 export function ChatAssistantMessage({author,at,response,error,status,turnStatus,current,copied,onCopy,process,actions,output,children}:{
