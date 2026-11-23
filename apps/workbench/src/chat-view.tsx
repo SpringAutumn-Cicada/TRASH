@@ -122,11 +122,46 @@ export function ChatComposer({input,label,placeholder,store,conversation,disable
   const draft=useSyncExternalStore(store.subscribe,()=>store.getSnapshot().messages[conversation]?.text??"");
   const composing=useRef(false);
   const cannotSend=disabled||send.disabled||(!draft.trim()&&!canSendAttachments);
+  const scheduleResize=useRef<()=>void>(()=>{});
   useEffect(()=>{
-    if(!input.current)return;
-    input.current.style.height="auto";
-    input.current.style.height=Math.min(input.current.scrollHeight,210)+"px";
-  },[draft,input]);
+    const node=input.current;
+    if(!node||window.CSS?.supports("field-sizing","content"))return;
+    let frame:number|undefined;
+    const schedule=()=>{
+      if(frame!==undefined)return;
+      frame=requestAnimationFrame(()=>{
+        frame=undefined;
+        // Measure against the CSS minimum so the field can shrink after deletion.
+        node.style.height="auto";
+        node.style.height=Math.min(node.scrollHeight,210)+"px";
+      });
+    };
+    scheduleResize.current=schedule;
+    let width=node.clientWidth;
+    const observer=typeof ResizeObserver==="undefined"?undefined:new ResizeObserver(()=>{
+      if(width===node.clientWidth)return;
+      width=node.clientWidth;
+      schedule();
+    });
+    observer?.observe(node);
+    schedule();
+    return()=>{
+      observer?.disconnect();
+      if(frame!==undefined)cancelAnimationFrame(frame);
+      scheduleResize.current=()=>{};
+    };
+  },[input]);
+  useEffect(()=>scheduleResize.current(),[draft,conversation]);
+  useEffect(()=>{
+    const flushWhenHidden=()=>{if(document.hidden)store.flush();};
+    window.addEventListener("pagehide",store.flush);
+    document.addEventListener("visibilitychange",flushWhenHidden);
+    return()=>{
+      window.removeEventListener("pagehide",store.flush);
+      document.removeEventListener("visibilitychange",flushWhenHidden);
+      store.flush();
+    };
+  },[store]);
   return <form className="chat-composer" onSubmit={event=>{
     if(composing.current||cannotSend){event.preventDefault();return;}
     onSubmit(event);

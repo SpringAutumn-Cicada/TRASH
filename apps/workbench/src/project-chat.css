@@ -83,6 +83,7 @@
 .chat-input-shell{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:color-mix(in srgb,var(--surface) 94%,var(--green-soft))}
 .chat-input-shell:focus-within{border-color:color-mix(in srgb,var(--green) 60%,var(--line));box-shadow:0 0 0 2px color-mix(in srgb,var(--green) 9%,transparent)}
 .chat-input-shell textarea{display:block;box-sizing:border-box;width:100%;min-height:76px;max-height:210px;padding:13px 15px;border:0;outline:none;background:none;color:var(--ink);resize:none;line-height:1.8;font-family:inherit;font-size:13px}
+@supports (field-sizing:content){.chat-input-shell textarea{field-sizing:content}}
 .chat-input-tools{display:flex;align-items:center;gap:8px;padding:5px 10px 10px;min-width:0}
 .chat-thread-controls{position:relative;flex:none;container-type:inline-size}
 .chat-char-count{margin-left:auto;font-size:9px;color:var(--muted)}

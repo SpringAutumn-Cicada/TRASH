@@ -23,6 +23,17 @@ function createDraftStore(key: string) {
   let state: DraftState = { ...saved, uploading: {}, sending: {} };
 
   let view = draftView(state);
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function flush() {
+    if (saveTimer === undefined) return;
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    try {
+      const { conversation, messages } = state;
+      window.sessionStorage.setItem(key, JSON.stringify({ conversation, messages }));
+    } catch { /* In-memory drafts still survive navigation within the tab. */ }
+  }
 
   function publish(next: DraftState) {
     const changed = state.conversation !== next.conversation || state.messages !== next.messages;
@@ -33,9 +44,8 @@ function createDraftStore(key: string) {
       return view[field] !== nextView[field];
     })) view = nextView;
     if (changed) {
-      try {
-        window.sessionStorage.setItem(key, JSON.stringify({ conversation: next.conversation, messages: next.messages }));
-      } catch { /* In-memory drafts still survive navigation within the tab. */ }
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(flush, 300);
     }
     for (const notify of listeners) notify();
   }
@@ -51,6 +61,7 @@ function createDraftStore(key: string) {
   }
 
   return {
+    flush,
     getSnapshot: () => state,
     getViewSnapshot: () => view,
     subscribe(notify: () => void) {
@@ -58,7 +69,10 @@ function createDraftStore(key: string) {
       return () => { listeners.delete(notify); };
     },
     choose(conversation: string) {
-      if (state.conversation !== conversation) publish({ ...state, conversation });
+      if (state.conversation !== conversation) {
+        publish({ ...state, conversation });
+        flush();
+      }
     },
     update,
     updateText(conversation: string, value: string | ((previous: string) => string)) {
@@ -73,6 +87,7 @@ function createDraftStore(key: string) {
       const messages = { ...state.messages };
       delete messages[conversation];
       publish({ ...state, messages, conversation: state.conversation === conversation ? nextConversation : state.conversation });
+      flush();
     },
     setPending(kind:'uploading'|'sending', conversation:string, pending:boolean) {
       const changes={...state[kind]};

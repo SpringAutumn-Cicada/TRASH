@@ -105,6 +105,7 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
     if(!data||busy||active||interrupted||!prompt||state.sending[""])return;
     const id=draft?.requestId??crypto.randomUUID();
     draftStore.update("",draft=>({...draft,requestId:id}));
+    draftStore.flush();
     draftStore.setPending("sending","",true);
     try {
       if(await act({action:"message",id,instructions:prompt})){

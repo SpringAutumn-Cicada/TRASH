@@ -321,6 +321,7 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
       (active&&(active.status!=='running'||!active.session_id))||acting.current||loading)return;
     const instructions=draft.trim()?draft:'请查看并分析本条消息所附的材料。';
     if(state.conversation===undefined)draftStore.choose('');
+    draftStore.flush();
     draftStore.setPending('sending',conversation,true);
     setError('');
     try{
