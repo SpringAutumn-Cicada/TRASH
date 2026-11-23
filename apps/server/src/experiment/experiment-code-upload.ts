@@ -13,6 +13,7 @@ export async function uploadExperimentCode(service: ExperimentService, project: 
   repository_id?: string;
   request_id: string;
   expectedCommit?: string;
+  onTarget?: (target:{commit:string;path:string;snapshot_id?:string})=>void;
 }, notify?: UploadProgress, signal?: AbortSignal) {
   service.data.profile(project, input.profile_id);
   const workspace = service.workspaces.get(project, input.profile_id) ?? experimentError("WORKSPACE_REQUIRED", 409);
@@ -38,6 +39,7 @@ export async function uploadExperimentCode(service: ExperimentService, project: 
     const name = autoDLPaperDirectory(repo);
     const parent = posix.join(workspace.root, autoDLDirectories.paperCode);
     const destination = posix.join(parent, name);
+    input.onTarget?.({commit,path:destination});
     await ensureRemoteDirectory(remote, parent);
     if (await remoteDirectoryExists(remote, destination)) {
       const previous = workspace.experiment_uploads?.filter(item => item.path === destination).at(-1);
@@ -53,6 +55,7 @@ export async function uploadExperimentCode(service: ExperimentService, project: 
     }
     report("snapshot");
     const snapshot = await service.reproductions.sourceSnapshot(project, repo.path, name, commit);
+    input.onTarget?.({commit,path:destination,snapshot_id:snapshot.snapshot_id});
     await service.repository.preflight(project, commit, repo.repository_id);
     if ((await git(repo.path, ["rev-parse", "HEAD"])).trim() !== commit) experimentError("GIT_TREE_DIRTY", 409);
     const deployed = await service.reproductions.deploy(remote, project, snapshot, parent, report, operation.signal, name);

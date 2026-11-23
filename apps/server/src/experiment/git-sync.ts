@@ -25,12 +25,12 @@ export const syncIdentity=(profile:SshProfile)=>({
 
 const materialize=String.raw`
 import fcntl, hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile
-destination, sha, bundle, digest, size = sys.argv[1:]
+destination, sha, bundle, digest, size, *mode = sys.argv[1:]
 target = pathlib.Path(destination)
 parent = target.parent
 def git(*args):
-    env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null')
-    return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null', *args], env=env)
+    env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_OPTIONAL_LOCKS='0')
+    return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', *args], env=env)
 def verify(path):
     if path.is_symlink() or not (path / '.git').is_dir() or (path / '.git').is_symlink():
         raise RuntimeError('REMOTE_GIT_CHECKOUT_INVALID')
@@ -38,16 +38,27 @@ def verify(path):
         raise RuntimeError('REMOTE_GIT_COMMIT_MISMATCH')
     if git('-C', str(path), 'status', '--porcelain', '--untracked-files=no'):
         raise RuntimeError('REMOTE_GIT_TREE_DIRTY')
+def existing():
+    verify(target)
+    marker = target / '.git' / 'trash-sync.json'
+    if marker.is_symlink() or not marker.is_file():
+        raise RuntimeError('REMOTE_GIT_CHECKOUT_UNMANAGED')
+    info = json.loads(marker.read_text())
+    return info['sha256'], info['size_bytes']
+if mode == ['inspect']:
+    if not os.path.lexists(target):
+        print('null')
+        sys.exit(0)
+    if target.resolve() != target:
+        raise RuntimeError('REMOTE_GIT_CHECKOUT_INVALID')
+    digest, size = existing()
+    print(json.dumps(dict(path=destination, commit=sha, sha256=digest, size_bytes=int(size), reused=True, verified=True)))
+    sys.exit(0)
 with os.fdopen(os.open(parent / '.sync-lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), 'r+b') as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     reused = os.path.lexists(target)
     if reused:
-        verify(target)
-        marker = target / '.git' / 'trash-sync.json'
-        if marker.is_symlink() or not marker.is_file():
-            raise RuntimeError('REMOTE_GIT_CHECKOUT_UNMANAGED')
-        info = json.loads(marker.read_text())
-        digest, size = info['sha256'], info['size_bytes']
+        digest, size = existing()
     elif not bundle:
         print('null')
         sys.exit(0)
@@ -118,6 +129,16 @@ export class GitSyncService {
 
   version(project:string,repo:ProjectRepository,id:string){
     return this.versions(project,repo).find(v=>v.id===id)??experimentError("GIT_SYNC_VERSION_NOT_FOUND",404);
+  }
+
+  async inspect(project:string,repo:ProjectRepository,profile:SshProfile,root:string,sha:string,signal:AbortSignal){
+    commitShaSchema.parse(sha);
+    if(!/^repo_[a-z0-9-]+$/i.test(repo.repository_id))experimentError("REPOSITORY_NOT_BOUND",404);
+    const remote=this.service.terminals.connection(project,profile.profile_id);
+    const python=await resolveRemotePython(remote,signal);
+    signal.throwIfAborted();
+    const path=posix.join(root,autoDLDirectories.paperCode,".git-versions",repo.repository_id,sha);
+    return receiptSchema.nullable().parse(JSON.parse(await remote.exec([python,"-I","-B","-c",materialize,path,sha,"","","0","inspect"],undefined,10000)));
   }
 
   async importCommit(project:string,repo:ProjectRepository,version:GitSyncVersion,commit:string,signal:AbortSignal){

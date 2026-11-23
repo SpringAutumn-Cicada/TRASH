@@ -72,8 +72,21 @@ async function remoteHash(remote: RemoteConnection, path: string) {
   return /^([a-f0-9]{64}) [ *]/.exec(output)?.[1];
 }
 
+export async function inspectAutoDLFile(remote: RemoteConnection, root: string, destination: string, expected: string) {
+  const path = autoDLUploadPath(root, destination);
+  if (!await remoteDirectoryExists(remote, posix.dirname(path))) return 'missing';
+  const channel = await remote.sftp();
+  try {
+    const entry = await lstat(channel, path);
+    if (!entry) return 'missing';
+    if (!entry.isFile() || entry.isSymbolicLink()) return 'different';
+    return await remoteHash(remote, path) === expected ? 'verified' : 'different';
+  } finally { channel.end(); }
+}
+
 export async function uploadAutoDLFile(remote: RemoteConnection, root: string, host: string, source: string,
-  destination: string, report: UploadProgress, signal: AbortSignal, checkWorkspace: () => void, expectedHash?: string) {
+  destination: string, report: UploadProgress, signal: AbortSignal, checkWorkspace: () => void, expectedHash?: string,
+  onSnapshot?: (sha256: string) => void) {
   const path = autoDLUploadPath(root, destination);
   const key = host + "\0" + path;
   if (activeDestinations.has(key)) experimentError("AUTODL_UPLOAD_TARGET_BUSY", 409);
@@ -89,6 +102,7 @@ export async function uploadAutoDLFile(remote: RemoteConnection, root: string, h
     const file = join(directory, "file");
     const { sha256, size, mode } = await localSnapshot(source, file, signal);
     if(expectedHash&&expectedHash!==sha256)experimentError("CHAT_DECISION_FILE_CHANGED",409);
+    onSnapshot?.(sha256);
     stopped();checkWorkspace();
     if (!await remoteDirectoryExists(remote, root)) experimentError("WORKSPACE_REQUIRED", 409);
     const parent = posix.dirname(path);

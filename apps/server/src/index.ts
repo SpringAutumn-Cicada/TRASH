@@ -648,7 +648,7 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         sendJson(response,201,{task:await codeAgent.append(projectId,chatContinuation[1],body,toolUrl)});return;
       }
       z.object({}).strict().parse(body);
-      const {process_groups:_processes,...task}=await codeAgent.resume(projectId,chatContinuation[1],toolUrl);
+      const {process_groups:_processes,recovery_operations:_ops,...task}=await codeAgent.resume(projectId,chatContinuation[1],toolUrl);
       sendJson(response,200,{task});return;
     }
     if (subpath === "experiment-method/tasks" && method === "GET") {
