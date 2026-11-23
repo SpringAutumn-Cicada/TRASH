@@ -727,7 +727,7 @@ export class CodeAgent {
     this.save(task);
     return operation;
   }
-  private async inspectRecovery(task:CodeTask,operation:RecoveryOperation,signal:AbortSignal) {
+  private async inspectRecovery(task:CodeTask,operation:RecoveryOperation,signal:AbortSignal):Promise<Pick<RecoveryOperation,'result'|'checked'>|undefined> {
     const {target}=operation;
     const project=task.project_id;
     const repo=task.repository_id?this.chatRepositories(project).find(item=>

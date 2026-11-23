@@ -72,7 +72,7 @@ async function remoteHash(remote: RemoteConnection, path: string) {
   return /^([a-f0-9]{64}) [ *]/.exec(output)?.[1];
 }
 
-export async function inspectAutoDLFile(remote: RemoteConnection, root: string, destination: string, expected: string) {
+export async function inspectAutoDLFile(remote: RemoteConnection, root: string, destination: string, expected: string): Promise<"missing" | "different" | "verified"> {
   const path = autoDLUploadPath(root, destination);
   if (!await remoteDirectoryExists(remote, posix.dirname(path))) return 'missing';
   const channel = await remote.sftp();
