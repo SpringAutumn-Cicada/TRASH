@@ -12,7 +12,13 @@ export const experimentTabs = [
   {id:"reproductions",label:"文献复现"},{id:"datasets",label:"数据集"},{id:"results",label:"实验结果"}
 ] as const;
 export type ExperimentTab=typeof experimentTabs[number]["id"] | "code" | "method";
-export type NavigateOptions={tab?:ExperimentTab;action?:string;focus?:string;status?:string;experiment?:string};
+const experimentViews = {
+  compute: ["hosts", "settings", "workspace"],
+  code: ["overview", "code", "agent"],
+  runs: ["logs", "artifacts"],
+} as const;
+export type ExperimentView=typeof experimentViews[keyof typeof experimentViews][number];
+export type NavigateOptions={tab?:ExperimentTab;view?:ExperimentView;action?:string;focus?:string;status?:string;experiment?:string};
 export function projectSidebarPage(page:ProjectPage){
   return page==="wiki"||page==="cards"?"literature":page;
 }
@@ -53,13 +59,16 @@ export function parseProjectRoute(value: string) {
       tab,action:url.searchParams.get("action")??undefined,focus:url.searchParams.get("focus")??undefined,
       status:url.searchParams.get("status")??undefined,experiment:url.searchParams.get("experiment")??undefined
     });
-    return {projectId:decodeURIComponent(match[1]),legacyCoordination,page:normalized,tab:options.tab,action:options.action,focusId:options.focus,status:options.status,experiment:options.experiment};
+    const views: Partial<Record<ExperimentTab, readonly ExperimentView[]>> = experimentViews;
+    const view=normalized==="experiments"&&options.tab
+      ? views[options.tab]?.find(item=>item===url.searchParams.get("view")) : undefined;
+    return {projectId:decodeURIComponent(match[1]),legacyCoordination,page:normalized,tab:options.tab,view,action:options.action,focusId:options.focus,status:options.status,experiment:options.experiment};
   } catch { return undefined; }
 }
 export function projectPath(id: string, page: ProjectPage, options:NavigateOptions={}) {
   const location=experimentLocation(page,options);
   const params = new URLSearchParams();
-  for(const key of ["tab","action","focus","status","experiment"] as const){
+  for(const key of ["tab","view","action","focus","status","experiment"] as const){
     const value=location.options[key];
     if(value)params.set(key,value);
   }

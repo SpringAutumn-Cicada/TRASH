@@ -12,7 +12,7 @@ import { ChartColumn, ClipboardList, Code2, Columns2, Database, Download, FlaskC
 import type { ProjectPage, DiscoveredExperiment, ExperimentCatalogEntry, ReproductionCode, ReproductionSnapshot, DatasetRef, ExperimentPlanVersion, ExperimentRun, ProjectRepository, SshProfile } from "@trash/protocol";
 import { DatasetsPanel } from "./data.js";
 import { ExperimentalDataPanel } from "./experimental-data.js";
-import { experimentTabs, type ExperimentTab, type NavigateOptions, useUnsavedChanges } from "./navigation.js";
+import { experimentTabs, type ExperimentTab, type ExperimentView, type NavigateOptions, useUnsavedChanges } from "./navigation.js";
 import "./literature-visual.css";
 import "./experiments.css";
 import { ModalLayer } from "./modal-layer.js";
@@ -49,19 +49,20 @@ const codeTabs=[{id:"overview",label:"仓库与 Git"},{id:"code",label:"文件�
 const autoDlTabs=[{id:"hosts",label:"AutoDL 信息"},{id:"settings",label:"工作区设置"},{id:"workspace",label:"AutoDL 工作区"}] as const;
 type Navigate=(page:ProjectPage,options?:NavigateOptions)=>void;
 
-export function ExperimentsPage({projectId,section,experimentKey,action,focusId,status,onNavigate,onBrowseArchive}:{
-  projectId:string;section:ExperimentTab;experimentKey?:string;action?:string;focusId?:string;status?:string;onNavigate:Navigate;onBrowseArchive?:(path:string)=>void;
+export function ExperimentsPage({projectId,section,view,experimentKey,action,focusId,status,onNavigate,onBrowseArchive}:{
+  projectId:string;section?:ExperimentTab;view?:ExperimentView;experimentKey?:string;action?:string;focusId?:string;status?:string;onNavigate:Navigate;onBrowseArchive?:(path:string)=>void;
 }) {
   const autoDlOnly=section==="compute",reproductionOnly=section==="reproductions";
   const snapshotId=section==="runs"&&action==="reproduction-plan"?focusId:undefined;
   const runFocus=section==="runs"&&action!=="reproduction-plan"?focusId:undefined;
-  const [codeTab,setCodeTab]=useState<typeof codeTabs[number]["id"]>("overview");
-  const [computeTab,setComputeTab]=useState<typeof autoDlTabs[number]["id"]>("hosts");
+  const codeTab=codeTabs.find(item=>item.id===view&&(item.id!=="agent"||experimentKey))?.id??(experimentKey?"code":"overview");
+  const computeTab=autoDlTabs.find(item=>item.id===view)?.id??"hosts";
+  const runDetail=view==="artifacts"?"artifacts":"logs";
   const [reproductionVisited,setReproductionVisited]=useState(reproductionOnly);
-  const [runDetail,setRunDetail]=useState<"logs"|"artifacts">("logs");
+  const openView=(next:ExperimentView)=>onNavigate("experiments",{tab:section,view:next,experiment:experimentKey,action,focus:focusId,status});
   const [kind,setKind]=useState<"all"|"git"|"reproduction">("all");
   const showScopedResults = section==="runs" && Boolean(experimentKey) && action==="experiment-results";
-  const tab=showScopedResults ? undefined : autoDlOnly?computeTab:section==="code"?(codeTab==="agent"&&!experimentKey?"overview":codeTab):section==="runs"
+  const tab=showScopedResults ? undefined : autoDlOnly?computeTab:section==="code"?codeTab:section==="runs"
     ?runFocus||action==="runs"?"runs":"plans":undefined;
   const showRuns=tab==="runs",showPlans=tab==="plans";
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
@@ -108,7 +109,6 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
       if (repository) setDiscovered(items => items.filter(item => item.path !== repository.path));
       setSchemes(items => items.some(item => experimentKeyOf(item) === experimentKeyOf(experiment)) ? items : [...items, experiment]);
       setDefaultRepositoryId(default_id);
-      setCodeTab(repository ? "code" : "overview");
       setCatalog(items => [...items.filter(item => experimentKeyOf(item) !== experimentKeyOf(experiment)), experiment]);
       created = true;
       onNavigate("experiments", { tab: "method", experiment: experimentKeyOf(experiment) });
@@ -185,11 +185,10 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
     setRunId(runFocus);
     const focused=runs.find(item=>item.run_id===runFocus);
     if(focused&&kind!=="all"&&(kind==="reproduction")!==Boolean(focused.plan.reproduction))setKind("all");
-    setRunDetail("logs");setLogs("");setLogOffset(0);setDetails("");
+    setLogs("");setLogOffset(0);setDetails("");
   },[runFocus]);
   useEffect(()=>{if(!showPlans){setPlanJson("");setEditingPlan(undefined);}},[showPlans]);
   useEffect(() => {
-    setCodeTab(experimentKey ? "code" : "overview");
     setKind("all");setPlanJson("");setEditingPlan(undefined);setRepoInfo(undefined);setHistory([]);
     setCommitMessage("");setDiagnostic("");setScript("");setPlanId("");setRunId(runFocus??"");
   }, [experimentKey]);
@@ -209,11 +208,11 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
     try{const current=await request<{terminals:TerminalSession[]}>(base,"/terminals");
       if(!alive.current)return;
       setTerminalSessions(current.terminals);
-      if(!source&&current.terminals.some(session=>session.profile_id===sourceProfile)){if(!stayOnPage&&autoDlOnly)setComputeTab("workspace");setNotice("已复用现有 SSH 连接。");return;}
+      if(!source&&current.terminals.some(session=>session.profile_id===sourceProfile)){if(!stayOnPage&&previousSection.current==="compute")onNavigate("experiments",{tab:"compute",view:"workspace"});setNotice("已复用现有 SSH 连接。");return;}
       if(!source&&current.terminals.length)throw new Error("当前项目已连接其他主机，请在 AutoDL 连接中断开后切换。");
       if(current.terminals.length>=3)throw new Error("最多打开 3 个终端分屏，请先关闭不用的窗口。");
       if(source&&!current.terminals.some(session=>session.id===source.id))throw new Error("原终端已结束，请重新连接主机。");
-      const result=source?await (async()=>{const response=await fetch(`${base}/terminals/${source.id}/split`,{method:"POST",headers:{"content-type":"application/json","x-terminal-token":source.token},body:JSON.stringify({confirm:true})});const value=await response.json();if(!response.ok)throw new Error(failures[value.error]??"无法在当前 SSH 连接中打开 Shell，请检查连接状态。");return value as {terminal:TerminalSession};})():await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current.filter(item=>item.id!==result.terminal.id),result.terminal]);window.dispatchEvent(new CustomEvent("trash-autodl-changed",{detail:{projectId}}));if(!stayOnPage&&autoDlOnly)setComputeTab("workspace");setNotice("");}}
+      const result=source?await (async()=>{const response=await fetch(`${base}/terminals/${source.id}/split`,{method:"POST",headers:{"content-type":"application/json","x-terminal-token":source.token},body:JSON.stringify({confirm:true})});const value=await response.json();if(!response.ok)throw new Error(failures[value.error]??"无法在当前 SSH 连接中打开 Shell，请检查连接状态。");return value as {terminal:TerminalSession};})():await request<{terminal:TerminalSession}>(base,`/ssh-profiles/${sourceProfile}/connect`,{confirm:true});if(alive.current){setTerminalSessions(current=>[...current.filter(item=>item.id!==result.terminal.id),result.terminal]);window.dispatchEvent(new CustomEvent("trash-autodl-changed",{detail:{projectId}}));if(!stayOnPage&&previousSection.current==="compute")onNavigate("experiments",{tab:"compute",view:"workspace"});setNotice("");}}
     catch(cause){if(alive.current){setNotice("");setError(cause instanceof Error?cause.message:"终端连接失败。");if(!source)window.dispatchEvent(new CustomEvent("trash-autodl-open",{detail:{projectId,profileId:sourceProfile}}));}}
     finally{terminalConnecting.current=false;if(alive.current)setConnecting(false);}
   };
@@ -271,6 +270,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
         <RefreshCw size={16} aria-hidden="true"/>
       </button>
     </header>
+    {!section&&<p className="quiet">选择上方的实验子页。</p>}
     {section==="catalog" && <ExperimentCatalog experiments={catalog} repositories={repositoryList} discovered={discovered} reproductions={reproductions} busy={busy}
       loading={loadingContext} recycle={recycleExperiment}
       create={(title, id) => saveCatalogExperiment("/experiment-catalog", { title, id })}
@@ -309,10 +309,10 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
           .catch(() => setError("浏览器不允许复制，请手动选择路径。"))}>复制路径</button>
     </div>}
     {section==="code"&&<nav className="experiment-subnav" aria-label="代码视图">{codeTabs.filter(item=>item.id!=="agent"||Boolean(experiment&&repo)).map(item=>
-      <button type="button" className="secondary-button" key={item.id} aria-pressed={tab===item.id} onClick={()=>setCodeTab(item.id)}>{item.label}</button>
+      <button type="button" className="secondary-button" key={item.id} aria-pressed={tab===item.id} onClick={()=>openView(item.id)}>{item.label}</button>
     )}</nav>}
     {autoDlOnly&&<nav className="experiment-subnav" aria-label="AutoDL 视图">{autoDlTabs.map(item=>
-      <button type="button" className="secondary-button" key={item.id} aria-pressed={computeTab===item.id} onClick={()=>setComputeTab(item.id)}>{item.label}</button>
+      <button type="button" className="secondary-button" key={item.id} aria-pressed={computeTab===item.id} onClick={()=>openView(item.id)}>{item.label}</button>
     )}</nav>}
     {section==="runs"&&!showScopedResults&&<div className="experiment-subnav">
       <button type="button" className="secondary-button" aria-pressed={showPlans} onClick={()=>{if(!showPlans)onNavigate("experiments",{tab:"runs",experiment:experimentKey});}}>计划</button>
@@ -349,7 +349,7 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
       <CodeAgentPanel key={experimentKey+repo.repository_id} projectId={projectId} repositoryPath={repo.path}
         repositoryId={repo.repository_id} experiment={experiment}/>
     </div>}
-    {section==="code"&&tab==="code"&&(repo?<><div className="knowledge-toolbar"><ExperimentCodeUpload projectId={projectId} repository={repo} profiles={profiles} profileId={profileId} connectedProfiles={terminalSessions.filter(item=>!item.ended).map(item=>item.profile_id)}/></div><RepositoryBrowser key={projectId+repo.repository_id} projectId={projectId} repositoryPath={repo.path} repositoryId={repo.repository_id}/></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>尚未绑定代码仓库</h3><p>{experimentKey ? "这个旧实验没有可用的默认仓库。新建自研实验时会自动初始化仓库。" : "先绑定本地 Git 仓库，再浏览目录和代码。"}</p>{!experimentKey&&<button type="button" className="primary-button" onClick={()=>setCodeTab("overview")}>管理仓库</button>}</div>)}
+    {section==="code"&&tab==="code"&&(repo?<><div className="knowledge-toolbar"><ExperimentCodeUpload projectId={projectId} repository={repo} profiles={profiles} profileId={profileId} connectedProfiles={terminalSessions.filter(item=>!item.ended).map(item=>item.profile_id)}/></div><RepositoryBrowser key={projectId+repo.repository_id} projectId={projectId} repositoryPath={repo.path} repositoryId={repo.repository_id}/></>:<div className="repository-unbound"><FolderOpen size={32}/><h3>尚未绑定代码仓库</h3><p>{experimentKey ? "这个旧实验没有可用的默认仓库。新建自研实验时会自动初始化仓库。" : "先绑定本地 Git 仓库，再浏览目录和代码。"}</p>{!experimentKey&&<button type="button" className="primary-button" onClick={()=>openView("overview")}>管理仓库</button>}</div>)}
     {autoDlOnly&&tab==="hosts"&&<section id="autodl-instance-information"><h3>AutoDL 信息</h3>
       <div className="autodl-instance-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>setInstanceDialog("add")}><Plus size={15}/>添加已有实例</button><button type="button" className="secondary-button" disabled={busy||!profiles.length} onClick={()=>setInstanceDialog("edit")}><Pencil size={14}/>编辑已有实例</button></div>
       <div className="experiment-form autodl-host-main"><h3>项目实例</h3><p>选择主机、SSH 连接与环境诊断已移至内容顶栏的“AutoDL 连接”。</p><button type="button" className="secondary-button" onClick={()=>window.dispatchEvent(new CustomEvent("trash-autodl-open",{detail:{projectId}}))}>打开 AutoDL 连接</button>{profiles.map(profile=><p key={profile.profile_id}><strong>{profile.name}</strong> · {profile.host}:{profile.port}{terminalSessions.some(session=>!session.ended&&session.profile_id===profile.profile_id)?" · 已连接":""}</p>)}</div>
@@ -382,8 +382,8 @@ export function ExperimentsPage({projectId,section,experimentKey,action,focusId,
       <div className="experiment-runs">{runs.filter(value=>matchesKind(value.plan)).map(value=><button className={`experiment-run ${runId===value.run_id?"selected":""}`} key={value.run_id} onClick={()=>showRun(value.run_id)}><strong>{value.preparation?"环境准备：":""}{value.plan.content.title}</strong><span>{stateNames[value.status]}</span><small>{value.created_at}</small></button>)}</div>
       {selectedRun&&matchesKind(selectedRun.plan)&&<article className="experiment-card"><h3>{selectedRun.plan.content.title}</h3><p>运行：{selectedRun.run_id}</p>{selectedRun.archive_path&&onBrowseArchive&&<button type="button" className="text-button" onClick={()=>onBrowseArchive(selectedRun.archive_path!)}>打开运行档案</button>}{selectedRun.archive_error&&<p role="status">{selectedRun.archive_error}</p>}<p>进程：{selectedRun.process_status??stateNames[selectedRun.status]} · 退出码：{selectedRun.exit_code??"尚未确认"}</p><p>{selectedRun.collection_status} · {selectedRun.metrics_status}</p>{selectedRun.error&&<ErrorNotice >{selectedRun.error}</ErrorNotice>}<div className="knowledge-toolbar"><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{setDetails(JSON.stringify(await request(base,`/experiment-runs/${runId}`),null,2));})}>运行清单与事件</button><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,`/experiment-runs/${runId}/reconnect`,{});await load();})}>重新连接确认状态</button>{!terminal.includes(selectedRun.status)?<button className="secondary-button" disabled={busy} onClick={()=>{if(window.confirm("请求停止此远端实验？"))void run(async()=>{await request(base,`/experiment-runs/${runId}/cancel`,{});await load();});}}>取消运行</button>:<><button className="secondary-button" disabled={busy} onClick={()=>{if(window.confirm("按原计划创建新的实验运行？将使用远端算力。"))void run(async()=>{await request(base,`/experiment-runs/${runId}/retry`,{confirm:true});await load();});}}>确认重试</button><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{await request(base,`/experiment-runs/${runId}/collect`,{});await load();})}>重新收集</button></>}{selectedRun.result_id&&<button className="primary-button" onClick={()=>onNavigate("results",{focus:selectedRun.result_id})}>查看实验结果</button>}</div>
       <div className="experiment-subnav" aria-label="运行详情">
-        <button type="button" className="secondary-button" aria-pressed={runDetail==="logs"} onClick={()=>setRunDetail("logs")}>日志</button>
-        <button type="button" className="secondary-button" aria-pressed={runDetail==="artifacts"} onClick={()=>setRunDetail("artifacts")}>产物</button>
+        <button type="button" className="secondary-button" aria-pressed={runDetail==="logs"} onClick={()=>openView("logs")}>日志</button>
+        <button type="button" className="secondary-button" aria-pressed={runDetail==="artifacts"} onClick={()=>openView("artifacts")}>产物</button>
       </div>
       {runDetail==="logs"&&<><div className="knowledge-toolbar"><select aria-label="日志类型" value={stream} onChange={e=>{setStream(e.target.value);setLogOffset(0);setLogs("");}}><option value="stdout">标准输出</option><option value="stderr">标准错误</option></select><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>{const data=await request<{text:string;offset:number;rotated:boolean}>(base,`/experiment-runs/${runId}/logs?stream=${stream}&offset=${logOffset}`);setLogs(old=>(old+(data.rotated?"\n[日志发生轮转，可能已截断]\n":"")+data.text).slice(-1024*1024));setLogOffset(data.offset);})}>读取增量日志</button></div><pre className="experiment-log">{logs||"选择日志类型后读取。"}</pre><details><summary>任务事件和清单</summary><pre>{details}</pre></details></>}
       {runDetail==="artifacts"&&<><p>远端目录：{selectedRun.remote_dir}</p>{selectedRun.artifacts.map(a=><div className="experiment-artifact" key={a.path}><strong>{a.path}</strong><span>{a.size_bytes} bytes</span><code>{a.sha256}</code>{a.artifact_id&&a.downloaded?<a className="secondary-button" href={`${base}/experiment-artifacts/${runId}/${a.artifact_id}`}><Download size={13}/>下载</a>:<span>远端引用 · {a.reason}</span>}</div>)}</>}

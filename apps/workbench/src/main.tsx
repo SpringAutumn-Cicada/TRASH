@@ -38,6 +38,21 @@ function rememberedPage(id:string):ProjectPage {
   if(stored==="results")return "results";
   return projectPages.find(page=>page.id===stored)?.id??"overview";
 }
+function experimentPreference(id:string) {
+  return `trash-experiment-location:${id}`;
+}
+function experimentRoutePath(route:NonNullable<ReturnType<typeof parseProjectRoute>>) {
+  return projectPath(route.projectId,"experiments",{
+    tab:route.tab,view:route.view,action:route.action,focus:route.focusId,status:route.status,experiment:route.experiment
+  });
+}
+function rememberedProjectPath(id:string,page:ProjectPage=rememberedPage(id)) {
+  if(page==="experiments"){
+    const saved=parseProjectRoute(readPreference(experimentPreference(id))??"");
+    if(saved?.projectId===id&&saved.page==="experiments"&&saved.tab)return experimentRoutePath(saved);
+  }
+  return projectPath(id,page);
+}
 function ThemeControl() {
   const [theme,setTheme]=useState(savedTheme);
   useEffect(()=>{applyTheme(theme);},[theme]);
@@ -115,14 +130,19 @@ function App() {
     if(path==="/"){
       const last=parseProjectRoute(readPreference("trash-last-location")??"/");
       const target=projects.find(item=>item.project_id===last?.projectId);
-      if(target)navigate(projectPath(target.project_id,last?.page??rememberedPage(target.project_id),{tab:last?.tab}),true,true);
+      if(target&&last)navigate(last.page==="experiments"&&last.tab
+        ?experimentRoutePath(last):rememberedProjectPath(target.project_id,last.page),true,true);
     }else if(project&&route?.legacyCoordination)navigate(projectPath(project.project_id,"coordination"),true,true);
-    else if(project&&route&&!route.page)navigate(projectPath(project.project_id,rememberedPage(project.project_id)),true,true);
+    else if(project&&route&&!route.page)navigate(rememberedProjectPath(project.project_id),true,true);
   },[loaded,projects,path,navigate]);
   useEffect(()=>{
     if(!project||!route?.page)return;
-    writePreference("trash-last-location",projectPath(project.project_id,route.page,{tab:route.tab}));writePreference(`trash-project-page:${project.project_id}`,route.page);writePreference(`trash-project-visited:${project.project_id}`,String(Date.now()));
-  },[project?.project_id,route?.page,route?.tab]);
+    const location=route.page==="experiments"?experimentRoutePath(route):projectPath(project.project_id,route.page,{tab:route.tab});
+    if(route.page==="experiments"&&route.tab)writePreference(experimentPreference(project.project_id),location);
+    writePreference("trash-last-location",location);
+    writePreference(`trash-project-page:${project.project_id}`,route.page);
+    writePreference(`trash-project-visited:${project.project_id}`,String(Date.now()));
+  },[project?.project_id,path]);
   const closeDrawer=useCallback(()=>{setDrawer(false);requestAnimationFrame(()=>toggleRef.current?.focus());},[]);
   useEffect(()=>{
     const open=()=>setGitIdentityOpen(true);
@@ -143,8 +163,12 @@ function App() {
     document.addEventListener("keydown",trap);return()=>document.removeEventListener("keydown",trap);
   },[narrow,drawer,closeDrawer]);
   const go=(id:string,next:ProjectPage=rememberedPage(id),options?:NavigateOptions)=>{
-    const nextPath=projectPath(id,next,options);
-    if(navigate(nextPath)){setSidebarLayer("project");if(project?.project_id!==id)void refresh();setProjectMenu(false);setNewMenu(false);if(narrow)closeDrawer();}
+    const nextPath=options===undefined?rememberedProjectPath(id,next):projectPath(id,next,options);
+    // These views share one mounted page and keep its local edits while switching tabs.
+    const withinExperimentView=Boolean(options?.view&&next==="experiments"&&route?.projectId===id&&route.page==="experiments"&&
+      route.tab===options.tab&&route.experiment===options.experiment&&route.action===options.action&&
+      route.focusId===options.focus&&route.status===options.status);
+    if(navigate(nextPath,false,withinExperimentView)){setSidebarLayer("project");if(project?.project_id!==id)void refresh();setProjectMenu(false);setNewMenu(false);if(narrow)closeDrawer();}
   };
   const goPage=(next:ProjectPage,options?:NavigateOptions)=>{if(project)go(project.project_id,next,options);};
   const openCreate=()=>{const proceed=()=>{setCreateOpen(true);setNewMenu(false);if(narrow)setDrawer(false);};if(canLeave(proceed))proceed();};
@@ -157,7 +181,7 @@ function App() {
     setProjects(remaining);setDeleteTarget(undefined);setProjectMenu(false);
     setNotice(cleanupPending?"项目记录已删除，部分本地文件已保留，请核对原项目工作区及 deleted-projects 目录后手动清理。":"项目及本地资料已删除。");
     const recent=[...remaining].sort((a,b)=>Number(readPreference(`trash-project-visited:${b.project_id}`)??0)-Number(readPreference(`trash-project-visited:${a.project_id}`)??0))[0];
-    navigate(recent?projectPath(recent.project_id,rememberedPage(recent.project_id)):"/",true,true);void refresh();
+    navigate(recent?rememberedProjectPath(recent.project_id):"/",true,true);void refresh();
   };
   const exportProject=async()=>{
     if(!project)return;setProjectMenu(false);
@@ -208,7 +232,7 @@ function App() {
       <main className="workspace-content">
         {error&&<ErrorNotice className="notice error-notice" >{error}</ErrorNotice>}{notice&&<div className="notice" role="status">{notice}<button className="icon-button" aria-label="关闭提示" onClick={()=>setNotice("")}><X size={14}/></button></div>}
         {!loaded&&loading?<div className="page-loading">正在加载项目…</div>:project&&route?<React.Fragment key={project.project_id+":"+page+(page==="experiments"?"":":"+path)}>
-          {page==="tasks"?<TaskWorkspace key={project.project_id} projectId={project.project_id} focusId={route.focusId}/>:page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} onOpenSettings={()=>setWorkspaceOpen(true)} projectUpdatedAt={project.updated_at} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"?<ExperimentsPage projectId={project.project_id} section={route.tab??"catalog"} experimentKey={route.experiment} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onBrowseArchive={focus=>goPage("files",{action:"directory",focus})}/>:page==="files"?<ProjectFilesPage key={project.project_id+":"+(route.action==="directory"?route.focusId??"":"")} projectId={project.project_id} initialDirectory={route.action==="directory"?route.focusId:undefined} focusId={route.action==="directory"?undefined:route.focusId} onNavigate={goPage}/>:page==="paper"?<ManuscriptPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="coordination"?<CoordinationPanel key={project.project_id+":"+(route.focusId??"")} memoryId={route.action==="memory"?route.focusId:undefined} projectId={project.project_id} onNavigate={goPage}/>:page==="chat"?<ProjectChat key={project.project_id} projectId={project.project_id} focusId={route.focusId} onBrowseResearch={focus=>goPage("files",{action:"directory",focus})}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
+          {page==="tasks"?<TaskWorkspace key={project.project_id} projectId={project.project_id} focusId={route.focusId}/>:page==="overview"?<OverviewPage projectId={project.project_id} onNavigate={goPage}/>:page==="literature"||page==="cards"||page==="wiki"?<LiteratureModules projectId={project.project_id} onOpenSettings={()=>setWorkspaceOpen(true)} projectUpdatedAt={project.updated_at} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onChanged={()=>void refresh()}/>:page==="experiments"?<ExperimentsPage projectId={project.project_id} section={route.tab} view={route.view} experimentKey={route.experiment} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage} onBrowseArchive={focus=>goPage("files",{action:"directory",focus})}/>:page==="files"?<ProjectFilesPage key={project.project_id+":"+(route.action==="directory"?route.focusId??"":"")} projectId={project.project_id} initialDirectory={route.action==="directory"?route.focusId:undefined} focusId={route.action==="directory"?undefined:route.focusId} onNavigate={goPage}/>:page==="paper"?<ManuscriptPage projectId={project.project_id} focusId={route.focusId} onNavigate={goPage}/>:page==="coordination"?<CoordinationPanel key={project.project_id+":"+(route.focusId??"")} memoryId={route.action==="memory"?route.focusId:undefined} projectId={project.project_id} onNavigate={goPage}/>:page==="chat"?<ProjectChat key={project.project_id} projectId={project.project_id} focusId={route.focusId} onBrowseResearch={focus=>goPage("files",{action:"directory",focus})}/>:<KnowledgePage projectId={project.project_id} page={page} action={route.action} focusId={route.focusId} status={route.status} onNavigate={goPage}/>}
         </React.Fragment>:<section className="workspace-welcome"><BookOpen size={36}/><h2>{route?"该项目不存在或已被删除":!projects.length?"开始你的第一个研究项目":"选择一个项目继续研究"}</h2><p>{route?"从左侧选择其他项目，或者新建项目。":"从研究问题出发，将参考文献、知识卡片和实验结果组织在一起。"}</p><button className="primary-button" onClick={openCreate}><Plus size={16}/>新建项目</button></section>}
       </main>
     </div>
