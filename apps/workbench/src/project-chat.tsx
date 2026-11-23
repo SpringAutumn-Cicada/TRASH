@@ -11,7 +11,7 @@ import { ChatMarkdown } from './chat-markdown.js';
 import { ChatDecisionCard } from './chat-decision-card.js';
 import { openGitIdentity } from './git-identity-dialog.js';
 import type { ChatDecision } from '@trash/protocol';
-import { ChatAssistantMessage, ChatComposer, ChatTranscript, ChatUserMessage, chatStates as states, useChatScroll } from "./chat-view.js";
+import { ChatAssistantMessage, groupChatAttempts, ChatComposer, ChatTranscript, ChatUserMessage, chatStates as states, useChatScroll } from "./chat-view.js";
 
 type ChatOutput={id:string;kind:'message'|'tool';status:string;text:string;title?:string;at:string;progress?:{label:string;sent:number;total:number}};
 type WriteTargets={repositories:{id:string;name:string;path:string}[]};
@@ -179,10 +179,11 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
   useChatPolling(base,hasActiveTurns||loading,2000,refresh);
   const sessions=useMemo(()=>{
     const groups=new Map<string,Session>();
-    for(const turn of [...turns].sort((a,b)=>a.created_at.localeCompare(b.created_at))){const session=groups.get(turn.conversation_id);if(session){session.latest=turn;session.count++;}else groups.set(turn.conversation_id,{id:turn.conversation_id,first:turn,latest:turn,count:1});}
+    for(const turn of [...turns].sort((a,b)=>a.created_at.localeCompare(b.created_at))){const session=groups.get(turn.conversation_id);if(session){session.latest=turn;if(!turn.resume_root)session.count++;}else groups.set(turn.conversation_id,{id:turn.conversation_id,first:turn,latest:turn,count:1});}
     return [...groups.values()].sort((a,b)=>b.latest.created_at.localeCompare(a.latest.created_at));
   },[turns]);
   const messages=useMemo(()=>turns.filter(turn=>turn.conversation_id===conversation).sort((a,b)=>a.created_at.localeCompare(b.created_at)),[turns,conversation]);
+  const messageGroups=useMemo(()=>groupChatAttempts(messages,turn=>turn.task_id),[messages]);
   const activeByConversation=useMemo(()=>new Map(turns.filter(isActiveTurn)
     .map(turn=>[turn.conversation_id,turn])),[turns]);
   const active=activeByConversation.get(conversation),session=sessions.find(item=>item.id===conversation),last=messages.at(-1);
@@ -206,7 +207,7 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
       draftStore.choose(turn.conversation_id);
       return;
     }
-    const element=document.getElementById("chat-turn-"+focusId);
+    const element=document.getElementById("chat-turn-"+(turn.resume_root??focusId));
     const container=messagesRef.current;
     if(element&&container){
       focusedTurn.current=focusId;
@@ -385,7 +386,12 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
     follow.current=true;
     await refresh();
   });
-  const readLogs=(turn:Turn)=>void act(async()=>{const data=await call<{task:Turn}>(`/code-agent/tasks/${turn.task_id}`);if(alive.current){setLogs(old=>({...old,[turn.task_id]:data.task.logs}));setOpenLogs(old=>({...old,[turn.task_id]:true}));}});
+  const readLogs=(turn:Turn,open?:string)=>void act(async()=>{
+    const data=await call<{task:Turn}>(`/code-agent/tasks/${turn.task_id}`);
+    if(!alive.current)return;
+    setLogs(old=>({...old,[turn.task_id]:data.task.logs}));
+    if(open)setOpenLogs(old=>({...old,[open]:true}));
+  });
   return <section className="project-chat">
     <header className="chat-page-heading"><div className="chat-page-icon"><Bot size={23}/></div><div><h2>Agent 对话</h2><p>围绕文献、研究思路和论文写作，持续推进当前项目。</p></div><button type="button" className="secondary-button" disabled={busy||uploading} onClick={()=>void act(async()=>{
       const result=await call<{path:string}>('/workspace/research',{});
@@ -487,30 +493,37 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
           {selectedSandbox==='danger-full-access'&&<p>运行期间，平台内其他写入和执行任务会等待。</p>}
           {targetError?<p role="status">暂时无法读取 Git 仓库列表。</p>:targets&&targets.repositories.length===0&&<p role="status">当前项目还没有已登记的论文代码 Git 仓库。</p>}
         </div>}
-        {indexOpen&&<nav id={messageIndexId} className="chat-message-index" aria-label="消息目录">{messages.map((turn,index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
+        {indexOpen&&<nav id={messageIndexId} className="chat-message-index" aria-label="消息目录">{messageGroups.map(([turn],index)=><button type="button" key={turn.task_id} onClick={()=>{const target=document.getElementById(`chat-turn-${turn.task_id}`);const container=messagesRef.current;if(target&&container)container.scrollTo({top:container.scrollTop+target.getBoundingClientRect().top-container.getBoundingClientRect().top-18,behavior:'smooth'});follow.current=false;setAway(true);setIndexOpen(false);}}><span>{index+1}</span>{turn.instructions.slice(0,100)}</button>)}</nav>}
       </div>
         <ChatTranscript scroll={scroll} target={transcriptRef} label="Agent 对话消息">
-          {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>quote(item.text)}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messages.map((turn,index)=>{
+          {loading?<div className="chat-loading"><LoaderCircle size={20} className="spin"/>正在读取项目对话</div>:!messages.length?<div className="chat-welcome"><span className="chat-welcome-icon"><Bot size={31}/></span><span className="chat-eyebrow">你的论文研究助手</span><h3>这篇论文，我们从哪里开始？</h3><p>从一个问题、一篇文献，或尚未成形的研究思路开始。</p><div className="chat-suggestions">{suggestions.map(item=><button type="button" key={item.title} disabled={busy} onClick={()=>quote(item.text)}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div><small>生成内容需要审核，文献结论与真实实验结果会分别记录。</small></div>:messageGroups.map(([root,...attempts],index)=>{
+            const turn=attempts.at(-1)??root;
             const isCurrent = turn.task_id === currentTurn?.task_id;
-            const status = isCurrent && !connected ? 'offline' : isWaiting(turn)?'queued':turn.finished_at&&turn.status!=='interrupted'&&turn.decision?.status==='pending'?'decision':turn.status;
-            const quoteTurn=()=>quote(turn.instructions);
+            const status = isCurrent && !connected ? 'offline' : isWaiting(turn)?'queued':turn.finished_at&&turn.status!=='interrupted'&&turn.decision?.status==='pending'?'decision':turn.status==='running'&&attempts.length?'resuming':turn.status;
+            const quoteTurn=()=>quote(root.instructions);
             const canResend=turn.task_id===last?.task_id&&turn.status==='cancelled'&&!!turn.finished_at&&!turn.coordination;
-            return <section key={turn.task_id} className="chat-turn" id={`chat-turn-${turn.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
-            {!turn.resume_of&&<ChatUserMessage author={turn.coordination?.kind==="assignment"?"来自实验协调":"你"} at={turn.created_at}
-              text={turn.instructions} details={turn.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>
-                {turn.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===turn.skill_id)?.title??turn.skill_id}</div>}
-              copied={copied===turn.task_id+'-user'} onCopy={()=>copy(turn.task_id+'-user',turn.instructions)} onQuote={quoteTurn}
+            return <section key={root.task_id} className="chat-turn" id={`chat-turn-${root.task_id}`} aria-label={`第 ${index+1} 轮对话`}>
+            <ChatUserMessage author={root.coordination?.kind==="assignment"?"来自实验协调":"你"} at={root.created_at}
+              text={root.instructions} details={root.skill_id&&<div className="chat-turn-skill"><Puzzle size={13} aria-hidden="true"/>
+                {root.skill_origin==='auto'?'自动加载 · ':''}{skills.find(skill=>skill.id===root.skill_id)?.title??root.skill_id}</div>}
+              copied={copied===root.task_id+'-user'} onCopy={()=>copy(root.task_id+'-user',root.instructions)} onQuote={quoteTurn}
               resend={canResend?{disabled:busy||uploading||!connected||Boolean(active),send:text=>
-                postMessage(text,turn.attachments??[],turn.skill_origin==='auto'?undefined:turn.skill_id,true)}:undefined}>
-              <ChatAttachmentList base={base} entries={turn.attachments??[]}/>
-            </ChatUserMessage>}
+                postMessage(text,root.attachments??[],root.skill_origin==='auto'?undefined:root.skill_id,true)}:undefined}>
+              <ChatAttachmentList base={base} entries={root.attachments??[]}/>
+            </ChatUserMessage>
             <ChatAssistantMessage author="论文助手" at={turn.created_at} response={turn.response} error={turn.error}
               status={status} turnStatus={turn.status} current={isCurrent} copied={copied===turn.task_id}
               onCopy={()=>copy(turn.task_id,turn.response)}
               output={turn.output?.length?<ChatOutputMessages output={turn.output} response={turn.response}/>:undefined}
-              process={{open:Boolean(openLogs[turn.task_id]), disabled:busy, log:logs[turn.task_id],
-                toggle:()=>openLogs[turn.task_id]?setOpenLogs(old=>({...old,[turn.task_id]:false})):readLogs(turn), refresh:()=>readLogs(turn)}}
+              process={{open:Boolean(openLogs[root.task_id]), disabled:busy, log:logs[turn.task_id],
+                toggle:()=>openLogs[root.task_id]?setOpenLogs(old=>({...old,[root.task_id]:false})):readLogs(turn,root.task_id),
+                refresh:()=>readLogs(turn,root.task_id),
+                previous:(attempts.length?[root,...attempts.slice(0,-1)]:[]).map(item=>({
+                  id:item.task_id,at:item.created_at,status:item.status,response:item.response,error:item.error,log:logs[item.task_id],
+                  load:()=>readLogs(item),output:item.output?.length?<ChatOutputMessages output={item.output} response={item.response}/>:undefined
+                }))}}
               actions={<>
+                {canResume(turn)&&<button type="button" className="text-button" disabled={busy} onClick={()=>resume(turn)}><Play size={13}/>恢复执行</button>}
                 {['failed','cancelled','interrupted'].includes(turn.status)&&<button type="button" className="text-button" disabled={busy} onClick={quoteTurn}>将问题填入输入框</button>}
                 {turn.status==='interrupted'&&<button type="button" className="text-button" disabled={busy} onClick={()=>{if(window.confirm('请先确认旧 Agent 进程已经停止，并核对本轮已产生的改动。确认完成？'))void act(async()=>{await call(`/code-agent/tasks/${turn.task_id}/acknowledge`,{confirm:true});await refresh();});}}>确认旧进程已停止</button>}
               </>}>

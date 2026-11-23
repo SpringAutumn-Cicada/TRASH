@@ -158,9 +158,11 @@ const conversationKey=(project:string,id:string)=>project+'/'+id;
 
 function coreTurn(task:CodeTask){return task.coordination?.kind==="coordinator"||task.coordination?.kind==="summary";}
 function coordinationTurn(task: CodeTask) {
-  const {task_id,conversation_id,purpose,coordination,status,created_at,finished_at,decision,model,sandbox,reasoning_effort,error}=task;
+  const {task_id,conversation_id,purpose,coordination,status,created_at,finished_at,decision,model,sandbox,reasoning_effort,error,resume_root,waiting_for}=task;
   const core=coordination&&coordination.kind!=="assignment";
-  return {task_id,conversation_id,purpose,coordination,status,created_at,finished_at,decision,model,sandbox,reasoning_effort,error,
+  return {task_id,conversation_id,purpose,coordination,status,created_at,finished_at,decision,model,sandbox,reasoning_effort,error,resume_root,waiting_for,
+    can_resume:Boolean(['cancelled','failed','interrupted'].includes(status)&&(task.session_id||task.execution_started===false||status==='interrupted')&&
+      !['pending','selected'].includes(decision?.status??'')),
     instructions:core?task.instructions:task.instructions.slice(0,100),response:core||coordination?.consultation?task.response:coordination?task.response.slice(-5000):""};
 }
 

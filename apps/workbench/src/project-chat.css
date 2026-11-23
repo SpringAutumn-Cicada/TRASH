@@ -205,6 +205,11 @@
 .chat-process-panel{background:var(--chat-paper);border-color:var(--chat-line);border-radius:12px;margin-top:15px}
 .chat-process-panel>header{padding:13px 15px;background:var(--chat-canvas);font-size:12px}
 .chat-process-panel pre{padding:15px;font-size:12px}
+.chat-turn-status.status-resuming{color:var(--green)}
+.chat-previous-attempt{border-top:1px solid var(--chat-line)}
+.chat-previous-attempt>summary{cursor:pointer;padding:12px 15px;font-size:12px;font-weight:600}
+.chat-previous-attempt>summary time{margin-left:6px;color:var(--muted);font-weight:400}
+.chat-previous-attempt>div{padding:0 15px 12px;min-width:0}
 .chat-empty-response{font-size:13px;line-height:1.8;min-height:52px}
 .chat-composer{padding:16px 22px 10px;border-top:1px solid var(--chat-line);background:var(--chat-paper)}
 .chat-input-shell{border-radius:16px;border-color:var(--chat-line);background:var(--chat-paper);box-shadow:0 3px 14px #23415c06}

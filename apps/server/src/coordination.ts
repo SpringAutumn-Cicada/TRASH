@@ -307,6 +307,7 @@ export class ExperimentCoordination {
     const op=z.object({operation:z.string()}).parse(body).operation;
     if(op==="coordination-context")return {
       assignment:job.id,instructions:job.instructions,expects_runs:job.expects_runs,report:job.report,after:job.after?this.details(project,this.jobs(project).filter(j=>j.id===job.after))[0]:undefined,
+      registered_plans:this.details(project,[job])[0]?.plans,
       repository:job.repository_id,
       plans:this.experiments.data.plans(project).filter(p=>p.repository.repository_id===job.repository_id).map(p=>({id:p.plan_id,version:p.version,title:p.content.title,status:p.status})),
       hosts:this.experiments.data.profiles(project).map(p=>({id:p.profile_id,name:p.name})),
@@ -326,7 +327,7 @@ export class ExperimentCoordination {
       if(task.sandbox==="read-only"||!job.repository_id)experimentError("AGENT_TOOL_READONLY",403);
       const input=z.object({key:z.string().trim().min(1).max(80),content:z.record(z.unknown())}).parse(body);
       const payloadHash=createHash("sha256").update(JSON.stringify(input.content)).digest("hex");
-      const existing=job.plans?.find(p=>p.key===input.key);
+      const existing=job.plans?.find(p=>p.key===input.key)??(task.resume_of?job.plans?.find(p=>p.draft_hash===payloadHash):undefined);
       if(existing){
         if(existing.draft_hash&&existing.draft_hash!==payloadHash)experimentError("IDEMPOTENCY_CONFLICT",409);
         return existing;
@@ -404,7 +405,7 @@ export class ExperimentCoordination {
     }
     if(operation==="coordination-memory")return this.memory.read(project,body);
     const view=this.view(project);
-    const root=task.coordination.origin??task.task_id;
+    const root=task.coordination.origin??task.resume_root??task.task_id;
     const scoped=task.coordination.origin?view.jobs.filter(job=>job.origin===root):view.jobs;
     if(operation==="coordination-brief"){
       const {job_id}=z.object({job_id:z.string().uuid()}).parse(body);
@@ -445,7 +446,9 @@ export class ExperimentCoordination {
     const input=z.object({operation:z.literal("coordination-dispatch"),key:z.string().min(1).max(100),
       conversation:z.string().uuid(),instructions:z.string().trim().min(1).max(16000),expects_runs:z.boolean(),
       after:z.string().uuid().optional(),gate:z.enum(["finish","success"]).default("finish")}).strict().parse(body);
-    const existing=view.jobs.find(j=>j.origin===task.task_id&&j.key===input.key);
+    const existing=view.jobs.find(j=>j.origin===root&&j.key===input.key)??(task.resume_of?view.jobs.find(j=>
+      j.origin===root&&!j.consultation&&j.conversation===input.conversation&&j.instructions===input.instructions&&
+      j.after===input.after&&j.expects_runs===input.expects_runs&&j.gate===input.gate):undefined);
     if(existing){
       if(existing.conversation!==input.conversation||existing.instructions!==input.instructions||existing.after!==input.after||existing.expects_runs!==input.expects_runs||existing.gate!==input.gate)
         experimentError("IDEMPOTENCY_CONFLICT",409);
@@ -455,10 +458,10 @@ export class ExperimentCoordination {
     if(!member||input.after&&!view.jobs.some(j=>j.id===input.after))experimentError("COORDINATION_TARGET_CHANGED",409);
     const id=randomUUID(),job:CoordinationJob={id,conversation:member.id,title:member.title,
       repository_id:member.repository_id,task_id:"code_"+id,instructions:input.instructions,expects_runs:input.expects_runs,
-      after:input.after,gate:input.gate,status:"waiting",reason:"等待投递",created_at:new Date().toISOString(),origin:task.task_id,key:input.key};
+      after:input.after,gate:input.gate,status:"waiting",reason:"等待投递",created_at:new Date().toISOString(),origin:root,key:input.key};
     this.store.db.transaction(()=>{
-      this.store.db.prepare("INSERT INTO coordination_jobs VALUES (?,?,?,?,?,?)").run(project,id,task.task_id,input.key,job.status,JSON.stringify(job));
-      this.store.db.prepare("INSERT OR IGNORE INTO coordination_summaries(project,origin,id) VALUES (?,?,?)").run(project,task.task_id,randomUUID());
+      this.store.db.prepare("INSERT INTO coordination_jobs VALUES (?,?,?,?,?,?)").run(project,id,root,input.key,job.status,JSON.stringify(job));
+      this.store.db.prepare("INSERT OR IGNORE INTO coordination_summaries(project,origin,id) VALUES (?,?,?)").run(project,root,randomUUID());
     }).immediate();
     return {id};
   }
@@ -469,8 +472,9 @@ export class ExperimentCoordination {
       if(state==="stopped")experimentError("COORDINATION_TARGET_CHANGED",409);
       this.store.db.prepare("INSERT OR IGNORE INTO coordination_consultations VALUES (?,?,'open')").run(project,origin);
       return questions.map(q=>{
-        const key="consult:"+task.task_id+":"+q.key;
-        const prior=this.jobs(project).find(j=>j.origin===origin&&j.key===key);
+        const key="consult:"+(task.resume_root??task.task_id)+":"+q.key;
+        const prior=this.jobs(project).find(j=>j.origin===origin&&(j.key===key||task.resume_of&&j.consultation&&
+          j.target===q.target&&j.instructions===q.question&&j.parent_question===q.parent_question));
         if(prior){
           if(!prior.consultation||prior.target!==q.target||prior.instructions!==q.question||prior.parent_question!==q.parent_question)
             experimentError("IDEMPOTENCY_CONFLICT",409);
@@ -537,7 +541,8 @@ export class ExperimentCoordination {
     const core=this.thread(project);
     const requests=new Map(this.consultations(project).map(r=>[r.origin,r.state]));
     const messages=core?turns.filter(t=>t.conversation_id===core).map(t=>({
-      id:t.task_id,origin:t.coordination?.origin,consultation_status:requests.get(t.task_id),prompt:t.instructions,response:t.response,status:t.status,created_at:t.created_at,error:t.error,summary:t.coordination?.kind==="summary"
+      id:t.task_id,origin:t.coordination?.origin,resume_root:t.resume_root,waiting_for:t.waiting_for,can_resume:t.can_resume,
+      consultation_status:requests.get(t.resume_root??t.task_id),prompt:t.instructions,response:t.response,status:t.status,created_at:t.created_at,error:t.error,summary:t.coordination?.kind==="summary"
     })):[];
     const queue=this.experiments.data.runs(project).filter(r=>this.experiments.data.active(r)).sort((a,b)=>a.created_at.localeCompare(b.created_at)).map(r=>({
       id:r.run_id,title:r.plan.content.title,host:r.plan.profile.name,status:r.status,created_at:r.created_at}));
@@ -556,7 +561,34 @@ export class ExperimentCoordination {
     const task=this.agent.coordinationTask(project,id);
     if(!task||task.conversation_id!==this.thread(project)||!task.coordination||task.coordination.kind==="assignment")
       experimentError("NOT_FOUND",404);
-    return {logs:task.logs};
+    const recovery=task.output?.find(entry=>entry.kind==="tool"&&entry.title==="续跑核对")?.text;
+    return {logs:recovery?recovery+"\n\n"+task.logs:task.logs};
+  }
+
+  async resume(project:string,id:string,chatUrl:string,core=false) {
+    const task=this.agent.coordinationTask(project,id);
+    if(core&&task?.conversation_id!==this.thread(project))experimentError("COORDINATION_TARGET_CHANGED",409);
+    if(core&&task&&this.consultations(project).some(item=>
+      item.origin===(task.coordination?.origin??task.resume_root??id)&&item.state==="stopped"))
+      experimentError("COORDINATION_TARGET_CHANGED",409);
+    const job=task?.coordination?.kind==="assignment"?this.jobs(project).find(item=>item.id===task.coordination?.id):undefined;
+    if(task?.coordination?.kind==="assignment"){
+      const binding=this.agent.coordinationBinding(project,task.conversation_id!);
+      if(!job||!["delivered","settled"].includes(job.status)||binding.repository_id!==job.repository_id||
+        !this.store.db.prepare("SELECT 1 FROM coordination_members WHERE project=? AND conversation=?").get(project,job.conversation))
+        experimentError("COORDINATION_TARGET_CHANGED",409);
+    }
+    const resumed=await this.agent.resume(project,id,chatUrl,core);
+    if(job&&resumed.resume_of===id&&["running","queued"].includes(resumed.status)){
+      job.status="delivered";
+      for(const plan of job.plans??[]){
+        if(plan.status==="blocked"&&plan.info==="成员未完成实验方案准备"&&!plan.run_id){
+          plan.status="queued";delete plan.info;
+        }
+      }
+      this.save(job);
+    }
+    return resumed;
   }
 
   async action(project:string,body:unknown) {
@@ -594,12 +626,17 @@ export class ExperimentCoordination {
       this.store.db.prepare("UPDATE coordination_consultations SET state='open' WHERE project=? AND origin=?").run(project,origin);
       return this.message(project,request_id,failed.instructions,true,feedback);
     }
+    if(action==="resume"){
+      const {id}=z.object({id:z.string()}).strict().parse(body);
+      const resumed=await this.resume(project,id,this.url(project),true);
+      return {id:resumed.task_id};
+    }
     if(action==="stop-consultation"||action==="acknowledge"||action==="stop"){
       const {id,confirm}=z.object({id:z.string(),confirm:z.literal(true)}).parse(body);
       const task=this.agent.coordinationTask(project,id);
       if(!task||task.conversation_id!==this.thread(project)||!task.coordination)experimentError("COORDINATION_TARGET_CHANGED",409);
-      if(action!=="acknowledge"){
-        const origin=task.coordination.origin??id;
+      if(action==="stop-consultation"){
+        const origin=task.coordination.origin??task.resume_root??id;
         if(task.coordination.kind==="coordinator"||task.coordination.origin){
           this.store.db.transaction(()=>{
             this.store.db.prepare("INSERT INTO coordination_consultations VALUES (?,?,'stopped') ON CONFLICT(project,origin) DO UPDATE SET state='stopped'").run(project,origin);
@@ -608,9 +645,10 @@ export class ExperimentCoordination {
             }
           }).immediate();
         }
-        for(const t of this.agent.coordinationTurns(project).filter(t=>(t.task_id===id||t.coordination?.origin===origin)&&["running","queued"].includes(t.status)))
+        for(const t of this.agent.coordinationTurns(project).filter(t=>(t.task_id===id||t.resume_root===origin||t.coordination?.origin===origin)&&["running","queued"].includes(t.status)))
           this.agent.cancel(project,t.task_id);
       }
+      else if(action==="stop")this.agent.cancel(project,id);
       else this.agent.acknowledge(project,id);
       return {ok:confirm};
     }

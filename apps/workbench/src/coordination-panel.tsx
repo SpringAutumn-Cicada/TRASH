@@ -1,13 +1,13 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, FormEvent } from "react";
-import { BookOpen, ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Search, Settings2, Square, Workflow, X } from "lucide-react";
+import { BookOpen, ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Play, Search, Settings2, Square, Workflow, X } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
 import type { NavigateOptions } from "./navigation.js";
 import { MemoryPanel } from "./coordination-memory.js";
 import { ConsultationFeedback } from "./consultation-feedback.js";
 import { CoordinationQueue } from "./coordination-queue.js";
 import { ChatDecisionCard } from "./chat-decision-card.js";
-import { ChatAssistantMessage, ChatComposer, ChatTranscript, ChatUserMessage, chatStates, useChatScroll } from "./chat-view.js";
+import { ChatAssistantMessage, ChatComposer, ChatTranscript, ChatUserMessage, chatStates, groupChatAttempts, useChatScroll } from "./chat-view.js";
 import { ChatHeightControl, useChatHeight } from "./chat-height-control.js";
 import { ErrorNotice } from "./error-notice.js";
 import { api, uiError } from "./api.js";
@@ -50,11 +50,15 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
   const {sending}=useSyncExternalStore(draftStore.subscribe,draftStore.getViewSnapshot);
   const {height,change:changeHeight}=useChatHeight(projectId);
   const messages=data?.messages??[];
-  const groups=messages.filter(message=>!message.origin);
+  const messageGroups=useMemo(()=>groupChatAttempts(data?.messages??[],message=>message.id),[data?.messages]);
+  const groups=messageGroups.filter(([message])=>!message.origin);
   const experimentJobs=data?.jobs.filter(j=>!j.consultation)??[];
   const last=messages.at(-1);
   const active=messages.find(message=>activeStatuses.includes(message.status));
   const interrupted=last?.status==="interrupted";
+  const canResume=Boolean(!loadError&&!active&&last?.can_resume&&
+    messages.find(message=>message.id===(last.origin??last.resume_root??last.id))?.consultation_status!=="stopped");
+  const resume=()=>last&&void act({action:"resume",id:last.id});
   const scrollRevision=useMemo(()=>[messages.length,last?.id,last?.response,last?.status],
     [messages.length,last?.id,last?.response,last?.status]);
   const scroll=useChatScroll(projectId+tab,scrollRevision);
@@ -128,13 +132,13 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
     }finally{draftStore.setPending("sending","",false);}
   };
   const copy=(id:string,message:string)=>void copyText(message).then(()=>setCopied(id)).catch(()=>setError("复制失败，请手动选择内容复制。"));
-  const readProcess=async(id:string)=>{
+  const readProcess=async(id:string,open?:string)=>{
     setLoadingProcess(true);
     setError("");
     try{
       const {logs}=await api<{logs:string}>(url+"/messages/"+encodeURIComponent(id)+"/process",{cache:"no-store"});
       setProcesses(previous=>({...previous,[id]:logs}));
-      setOpenProcess(id);
+      if(open)setOpenProcess(open);
     }catch(cause){setError(uiError(cause,"读取执行过程失败。"));}
     finally{setLoadingProcess(false);}
   };
@@ -230,16 +234,19 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
               <span className="chat-welcome-icon"><Workflow size={31}/></span>
               <h3>向论文对话提问或安排实验</h3>
               <p>例如，比较方案1和方案2的进展，看看哪个适合先上机。</p>
-            </div>:groups.map((root,index)=>{
+            </div>:groups.map((rootAttempts,index)=>{
+              const [root]=rootAttempts;
               const jobs=data.jobs.filter(job=>job.consultation&&job.origin===root.id);
-              const replies=messages.filter(m=>m.origin===root.id);
+              const replies=messageGroups.filter(([m])=>m.origin===root.id);
               const waitingForMember=jobs.some(job=>!job.feedback);
               const waitingForChoice=jobs.some(job=>job.status==="waiting"&&job.candidates?.length);
               return <Fragment key={root.id}>
-                {[root,...replies].map(message=>{
+                {[rootAttempts,...replies].map(([messageRoot,...attempts])=>{
+                  const message=attempts.at(-1)??messageRoot;
                   const current=message.id===(active??last)?.id;
-                  let status=message.status;
-                  if(message===root&&status==="completed"&&jobs.length){
+                  let status=message.status==="running"&&attempts.length?"resuming":message.status;
+                  const isRoot=messageRoot.id===root.id;
+                  if(isRoot&&status==="completed"&&jobs.length){
                     if(root.consultation_status==="stopped")status="已停止咨询";
                     if(root.consultation_status==="open"){
                       if(waitingForChoice)status="等待选择对话";
@@ -247,27 +254,31 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
                       else status="正在整理反馈";
                     }
                   }
-                  return <section key={message.id} className="chat-turn" aria-label={`第 ${index+1} 轮协调`}>
-                    {!message.summary&&<ChatUserMessage author="你" at={message.created_at} text={message.prompt}
-                      copied={copied===message.id+"-user"} onCopy={()=>copy(message.id+"-user",message.prompt)} onQuote={()=>quote(message.prompt)}/>}
+                  return <section key={messageRoot.id} className="chat-turn" aria-label={`第 ${index+1} 轮协调`}>
+                    {!messageRoot.summary&&<ChatUserMessage author="你" at={messageRoot.created_at} text={messageRoot.prompt}
+                      copied={copied===messageRoot.id+"-user"} onCopy={()=>copy(messageRoot.id+"-user",messageRoot.prompt)} onQuote={()=>quote(messageRoot.prompt)}/>}
                     <ChatAssistantMessage author={message.origin?"协调反馈":message.summary?"实验汇总":"协调 Agent"} at={message.created_at} response={message.response}
                       error={message.error} status={current&&loadError?"offline":status} turnStatus={message.status}
                       current={current} copied={copied===message.id} onCopy={()=>copy(message.id,message.response)}
-                      process={{open:openProcess===message.id,disabled:loadingProcess,log:processes[message.id],
-                        toggle:()=>openProcess===message.id?setOpenProcess(undefined):void readProcess(message.id),
-                        refresh:()=>void readProcess(message.id)}}
+                      process={{open:openProcess===messageRoot.id,disabled:loadingProcess,log:processes[message.id],
+                        toggle:()=>openProcess===messageRoot.id?setOpenProcess(undefined):void readProcess(message.id,messageRoot.id),
+                        refresh:()=>void readProcess(message.id,messageRoot.id),
+                        previous:(attempts.length?[messageRoot,...attempts.slice(0,-1)]:[]).map(item=>({
+                          id:item.id,at:item.created_at,status:item.status,response:item.response,error:item.error,log:processes[item.id],
+                          load:()=>void readProcess(item.id)
+                        }))}}
                       actions={<>
-                        {message.id===root.id&&root.consultation_status==="open"&&<button type="button" className="text-button" disabled={busy}
+                        {isRoot&&root.consultation_status==="open"&&<button type="button" className="text-button" disabled={busy}
                           onClick={()=>void act({action:"stop-consultation",id:root.id,confirm:true})}>停止咨询</button>}
-                        {message.origin&&message===replies.at(-1)&&root.consultation_status!=="stopped"&&["failed","cancelled"].includes(message.status)&&
-                          <button type="button" className="text-button" disabled={busy||!!active} onClick={()=>void act({action:"retry-feedback",id:message.id,request_id:crypto.randomUUID()})}>重新处理反馈</button>}
+                        {message.id===last?.id&&canResume&&
+                          <button type="button" className="text-button" disabled={busy} onClick={resume}><Play size={13}/>恢复执行</button>}
                         {!message.summary&&["failed","cancelled","interrupted"].includes(message.status)&&
                           <button type="button" className="text-button" disabled={busy} onClick={()=>quote(message.prompt)}>将问题填入输入框</button>}
                         {message.status==="interrupted"&&<button type="button" className="text-button" disabled={busy}
                           onClick={()=>{if(window.confirm("已核对本机旧进程确实停止？确认后即可继续使用协调对话。"))
                             void act({action:"acknowledge",id:message.id,confirm:true});}}>确认旧进程已停止</button>}
                       </>}>
-                      {message.id===root.id&&<ConsultationFeedback jobs={jobs} members={members} busy={busy}
+                      {isRoot&&<ConsultationFeedback jobs={jobs} members={members} busy={busy}
                         select={(id,conversation)=>void act({action:"select-consultation",id,conversation})}
                         open={(conversation,turn)=>{chatDraftStore(projectId).choose(conversation);onNavigate("chat",{focus:turn});}}/>}
                     </ChatAssistantMessage>
@@ -277,14 +288,19 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
             })}
         </ChatTranscript>
         <ChatHeightControl height={height} onChange={changeHeight} target={transcript}/>
+        {active?.status==="queued"&&active.waiting_for&&<p className="chat-resource-wait" role="status">
+          <strong>等待资源</strong><span>{active.waiting_for}</span>
+        </p>}
         <ChatComposer input={input} label="协调指令" placeholder="安排论文实验，或询问当前进度…" store={draftStore} conversation=""
           disabled={busy||Boolean(sending[""])} onSubmit={event=>void send(event)}
           controls={<>
             <button type="button" className="chat-control-button" aria-label="停止本轮协调" title="停止本轮协调"
               disabled={busy||!active||active.status==="cancelling"} onClick={()=>active&&void act({action:"stop",id:active.id,confirm:true})}><Square size={15}/></button>
+            <button type="button" className="chat-control-button" aria-label="恢复协调执行" title="恢复原任务"
+              disabled={busy||!canResume} onClick={resume}><Play size={15}/></button>
           </>}
           send={{busy:Boolean(sending[""]),disabled:busy||Boolean(sending[""])||!data||Boolean(active)||interrupted}}
-          summary={<span className="chat-write-summary">{interrupted?"请先确认旧进程已停止":"协调权限 · 只读与派单"}</span>}/>
+          summary={<span className="chat-write-summary">{interrupted?"可恢复执行 · 旧进程状态待核对":"协调权限 · 只读与派单"}</span>}/>
       </div>
     </div>:tab==="memory"?<MemoryPanel url={url} members={members} initialId={memoryId} openChat={(id,turn)=>{chatDraftStore(projectId).choose(id);onNavigate("chat",{focus:turn});}} openMethod={experiment=>onNavigate("experiments",{tab:"method",experiment})}/>:<div className="coordination-panel">
       {decisions.length>0&&<section className="coord-section"><header><h3>待你处理</h3></header>

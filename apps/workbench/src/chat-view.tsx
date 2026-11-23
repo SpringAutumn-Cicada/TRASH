@@ -5,9 +5,20 @@ import type { ChatDraftStore } from "./chat-drafts.js";
 import "./project-chat.css";
 
 export const chatStates: Record<string, string> = {
-  decision:"等待选择", queued:"等待资源", running:"正在处理", cancelling:"正在停止",
-  completed:"已完成", failed:"失败", cancelled:"已停止", interrupted:"已中断", offline:"状态待同步"
+  decision:"等待选择", queued:"等待资源", running:"正在处理", resuming:"正在恢复", cancelling:"正在停止",
+  completed:"已完成", failed:"失败", cancelled:"已停止", interrupted:"中断待核对", offline:"状态待同步"
 };
+
+export function groupChatAttempts<T extends {resume_root?:string}>(items: T[], identify: (item:T)=>string) {
+  const groups=new Map<string,T[]>();
+  for(const item of items){
+    const id=item.resume_root??identify(item);
+    const group=groups.get(id);
+    if(group)group.push(item);
+    else groups.set(id,[item]);
+  }
+  return [...groups.values()];
+}
 
 function MessageTime({at}:{at?:string}) {
   return at ? <time dateTime={at}>{new Date(at).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}</time> : null;
@@ -87,7 +98,8 @@ function ChatMessageEditor({text,disabled,onCancel,onSend}:{
 export function ChatAssistantMessage({author,at,response,error,status,turnStatus,current,copied,onCopy,process,actions,output,children}:{
   author:string; at?:string; response:string; error?:string; status:string; turnStatus:string; current:boolean;
   copied:boolean; onCopy:()=>void;
-  process:{open:boolean; disabled:boolean; log?:string; toggle:()=>void; refresh:()=>void};
+  process:{open:boolean; disabled:boolean; log?:string; toggle:()=>void; refresh:()=>void;
+    previous?:{id:string;at?:string;status:string;response:string;error?:string;log?:string;load:()=>void;output?:React.ReactNode}[]};
   actions?:React.ReactNode; output?:React.ReactNode; children?:React.ReactNode;
 }) {
   return <article className="chat-message chat-assistant">
@@ -111,16 +123,27 @@ export function ChatAssistantMessage({author,at,response,error,status,turnStatus
         {actions}
       </div>
       <span className={`chat-turn-status status-${status}`} role={current?"status":undefined}>
-        {["running","cancelling"].includes(status)&&<LoaderCircle size={12} className="spin" aria-hidden="true"/>}
+        {["running","resuming","cancelling"].includes(status)&&<LoaderCircle size={12} className="spin" aria-hidden="true"/>}
         {status==="completed"&&<Check size={12} aria-hidden="true"/>}
         {chatStates[status]??status}
       </span>
     </div>
     {process.open&&<div className="chat-process-panel">
-      <header><span>执行过程 · {chatStates[turnStatus]??turnStatus}</span>
+      <header><span>{process.previous?.length?`第 ${process.previous.length+1} 次执行`:"执行过程"} · {chatStates[status]??chatStates[turnStatus]??turnStatus}</span>
         <button type="button" className="text-button" disabled={process.disabled} onClick={process.refresh}>刷新</button>
       </header>
       <pre>{process.log||"暂无过程记录。"}</pre>
+      {process.previous?.map((attempt,index)=><details className="chat-previous-attempt" key={attempt.id}>
+        <summary>第 {index+1} 次执行 · {chatStates[attempt.status]??attempt.status} <MessageTime at={attempt.at}/></summary>
+        <div>
+          {attempt.output??(attempt.response&&<ChatMarkdown text={attempt.response}/>)}
+          {attempt.error&&<p className="chat-error">{attempt.error}</p>}
+          <button type="button" className="text-button" disabled={process.disabled} onClick={attempt.load}>
+            {attempt.log===undefined?"读取执行日志":"刷新执行日志"}
+          </button>
+          {attempt.log!==undefined&&<pre>{attempt.log||"暂无过程记录。"}</pre>}
+        </div>
+      </details>)}
     </div>}
   </article>;
 }
