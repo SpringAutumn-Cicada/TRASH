@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown, Bot, Check, ChevronDown, Copy, LoaderCircle, Send } from "lucide-react";
 import { ChatMarkdown } from "./chat-markdown.js";
+import type { ChatDraftStore } from "./chat-drafts.js";
 import "./project-chat.css";
 
 export const chatStates: Record<string, string> = {
@@ -71,7 +72,7 @@ export function ChatAssistantMessage({author,at,response,error,status,turnStatus
   </article>;
 }
 
-export function useChatScroll(thread:string,revision:string) {
+export function useChatScroll(thread:string,revision:unknown) {
   const messagesRef=useRef<HTMLDivElement>(null);
   const follow=useRef(true);
   const [away,setAway]=useState(false);
@@ -111,23 +112,32 @@ export function ChatTranscript({scroll,target,label,children}:{
   </div>;
 }
 
-export function ChatComposer({input,label,placeholder,draft,disabled,onChange,onSubmit,shellProps,attachments,tools,controls,summary}:{
-  input:React.RefObject<HTMLTextAreaElement|null>; label:string; placeholder:string; draft:string; disabled:boolean;
-  onChange:(value:string)=>void; onSubmit:React.FormEventHandler<HTMLFormElement>;
+export function ChatComposer({input,label,placeholder,store,conversation,disabled,onSubmit,shellProps,attachments,tools,controls,send,canSendAttachments=false,summary}:{
+  input:React.RefObject<HTMLTextAreaElement|null>; label:string; placeholder:string;
+  store:ChatDraftStore; conversation:string; disabled:boolean;
+  onSubmit:React.FormEventHandler<HTMLFormElement>;
   shellProps?:React.HTMLAttributes<HTMLDivElement>; attachments?:React.ReactNode; tools?:React.ReactNode;
-  controls:React.ReactNode; summary?:React.ReactNode;
+  controls:React.ReactNode; send:React.ComponentProps<typeof ChatSendButton>; canSendAttachments?:boolean; summary?:React.ReactNode;
 }) {
+  const draft=useSyncExternalStore(store.subscribe,()=>store.getSnapshot().messages[conversation]?.text??"");
+  const composing=useRef(false);
+  const cannotSend=disabled||send.disabled||(!draft.trim()&&!canSendAttachments);
   useEffect(()=>{
     if(!input.current)return;
     input.current.style.height="auto";
     input.current.style.height=Math.min(input.current.scrollHeight,210)+"px";
   },[draft,input]);
-  return <form className="chat-composer" onSubmit={onSubmit}>
+  return <form className="chat-composer" onSubmit={event=>{
+    if(composing.current||cannotSend){event.preventDefault();return;}
+    onSubmit(event);
+  }}>
     <div {...shellProps} className={`chat-input-shell ${shellProps?.className??""}`}>
       {attachments}
       <textarea ref={input} aria-label={label} value={draft} maxLength={30000} disabled={disabled}
-        placeholder={placeholder} onChange={event=>onChange(event.target.value)} onKeyDown={event=>{
-          if((event.ctrlKey||event.metaKey)&&event.key==="Enter"&&!event.nativeEvent.isComposing){
+        placeholder={placeholder} onChange={event=>store.updateText(conversation,event.target.value)}
+        onCompositionStart={()=>{composing.current=true;}} onCompositionEnd={()=>{composing.current=false;}}
+        onBlur={()=>{composing.current=false;}} onKeyDown={event=>{
+          if((event.ctrlKey||event.metaKey)&&event.key==="Enter"&&!composing.current&&!event.nativeEvent.isComposing&&event.keyCode!==229){
             event.preventDefault();
             event.currentTarget.form?.requestSubmit();
           }
@@ -135,14 +145,14 @@ export function ChatComposer({input,label,placeholder,draft,disabled,onChange,on
       <div className="chat-input-tools">
         {tools}
         <span className="chat-char-count">{draft.length>24000?`${draft.length}/30000`:""}</span>
-        <div className="chat-run-actions">{controls}</div>
+        <div className="chat-run-actions">{controls}<ChatSendButton {...send} disabled={cannotSend}/></div>
       </div>
     </div>
     <div className="chat-composer-footer">{summary}<small>Ctrl / ⌘ + Enter 发送</small></div>
   </form>;
 }
 
-export function ChatSendButton({busy,disabled,append,title}:{busy:boolean;disabled:boolean;append?:boolean;title?:string}) {
+function ChatSendButton({busy,disabled,append,title}:{busy:boolean;disabled:boolean;append?:boolean;title?:string}) {
   return <button className="chat-send-button" aria-label={append?"追加指令":"发送消息"} title={title} disabled={disabled}>
     {busy?<LoaderCircle size={15} className="spin"/>:<Send size={15}/>}<span>{append?"追加指令":"发送"}</span>
   </button>;

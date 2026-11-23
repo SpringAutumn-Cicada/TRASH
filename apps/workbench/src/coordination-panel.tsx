@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { BookOpen, ClipboardList, LoaderCircle, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Search, Settings2, Square, Workflow, X } from "lucide-react";
 import type { CoordinationView, ProjectPage } from "@trash/protocol";
@@ -7,7 +7,7 @@ import { MemoryPanel } from "./coordination-memory.js";
 import { ConsultationFeedback } from "./consultation-feedback.js";
 import { CoordinationQueue } from "./coordination-queue.js";
 import { ChatDecisionCard } from "./chat-decision-card.js";
-import { ChatAssistantMessage, ChatComposer, ChatSendButton, ChatTranscript, ChatUserMessage, chatStates, useChatScroll } from "./chat-view.js";
+import { ChatAssistantMessage, ChatComposer, ChatTranscript, ChatUserMessage, chatStates, useChatScroll } from "./chat-view.js";
 import { ChatHeightControl, useChatHeight } from "./chat-height-control.js";
 import { ErrorNotice } from "./error-notice.js";
 import { api, uiError } from "./api.js";
@@ -46,8 +46,7 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
   const membersToggle=useRef<HTMLButtonElement>(null);
   const ids=useId();
   const draftStore=chatDraftStore(projectId,"coordination");
-  const {messages:drafts,sending}=useSyncExternalStore(draftStore.subscribe,draftStore.getSnapshot);
-  const prompt=drafts[""]?.text??"";
+  const {sending}=useSyncExternalStore(draftStore.subscribe,draftStore.getViewSnapshot);
   const {height,change:changeHeight}=useChatHeight(projectId);
   const messages=data?.messages??[];
   const groups=messages.filter(message=>!message.origin);
@@ -55,7 +54,9 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
   const last=messages.at(-1);
   const active=messages.find(message=>activeStatuses.includes(message.status));
   const interrupted=last?.status==="interrupted";
-  const scroll=useChatScroll(projectId+tab,JSON.stringify([messages.length,last?.response,last?.status]));
+  const scrollRevision=useMemo(()=>[messages.length,last?.id,last?.response,last?.status],
+    [messages.length,last?.id,last?.response,last?.status]);
+  const scroll=useChatScroll(projectId+tab,scrollRevision);
   const members=data?.conversations??[];
   const decisions=members.filter(s=>s.joined&&["pending","selected"].includes(s.decision?.status??""));
   const pending=decisions.length;
@@ -92,22 +93,21 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
     }
   }
 
-  const updateDraft=(text:string)=>{
-    if(draftStore.getSnapshot().sending[""])return;
-    draftStore.update("",draft=>({...draft,text,requestId:crypto.randomUUID()}));
-  };
   const quote=(text:string)=>{
-    updateDraft((prompt?prompt+"\n\n"+text:text).slice(0,30000));
+    draftStore.updateText("",previous=>(previous?previous+"\n\n"+text:text).slice(0,30000));
     input.current?.focus();
   };
   const send=async(event:FormEvent<HTMLFormElement>)=>{
     event.preventDefault();
-    if(!data||busy||active||interrupted||!prompt.trim()||draftStore.getSnapshot().sending[""])return;
-    const id=drafts[""]?.requestId??crypto.randomUUID();
+    const state=draftStore.getSnapshot();
+    const draft=state.messages[""];
+    const prompt=draft?.text?.trim()??"";
+    if(!data||busy||active||interrupted||!prompt||state.sending[""])return;
+    const id=draft?.requestId??crypto.randomUUID();
     draftStore.update("",draft=>({...draft,requestId:id}));
     draftStore.setPending("sending","",true);
     try {
-      if(await act({action:"message",id,instructions:prompt.trim()})){
+      if(await act({action:"message",id,instructions:prompt})){
         draftStore.discard("","");
         scroll.scrollBottom();
       }
@@ -263,13 +263,13 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
             })}
         </ChatTranscript>
         <ChatHeightControl height={height} onChange={changeHeight} target={transcript}/>
-        <ChatComposer input={input} label="协调指令" placeholder="安排论文实验，或询问当前进度…" draft={prompt}
-          disabled={busy||Boolean(sending[""])} onChange={updateDraft} onSubmit={event=>void send(event)}
+        <ChatComposer input={input} label="协调指令" placeholder="安排论文实验，或询问当前进度…" store={draftStore} conversation=""
+          disabled={busy||Boolean(sending[""])} onSubmit={event=>void send(event)}
           controls={<>
             <button type="button" className="chat-control-button" aria-label="停止本轮协调" title="停止本轮协调"
               disabled={busy||!active||active.status==="cancelling"} onClick={()=>active&&void act({action:"stop",id:active.id,confirm:true})}><Square size={15}/></button>
-            <ChatSendButton busy={Boolean(sending[""])} disabled={busy||Boolean(sending[""])||!data||!prompt.trim()||Boolean(active)||interrupted}/>
           </>}
+          send={{busy:Boolean(sending[""]),disabled:busy||Boolean(sending[""])||!data||Boolean(active)||interrupted}}
           summary={<span className="chat-write-summary">{interrupted?"请先确认旧进程已停止":"协调权限 · 只读与派单"}</span>}/>
       </div>
     </div>:tab==="memory"?<MemoryPanel url={url} members={members} initialId={memoryId} openChat={(id,turn)=>{chatDraftStore(projectId).choose(id);onNavigate("chat",{focus:turn});}} openMethod={experiment=>onNavigate("experiments",{tab:"method",experiment})}/>:<div className="coordination-panel">
