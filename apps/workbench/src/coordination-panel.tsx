@@ -12,6 +12,7 @@ import { ChatHeightControl, useChatHeight } from "./chat-height-control.js";
 import { ErrorNotice } from "./error-notice.js";
 import { api, uiError } from "./api.js";
 import { chatDraftStore } from "./chat-drafts.js";
+import { reuseChatRows, useChatPolling } from "./chat-polling.js";
 import { copyText } from "./clipboard.js";
 import "./coordination.css";
 
@@ -61,19 +62,31 @@ export function CoordinationPanel({projectId,onNavigate,memoryId}:{projectId:str
   const decisions=members.filter(s=>s.joined&&["pending","selected"].includes(s.decision?.status??""));
   const pending=decisions.length;
 
-  async function refresh() {
+  async function refresh(signal?:AbortSignal) {
     const version=++revision.current;
     try {
-      const view=await api<CoordinationView>(url,{cache:"no-store"});
-      if(version===revision.current){setData(view);setLoadError("");}
-    } catch(cause){if(version===revision.current)setLoadError(uiError(cause,"读取协调工作区失败"));}
+      const view=await api<CoordinationView>(url,{cache:"no-store",signal});
+      if(version!==revision.current||signal?.aborted)return;
+      setData(previous=>{
+        if(!previous)return view;
+        const hosts=reuseChatRows(previous.hosts,view.hosts,"id");
+        const queue=reuseChatRows(previous.queue,view.queue,"id");
+        const messages=reuseChatRows(previous.messages,view.messages,"id");
+        const jobs=reuseChatRows(previous.jobs,view.jobs,"id");
+        const conversations=reuseChatRows(previous.conversations,view.conversations,"id");
+        return hosts===previous.hosts&&queue===previous.queue&&messages===previous.messages&&jobs===previous.jobs&&conversations===previous.conversations
+          ?previous:{hosts,queue,messages,jobs,conversations};
+      });
+      setLoadError("");
+    } catch(cause){
+      if(version===revision.current&&!signal?.aborted)setLoadError(uiError(cause,"读取协调工作区失败"));
+    }
   }
 
-  useEffect(()=>{
-    void refresh();
-    const timer=setInterval(()=>void refresh(),5000);
-    return()=>{clearInterval(timer);revision.current++;};
-  },[url]);
+  const hasActiveWork=Boolean(active||data?.queue.length||messages.some(message=>message.consultation_status==="open")||
+    data?.conversations.some(member=>member.joined&&activeStatuses.includes(member.status))||
+    data?.jobs.some(job=>job.status==="waiting"||job.status==="delivered"&&job.plans?.some(plan=>plan.status==="queued"||plan.status==="authorized")));
+  useChatPolling(url,hasActiveWork||!data,5000,refresh);
 
   async function act(body:object) {
     if(actionPending.current)return false;

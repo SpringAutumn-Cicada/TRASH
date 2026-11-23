@@ -5,6 +5,7 @@ import { ErrorNotice } from './error-notice.js';
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Bot, Check, ChevronDown, FolderOpen, List, LoaderCircle, MessageSquare, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Puzzle, Trash2, Search, Play, Settings2, Square, X } from 'lucide-react';
 import { chatDraftStore } from './chat-drafts.js';
+import { reuseChatRows, reuseChatSnapshot, useChatPolling } from './chat-polling.js';
 import { copyText } from './clipboard.js';
 import { ChatMarkdown } from './chat-markdown.js';
 import { ChatDecisionCard } from './chat-decision-card.js';
@@ -22,6 +23,7 @@ type ChatSkill={id:string;title:string;group?:'trash'|'claude-scholar'};
 type SkillsStatus='loading'|'ready'|'failed';
 type ModelConfig={model:string|null;reasoning_effort:string|null;models:{id:string;efforts:string[];default_effort:string}[]};
 const effortLabels:Record<string,string>={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh',max:'Max',ultra:'Ultra'};
+const isActiveTurn=(turn:Turn)=>['queued','running','cancelling'].includes(turn.status);
 const isWaiting=(turn:Turn)=>turn.status==='queued'||turn.status==='running'&&Boolean(turn.waiting_for);
 const waitingResource=(turn:Turn)=>turn.waiting_for?.trim()||'正在确认占用情况';
 const errors:Record<string,string>={CHAT_DECISION_NOT_FOUND:"这条选择已不可用，请刷新对话。",CHAT_DECISION_ALREADY_SELECTED:"这条选择已有记录。",ORIGIN_NOT_ALLOWED:"请在当前 TRASH 工作台提交选择。",CHAT_WRITE_SCOPE_INVALID:"绑定的 Git 仓库目录不可用。",CHAT_REPOSITORY_BINDING_REQUIRED:"请先为当前会话选择论文代码的 Git 仓库。",CHAT_REPOSITORY_BINDING_CHANGED:"会话绑定的仓库已变化，请刷新后重试。",CHAT_REPOSITORY_UNAVAILABLE:"所选 Git 仓库不可用，请重新选择。",CHAT_PAPER_LAYOUT_CONFLICT:"论文仓库路径与其他受保护目录重叠。",CHAT_PAPER_SANDBOX_UNAVAILABLE:"当前环境无法隔离论文代码目录。",REPOSITORY_NOT_BOUND:"当前会话尚未绑定 Git 仓库。",CHAT_SESSION_ACTIVE:'请先完成或处理当前对话中的任务。',CHAT_MODEL_CONFIG_UNAVAILABLE:'暂时无法读取本机 Codex 设置。',CHAT_NOT_READY:'会话正在启动或停止，请稍后再追加指令。',PROJECT_HAS_ACTIVE_TASKS:'当前项目正在处理知识任务或其他操作，请等待完成后再发送。',CODE_AGENT_BUSY:'当前项目或绑定仓库有 Agent 正在执行，请等待或停止后再发送。',CODE_AGENT_RECOVERY_REQUIRED:'请先核对中断任务并确认旧进程停止。',CHAT_SESSION_NOT_FOUND:'未找到可恢复的会话，请新建对话。',EXPERIMENT_ACTIVE:'项目有未结束实验，请先处理实验状态。',INVALID_REQUEST:'请检查消息和对话选项。',WORKSPACE_MIGRATING:'论文工作区正在迁移，请完成后再发送消息。'};
@@ -125,17 +127,44 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
   const [actingBusy,setBusy]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true),[connected,setConnected]=useState(true),[query,setQuery]=useState(''),[history,setHistory]=useState(true),[options,setOptions]=useState(false),[indexOpen,setIndexOpen]=useState(false),[copied,setCopied]=useState('');
   const busy=actingBusy||sending;
   const [logs,setLogs]=useState<Record<string,string>>({}),[openLogs,setOpenLogs]=useState<Record<string,boolean>>({});
-  const initial=useRef(false),input=useRef<HTMLTextAreaElement>(null),alive=useRef(true),acting=useRef(false),historyRevision=useRef(0);
+  const initial=useRef(false),input=useRef<HTMLTextAreaElement>(null),alive=useRef(true),acting=useRef(false),historyRevision=useRef(0),historyRead=useRef(0);
   const attachments=useChatAttachments(base,conversation,draftView.attachments??[],draftStore,setError);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
-  const call=async<T,>(path:string,body?:unknown):Promise<T>=>{
-    const response=await fetch(base+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  const call=async<T,>(path:string,body?:unknown,signal?:AbortSignal):Promise<T>=>{
+    const response=await fetch(base+path,body===undefined?{signal}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
     const appendRequest=/^\/chat\/tasks\/[^/]+\/append$/.test(path);
     if(appendRequest&&response.status===404)throw new Error('追加接口尚未加载，或原任务已经结束。请先刷新对话状态；若仍在运行，请保存未发送内容，待任务结束或手动停止后，点击本分支重启按钮加载新接口。');
     const data=await response.json().catch(()=>{throw new Error('服务返回了非 JSON 响应，请检查本分支服务是否正常运行。');});
     if(!response.ok)throw new Error(errors[data.error]??`对话请求失败（HTTP ${response.status}${typeof data.error==='string'?`，${data.error}`:''}），请保留输入并查看服务日志。`);return data as T;
   };
-  const refresh=async()=>{const data=await call<History>('/chat/tasks');if(alive.current){setTurns(data.tasks);setTitles(data.titles??{});setRepositoryBindings(data.repository_bindings??{});setConnected(true);}return data.tasks;};
+  const refresh=async(signal?:AbortSignal)=>{
+    const read=++historyRead.current,revision=historyRevision.current;
+    try {
+      const data=await call<History>('/chat/tasks',undefined,signal);
+      if(!alive.current||signal?.aborted||read!==historyRead.current||revision!==historyRevision.current)return;
+      setTurns(previous=>reuseChatRows(previous,data.tasks,'task_id'));
+      setTitles(previous=>reuseChatSnapshot(previous,data.titles??{}));
+      setRepositoryBindings(previous=>reuseChatSnapshot(previous,data.repository_bindings??{}));
+      setConnected(true);
+      const draftState=draftStore.getSnapshot();
+      if(!initial.current&&!draftState.sending[draftState.conversation??'']){
+        initial.current=true;
+        const selected=draftState.conversation;
+        const latest=selected===undefined?data.tasks[0]:data.tasks.find(turn=>turn.conversation_id===selected);
+        if(latest){
+          if(selected===undefined)draftStore.choose(latest.conversation_id);
+          setLastSandbox(data.tasks.find(t=>t.conversation_id===latest.conversation_id&&!t.coordination?.consultation)?.sandbox??latest.sandbox);
+          setModel(latest.model);setEffort(latest.reasoning_effort??'');
+        }
+      }
+    } catch(cause) {
+      if(!alive.current||signal?.aborted||read!==historyRead.current||revision!==historyRevision.current)return;
+      setConnected(false);
+      if(!signal)throw cause;
+    } finally {
+      if(alive.current&&!signal?.aborted&&read===historyRead.current&&revision===historyRevision.current)setLoading(false);
+    }
+  };
   useEffect(()=>{
     const controller=new AbortController();
     setSkillsStatus('loading');
@@ -146,34 +175,15 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
     }).catch(()=>{if(!controller.signal.aborted)setSkillsStatus('failed');});
     return()=>controller.abort();
   },[base]);
-  useEffect(()=>{
-    let mounted=true,polling=false;
-    const poll=async()=>{
-      if(polling)return;polling=true;const revision=historyRevision.current;
-      try{
-        const data=await call<History>('/chat/tasks');if(!mounted||revision!==historyRevision.current)return;
-        setTurns(data.tasks);setTitles(data.titles??{});setRepositoryBindings(data.repository_bindings??{});setConnected(true);
-        const draftState=draftStore.getSnapshot();
-        if(!initial.current&&!draftState.sending[draftState.conversation??'']){
-          initial.current=true;
-          const selected=draftState.conversation;
-          const latest=selected===undefined?data.tasks[0]:data.tasks.find(turn=>turn.conversation_id===selected);
-          if(latest){
-            if(selected===undefined)draftStore.choose(latest.conversation_id);
-            setLastSandbox(data.tasks.find(t=>t.conversation_id===latest.conversation_id&&!t.coordination?.consultation)?.sandbox??latest.sandbox);setModel(latest.model);setEffort(latest.reasoning_effort??'');
-          }
-        }
-      }catch{if(mounted)setConnected(false);}finally{polling=false;if(mounted)setLoading(false);}
-    };
-    void poll();const timer=setInterval(()=>void poll(),2000);return()=>{mounted=false;clearInterval(timer);};
-  },[projectId,draftStore]);
+  const hasActiveTurns=useMemo(()=>turns.some(isActiveTurn),[turns]);
+  useChatPolling(base,hasActiveTurns||loading,2000,refresh);
   const sessions=useMemo(()=>{
     const groups=new Map<string,Session>();
     for(const turn of [...turns].sort((a,b)=>a.created_at.localeCompare(b.created_at))){const session=groups.get(turn.conversation_id);if(session){session.latest=turn;session.count++;}else groups.set(turn.conversation_id,{id:turn.conversation_id,first:turn,latest:turn,count:1});}
     return [...groups.values()].sort((a,b)=>b.latest.created_at.localeCompare(a.latest.created_at));
   },[turns]);
   const messages=useMemo(()=>turns.filter(turn=>turn.conversation_id===conversation).sort((a,b)=>a.created_at.localeCompare(b.created_at)),[turns,conversation]);
-  const activeByConversation=useMemo(()=>new Map(turns.filter(turn=>['queued','running','cancelling'].includes(turn.status))
+  const activeByConversation=useMemo(()=>new Map(turns.filter(isActiveTurn)
     .map(turn=>[turn.conversation_id,turn])),[turns]);
   const active=activeByConversation.get(conversation),session=sessions.find(item=>item.id===conversation),last=messages.at(-1);
   const currentTurn=active??last;
@@ -316,8 +326,9 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
   const send=async(event:React.FormEvent)=>{
     event.preventDefault();
     const state=draftStore.getSnapshot();
-    const draft=state.messages[conversation]?.text??'';
-    if((!draft.trim()&&!attachments.entries.length)||state.uploading[conversation]||state.sending[conversation]||
+    const current=state.messages[conversation];
+    const draft=current?.text??'',files=current?.attachments??[];
+    if((!draft.trim()&&!files.length)||state.uploading[conversation]||state.sending[conversation]||
       (active&&(active.status!=='running'||!active.session_id))||acting.current||loading)return;
     const instructions=draft.trim()?draft:'请查看并分析本条消息所附的材料。';
     if(state.conversation===undefined)draftStore.choose('');
@@ -326,7 +337,7 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
     setError('');
     try{
       const data=await call<{task:Turn}>(active?`/chat/tasks/${active.task_id}/append`:'/chat/tasks',{
-        instructions,attachments:attachments.entries.map(item=>item.id),skill_id:selectedSkill||undefined,
+        instructions,attachments:files.map(item=>item.id),skill_id:current?.skill||undefined,
         model,reasoning_effort:effort||undefined,sandbox,confirm:true,timeout_seconds:1800,
         ...(!active?{repository_id:repositoryId||null}:{}),...(conversation?{conversation_id:conversation}:{})
       });
@@ -511,7 +522,7 @@ export function ProjectChat({projectId,onBrowseResearch,focusId}:{projectId:stri
           tools={<><ChatAttachmentButtons disabled={busy||uploading} onUpload={files=>void attachments.upload(files)}/>
             <ChatSkillPicker key={conversation} skills={skills} status={skillsStatus} value={selectedSkill} disabled={busy}
               onChange={skill=>draftStore.update(conversation,message=>({...message,skill}))}/></>}
-          controls={<><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,repository_id:repositoryId||null,confirm:true,timeout_seconds:1800});setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button></>}
+          controls={<><button type="button" className="chat-control-button" aria-label={active?.status==='queued'?'取消排队':'停止'} title={active?.status==='queued'?'取消当前等待任务':'停止当前对话'} disabled={busy||!active||active.conversation_id!==conversation||active.status==='cancelling'} onClick={()=>void act(async()=>{if(!active)return;await call(`/code-agent/tasks/${active.task_id}/cancel`,{confirm:true});await refresh();})}><Square size={15}/></button><button type="button" className="chat-control-button" aria-label="恢复" title="恢复当前对话" disabled={busy||Boolean(active)||!last?.session_id||!['cancelled','failed'].includes(last.status)} onClick={()=>void act(async()=>{if(!last)return;const data=await call<{task:Turn}>('/chat/tasks',{instructions:'继续上次被中断的工作，先核对已执行操作，避免重复副作用。',model,reasoning_effort:effort||undefined,sandbox,conversation_id:conversation,repository_id:repositoryId||null,confirm:true,timeout_seconds:1800});if(!alive.current)return;historyRevision.current++;setTurns(old=>[data.task,...old.filter(turn=>turn.task_id!==data.task.task_id)]);follow.current=true;})}><Play size={15}/></button></>}
           send={{busy,append:active?.status==='running',title:active?'停止当前轮，并在同一会话中处理追加指令':undefined,
             disabled:busy||uploading||loading||Boolean(active&&(active.status!=='running'||!active.session_id))}}
           summary={<span className="chat-write-summary" title={active?.write_roots?.join("、")||repository?.path||writeSummary}>写入范围 · {writeSummary}</span>}/>
