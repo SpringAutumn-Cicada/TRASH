@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, mkdirSync, renameSync, writeFileSync, lstatSync, realpathSync, rmSync } from 'node:fs';
 import { join, dirname, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { projectLibraryPath } from './library-layout.js';
 import type { KnowledgeVersion } from '@trash/protocol';
 
 export const cardFields = ['question','method','contributions','limitations','reported_results','experimental_conditions','ideas','relevance','open_questions'] as const;
 const labels: Record<typeof cardFields[number], string> = {question:'研究问题',method:'方法',contributions:'贡献',limitations:'局限',reported_results:'作者报告结果',experimental_conditions:'实验条件',ideas:'可借鉴思路',relevance:'项目相关性',open_questions:'待解决问题'};
 export function markdownPath(root:string, record:KnowledgeVersion):string {
   if(!/^knowledge_[A-Za-z0-9-]+$/.test(record.object_id))throw new Error('INVALID_KNOWLEDGE_ID');
-  return join(root,record.kind==='wiki-page'?'wiki':'literature/cards',record.object_id+'.md');
+  return join(root,projectLibraryPath(root,record.kind==='wiki-page'?'wiki':'literature/cards'),record.object_id+'.md');
 }
 export function renderKnowledge(record:KnowledgeVersion):string {
   const content={...record.content} as Record<string,unknown>;

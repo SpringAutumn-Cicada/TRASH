@@ -1,7 +1,7 @@
 /** Resolve single-line Markdown reference links for the shared preview/validators.
  * Fences, inline code and images remain untouched. The caller still checks URLs.
  */
-export function markdownReferences(text:string):{text:string;unresolved:string[]} {
+export function markdownReferences(text:string,referenceSource=text):{text:string;unresolved:string[]} {
  const definitions=new Map<string,string>();
  const key=(value:string)=>value.trim().replace(/\s+/g,' ').toLowerCase();
  const lines=text.split(/\r?\n/);let fence='';
@@ -11,7 +11,7 @@ export function markdownReferences(text:string):{text:string;unresolved:string[]
   return !fence;
  };
  const definition=/^\s{0,3}\[([^\]\n]+)\]:\s*(?:<([^>\n]+)>|(\S+?))(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^\n]*\)))?\s*$/;
- for(const line of lines){if(!outside(line))continue;const match=line.match(definition);if(match&&!definitions.has(key(match[1])))definitions.set(key(match[1]),match[2]??match[3]);}
+ for(const line of referenceSource.split(/\r?\n/)){if(!outside(line))continue;const match=line.match(definition);if(match&&!definitions.has(key(match[1])))definitions.set(key(match[1]),match[2]??match[3]);}
  fence='';const unresolved=new Set<string>();
  const result=lines.map(line=>{
   if(!outside(line))return line;

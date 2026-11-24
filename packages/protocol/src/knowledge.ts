@@ -23,6 +23,9 @@ export const experimentResultSchema = z.object({
   task: z.string().max(500).default(""), split: z.string().max(500).default(""), evaluation_protocol: text.default(""),
   config: z.record(z.unknown()).default({}), seed: z.number().int().optional(), environment: z.record(z.unknown()).default({}),
   run_at: z.string().datetime({ offset: true }).optional(), git_commit: z.string().regex(/^[a-f0-9]{40}([a-f0-9]{24})?$/).optional(),
+  method_verdict: z.enum(["supported","unsupported","inconclusive"]).optional(),
+  interpretation: text.optional(),
+  comparison: z.object({object_id:z.string().min(1).max(200),version:z.number().int().positive()}).strict().optional(),
   plan_version: z.string().optional(), external_run_id: z.string().trim().min(1).max(500).optional(),
   metrics: z.array(metricSchema).max(1000), attachments: z.array(z.object({ name: z.string().min(1), uri: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict()).default([]),
   notes: text.default(""),
@@ -61,7 +64,18 @@ export function parseKnowledge(kind: KnowledgeKind, value: unknown): KnowledgeCo
   return experimentResultSchema.parse(value);
 }
 export const knowledgeTaskInputSchema = z.object({
-  research_exploration:z.enum(["summary","directions","evidence-plan"]).optional(),
+  research_skill:z.enum(["map","background","synthesis","exploration"]).optional(),
+  research_exploration:z.enum(["summary","summary-working","directions","evidence-plan","research-map","comparison","background","topic-discovery","topic"]).optional(),
+  research_topic_refs:z.array(z.object({
+    id:z.string(),path:z.string(),hash:z.string(),title:z.string(),
+  }).strict()).max(1000).optional(),
+  topic_preview:z.literal(true).optional(),
+  topic_discovery_append:z.object({
+    source_ids:z.array(z.string()).min(1).max(100),
+    new_summary_ids:z.array(z.string()).min(1).max(800),
+    reference_ids:z.array(z.string()).max(800),
+    unresolved_topics:z.array(z.object({id:z.string(),title:z.string(),problem:z.string()})).max(100),
+  }).strict().optional(),
   abstract_mode:z.boolean().optional(),
   abstract_wiki_only:z.boolean().optional(),
   kind: z.enum(["literature-card", "wiki-page"]), source_ids: z.array(z.string().min(1)).max(100).default([]),

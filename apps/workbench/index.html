@@ -1,9 +1,19 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="default">
+<html lang="zh-CN" data-theme="graphite-purple">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f4f6f5" />
+    <meta name="theme-color" content="#242633" />
+    <script>
+      try {
+        const local=localStorage.getItem('trash-theme');
+        const cookie=document.cookie.match(/(?:^|; )trash-theme=([^;]+)/)?.[1];
+        const saved=local||cookie;
+        const theme=['graphite-purple','default','blue'].includes(saved)?saved:'graphite-purple';
+        document.documentElement.dataset.theme=theme;
+        document.querySelector('meta[name="theme-color"]').content={'graphite-purple':'#242633',default:'#f4f6f5',blue:'#f3f7fc'}[theme];
+      } catch { /* The static document already uses the default theme. */ }
+    </script>
     <title>trash | 科研工作台</title>
   </head>
   <body>

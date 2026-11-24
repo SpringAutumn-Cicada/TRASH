@@ -1,3 +1,5 @@
+import { ResultInterpretation } from "./result-interpretation.js";
+import { MethodSnapshot } from "./method-snapshot.js";
 import { PdfReader } from "./pdf-reader.js";
 import { DiscardChangesDialog } from "./discard-changes-dialog.js";
 import { experimentResultSchema } from "@trash/protocol/browser";
@@ -5,14 +7,14 @@ import { EvaluationEditor, formatEvaluationMetric } from "./evaluation.js";
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import { Upload } from "lucide-react";
-import type { Source, ResearchProject, ProjectPage, KnowledgeVersion, KnowledgeKind } from "@trash/protocol";
+import type { Source, ResearchProject, ProjectPage, ExperimentRun, KnowledgeVersion, KnowledgeKind } from "@trash/protocol";
 import "./knowledge.css";
 import { useUnsavedChanges } from "./navigation.js";
 
 type Section = "literature-cards" | "wiki-pages" | "experiment-results" | "knowledge-tasks";
 const labels:Record<Section,string>={"literature-cards":"文献卡片与矩阵","wiki-pages":"研究 Wiki","experiment-results":"实验结果","knowledge-tasks":"Agent 任务"};
 const statuses:Record<string,string>={draft:"草稿",pending:"待审",accepted:"已采纳",rejected:"已拒绝",queued:"排队中",running:"运行中",completed:"已完成",failed:"失败",cancelled:"已取消",interrupted:"已中断"};
-const errors:Record<string,string>={VERSION_CONFLICT:"内容已有新版本，请重新打开后修改。",INVALID_REQUEST:"输入内容不符合格式，请检查字段。",DUPLICATE_RECORD:"该来源或外部运行标识已有记录。",INCOMPATIBLE_CONDITIONS:"所选实验条件或指标单位不同，无法合并计算。",METRIC_MISSING_OR_AMBIGUOUS:"所选实验缺少此指标或有同名指标，请检查。",SOURCE_NOT_FOUND:"来源不存在或不属于此项目。",DEPENDENCY_NOT_FOUND:"依赖对象或版本不存在。",TASK_FINISHED:"任务已经结束。",DUPLICATE_DOI:"此 DOI 已有文献，请核对后保留一条记录。",PROJECT_ALREADY_EXISTS:"项目已存在。请在新的本地工作区恢复。"};
+const errors:Record<string,string>={COMPARISON_INVALID:"请选择本项目内其他结果的有效版本。",VERSION_CONFLICT:"内容已有新版本，请重新打开后修改。",INVALID_REQUEST:"输入内容不符合格式，请检查字段。",DUPLICATE_RECORD:"该来源或外部运行标识已有记录。",INCOMPATIBLE_CONDITIONS:"所选实验条件或指标单位不同，无法合并计算。",METRIC_MISSING_OR_AMBIGUOUS:"所选实验缺少此指标或有同名指标，请检查。",SOURCE_NOT_FOUND:"来源不存在或不属于此项目。",DEPENDENCY_NOT_FOUND:"依赖对象或版本不存在。",TASK_FINISHED:"任务已经结束。",DUPLICATE_DOI:"此 DOI 已有文献，请核对后保留一条记录。",PROJECT_ALREADY_EXISTS:"项目已存在。请在新的本地工作区恢复。"};
 async function call<T>(path:string,body?:unknown,method=body===undefined?"GET":"POST"):Promise<T>{
   const response=await fetch(path,{method,...(body===undefined?{}:{headers:{"content-type":"application/json"},body:JSON.stringify(body)})});
   const value=await response.json();if(!response.ok)throw new Error(errors[value.error]??"操作未完成，请检查输入或服务日志。");return value as T;
@@ -30,7 +32,7 @@ export function Markdown({body}:{body:string}) {
     return <p key={i}>{line.split(/(\[[^\]]+\]\([^)]+\))/g).map((part,j)=>{const m=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);return m && /^(https?:\/\/|#)/.test(m[2])?<a key={j} href={m[2]} target={m[2].startsWith("#")?undefined:"_blank"} rel="noreferrer">{m[1]}</a>:part;}) || "\u00a0"}</p>;
   })}</div>;
 }
-export function KnowledgePanel({projectId,sources,section,action,focusId,initialStatus,onNavigate,heading,onRecordsChanged,createRequest}:{projectId:string;sources:Source[];section:Section;action?:string;focusId?:string;initialStatus?:string;heading?:string;createRequest?:number;onRecordsChanged?:()=>void;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void}) {
+export function KnowledgePanel({projectId,sources,section,action,focusId,initialStatus,onNavigate,heading,onRecordsChanged,createRequest,resultRuns,comparisonRecords}:{resultRuns?:ExperimentRun[];comparisonRecords?:KnowledgeVersion[];projectId:string;sources:Source[];section:Section;action?:string;focusId?:string;initialStatus?:string;heading?:string;createRequest?:number;onRecordsChanged?:()=>void;onNavigate:(page:ProjectPage,options?:{focus?:string})=>void}) {
   const base=`/api/v1/projects/${encodeURIComponent(projectId)}`;
   const editorRef=useRef<HTMLDivElement>(null);
   const resultImportRef=useRef<HTMLInputElement>(null);
@@ -93,6 +95,7 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
       const data=await call<{events:{at:string;message:string}[]}>(`${base}/knowledge-tasks/${encodeURIComponent(focusId)}`);if(alive.current&&request===focusRequest.current)setLogs(data.events.map(e=>`${e.at} ${e.message}`).join("\n"));
     });
   },[action,focusId,section,sources]);
+  const resultPlan = editing?.id ? resultRuns?.find(item=>item.result_id === editing.id)?.plan : undefined;
   return <section className="knowledge-panel">
     <div className="section-heading"><div><h2>{heading??labels[section]}</h2><p>{section==="knowledge-tasks"?"查看本地 Agent 的生成进度与结果。":"整理当前项目内容，保留每一次修改与审阅。"}</p></div></div>
     {error&&<ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
@@ -114,11 +117,13 @@ export function KnowledgePanel({projectId,sources,section,action,focusId,initial
     {pendingDiscard&&<DiscardChangesDialog onCancel={()=>setPendingDiscard(null)} onConfirm={()=>{const proceed=pendingDiscard;setPendingDiscard(null);clearUnsaved();proceed();}}/>}
     {editing&&<div ref={editorRef} className="knowledge-editor">
       <div className="knowledge-toolbar"><h3>{editing.id?`修订 v${editing.version}`:"新建记录"}</h3><button className="secondary-button" onClick={()=>{if(jsonMode){try{setEditing({...editing,content:JSON.parse(json)});}catch{setError("JSON 格式无效");return;}}else setJson(JSON.stringify(editing.content,null,2));setJsonMode(!jsonMode);}}>{jsonMode?"切换表单":"高级 JSON"}</button><button className="secondary-button" onClick={closeEditor}>关闭</button></div>
+      {resultPlan && <MethodSnapshot key={resultPlan.plan_id+":"+resultPlan.version} plan={resultPlan}/>}
       {jsonMode?<textarea className="json-editor" aria-label="结构化内容 JSON" value={json} onChange={e=>setJson(e.target.value)}/>:<>
         <label>标题<input value={String(editing.content.title??"")} onChange={e=>update("title",e.target.value)}/></label>
         {section==="wiki-pages"?<><label>Markdown 正文<textarea className="json-editor" value={String(editing.content.body??"")} onChange={e=>update("body",e.target.value)}/></label><Markdown body={String(editing.content.body??"")}/><button className="secondary-button" onClick={()=>void run(loadReferences)}>选择引用对象</button>{references.filter(r=>r.object_id!==editing.id).map(r=>{const deps=(editing.content.dependencies??[]) as {object_id:string;kind:KnowledgeKind;version:number}[];return <label key={r.object_id}><input type="checkbox" checked={deps.some(d=>d.object_id===r.object_id)} onChange={e=>update("dependencies",e.target.checked?[...deps,{kind:r.kind,object_id:r.object_id,version:r.version}]:deps.filter(d=>d.object_id!==r.object_id))}/>{r.title} v{r.version}</label>;})}</>:Object.entries(section==="literature-cards"?cardFields:experimentFields).map(([key,label])=><label key={key}>{label}<textarea rows={2} value={String(editing.content[key]??"")} onChange={e=>update(key,e.target.value)}/></label>)}
         {["literature-cards","wiki-pages"].includes(section)&&(section==="wiki-pages"?["tags"]:["tags","datasets","baselines","metrics"]).map(key=><label key={key}>{{tags:"标签",datasets:"数据集",baselines:"基线",metrics:"指标名称"}[key]}（用逗号分隔）<input value={((editing.content[key]??[]) as string[]).join(",")} onChange={e=>update(key,e.target.value.split(/[,，]/).map(v=>v.trim()).filter(Boolean))}/></label>)}
-        {section==="experiment-results"&&<><label>随机种子<input type="number" value={editing.content.seed===undefined?"":String(editing.content.seed)} onChange={e=>{const next={...editing.content};if(e.target.value==="")delete next.seed;else next.seed=Number(e.target.value);setEditing({...editing,content:next});}}/></label><label>Git commit<input value={String(editing.content.git_commit??"")} onChange={e=>{const next={...editing.content};if(e.target.value)next.git_commit=e.target.value;else delete next.git_commit;setEditing({...editing,content:next});}}/></label><label>外部运行标识<input value={String(editing.content.external_run_id??"")} onChange={e=>{const next={...editing.content};if(e.target.value)next.external_run_id=e.target.value;else delete next.external_run_id;setEditing({...editing,content:next});}}/></label><EvaluationEditor content={editing.content} onChange={content=>setEditing({...editing,content})}/><p>配置、环境、附件和时间等字段可在高级 JSON 中编辑；空值不会自动转换成有效结果。</p></>}
+        {section==="experiment-results"&&<><ResultInterpretation projectId={projectId} recordId={editing.id} records={comparisonRecords ?? records}
+          content={editing.content} update={update}/><label>随机种子<input type="number" value={editing.content.seed===undefined?"":String(editing.content.seed)} onChange={e=>{const next={...editing.content};if(e.target.value==="")delete next.seed;else next.seed=Number(e.target.value);setEditing({...editing,content:next});}}/></label><label>Git commit<input value={String(editing.content.git_commit??"")} onChange={e=>{const next={...editing.content};if(e.target.value)next.git_commit=e.target.value;else delete next.git_commit;setEditing({...editing,content:next});}}/></label><label>外部运行标识<input value={String(editing.content.external_run_id??"")} onChange={e=>{const next={...editing.content};if(e.target.value)next.external_run_id=e.target.value;else delete next.external_run_id;setEditing({...editing,content:next});}}/></label><EvaluationEditor content={editing.content} onChange={content=>setEditing({...editing,content})}/><p>配置、环境、附件和时间等字段可在高级 JSON 中编辑；空值不会自动转换成有效结果。</p></>}
       </>}
       <div className="knowledge-toolbar"><button className="primary-button" disabled={busy} onClick={()=>void save()}>保存新版本</button>{editing.id&&<button className="secondary-button" onClick={()=>void run(async()=>setHistory((await call<{records:KnowledgeVersion[]}>(`${base}/${section}/${editing.id}/history`)).records))}>版本历史与对比</button>}{section==="wiki-pages"&&editing.id&&<a className="secondary-button" href={`${base}/wiki-pages/${editing.id}?format=markdown`}>导出 Markdown</a>}</div>
       {history.map((r,i)=><details key={r.version}><summary>v{r.version} · {statuses[r.status]} · {r.created_at}</summary><pre>{JSON.stringify(r.content,null,2)}</pre>{history[i+1]&&<div className="knowledge-diff"><div><h4>前一版本</h4><pre>{JSON.stringify(history[i+1].content,null,2)}</pre></div><div><h4>此版本</h4><pre>{JSON.stringify(r.content,null,2)}</pre></div></div>}</details>)}

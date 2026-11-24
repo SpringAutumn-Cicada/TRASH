@@ -1,11 +1,13 @@
 import { visibleEntry } from "./project-layout.js";
-import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync } from 'node:fs';
+import { constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, readdirSync, realpathSync, statSync, fstatSync, unlinkSync, linkSync, rmdirSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
-import { KnowledgeStore, type TrashStore, parseKnowledgeMarkdown } from '@trash/storage';
+import { KnowledgeStore, type TrashStore, parseKnowledgeMarkdown, projectLibraryPath } from '@trash/storage';
+import { libraryLogicalPath } from '@trash/protocol';
+import { isManuscriptDirectory, manuscriptDirectory, projectManuscriptPath, manuscriptDocument, manuscriptDraftPath, manuscriptId, manuscriptManifest, manuscriptSection, manuscriptStatus, manuscriptTitle } from './manuscript-layout.js';
 
 const textLimit=2*1024*1024,uploadLimit=50*1024*1024;
 const hash=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
@@ -15,14 +17,18 @@ const inside=(root:string,path:string)=>path===root||path.startsWith(root+sep);
 const textExtensions=new Set(['.md','.markdown','.txt','.json','.jsonl','.yaml','.yml','.csv','.tsv','.log','.py','.ts','.tsx','.js','.jsx','.mjs','.cjs','.html','.css','.scss','.sh','.bash','.toml','.ini','.cfg','.xml','.bib','.ris','.tex','.rst','.sql','.r','.c','.cpp','.h','.gitignore','.svg']);
 const mimeTypes:Record<string,string>={'.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp'};
 const internal=new Set(['.trash','.git','project.yaml','raw','files','tasks','code-agent','literature-analysis','agent-workspace','environment-analysis','environment-deployments','dataset-hashes','dataset-upload-sessions','directory-repairs','experiment-bindings','experiment-runs','remote-workspaces','reproductions','reproduction-queues']);
+const draftExtension=/\.(docx?|odt|rtf|tex|md|markdown)$/i;
+export const sharedChatFileInput=z.object({operation:z.enum(['stage-shared-file','publish-shared-file']),path:inputPath.refine(value=>value.length>0)}).strict();
 type FileEntry={name:string;path:string;kind:'directory'|'file'|'symlink';size:number;modified:string;protected:boolean};
 type Recycled={id:string;path:string;deletedAt:string;fingerprint:string;kind:'file'|'directory'};
 export class ProjectFiles {
   private knowledge:KnowledgeStore;
-  constructor(private store:TrashStore,private blocked:(id:string)=>boolean){this.knowledge=new KnowledgeStore(store.db);}
+  private sharedPublishing=new Set<string>();
+  constructor(private store:TrashStore,private blocked:(id:string)=>boolean, private methodWriteBlocked=blocked){this.knowledge=new KnowledgeStore(store.db);}
   private root(id:string){const root=join(this.store.root,'projects',id);if(!existsSync(root))fail('FILES_WORKSPACE_MISSING',404);return realpathSync(root);}
   private locate(id:string,value:string,allowMissing=false){
-    inputPath.parse(value);const root=this.root(id),path=resolve(root,value||'.');if(!inside(root,path))fail('FILES_OUTSIDE_WORKSPACE',403);
+    inputPath.parse(value);const root=this.root(id),normalized=value.split('/').filter(Boolean).join('/');
+    const path=resolve(root,projectLibraryPath(root,projectManuscriptPath(root,normalized))||'.');if(!inside(root,path))fail('FILES_OUTSIDE_WORKSPACE',403);
     let current=root;
     for(const part of relative(root,path).split(sep).filter(Boolean)){
       current=join(current,part);
@@ -31,17 +37,25 @@ export class ProjectFiles {
     if(!allowMissing&&!inside(root,realpathSync(path)))fail('FILES_OUTSIDE_WORKSPACE',403);
     return path;
   }
-  private isProtected(path:string){
-    const parts=path.split('/');
-    return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='code'&&parts[1]==='reproductions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
+  private isProtected(path:string,sharedChat=false){
+    path=path.split('/').filter(Boolean).join('/');
+    if(path==='library')return true;
+    path=libraryLogicalPath(path);
+    if(path==='abstract-library')return true;
+    const parts=path.split('/').filter(Boolean);
+    if(parts[0]==='experiments'&&parts[3]==='runs'&&(/^run_[a-f0-9-]+$/.test(parts[4]??''))&&[5,6,7].includes(parts.length))return parts.length===5||['run.json','run-config.json','index.json'].includes(parts.at(-1)??'');
+    if(isManuscriptDirectory(parts[0])&&(parts.length===1||parts.length===3&&['paper.yaml','experiment-evidence.json'].includes(parts[2])))return true;
+    const reproduction=parts[0]==='code'&&parts[1]==='reproductions';
+    if(reproduction&&(!sharedChat||parts[2]==='snapshots'||/^repro_[a-f0-9-]+\.json$/.test(parts[2]??'')))return true;
+    return parts[0]==='knowledge_base'||!path||parts.some(part=>part==='.git'||part==='.trash')||internal.has(parts[0])||(parts[0]==='wiki'&&parts[1]!=='directions')||(parts[0]==='literature'&&(parts.length===1||['originals','parsed','cards'].includes(parts[1])));
   }
   private managed(path:string){
-    const match=path.match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
+    const match=libraryLogicalPath(path.split('/').filter(Boolean).join('/')).match(/^(wiki|literature\/cards)\/(knowledge_[A-Za-z0-9-]+)\.md$/);
     return match?{kind:match[1]==='wiki'?'wiki-page' as const:'literature-card' as const,id:match[2]}:undefined;
   }
-  private writable(id:string,path:string){
-    if(this.blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
-    if(this.isProtected(path))fail('FILES_MANAGED_READONLY',403);
+  private writable(id:string,path:string,blocked=this.blocked,sharedChat=false){
+    if(blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
+    if(this.isProtected(path,sharedChat))fail('FILES_MANAGED_READONLY',403);
     const physical=this.locate(id,path,true);
     // Registered artifacts remain immutable even when stored in a nonstandard project folder.
     const rows=this.store.db.prepare('SELECT artifact_id FROM artifacts WHERE project_id=?').all(id) as {artifact_id:string}[];
@@ -50,21 +64,138 @@ export class ProjectFiles {
   }
   private structuralWritable(id:string,path:string){
     const physical=this.writable(id,path);
-    const row=this.store.db.prepare('SELECT data FROM experiment_repositories WHERE project_id=?').get(id) as {data:string}|undefined;
-    const repository=row?(JSON.parse(row.data) as {path?:string}).path:undefined;
-    if(repository&&existsSync(repository)&&inside(physical,realpathSync(repository)))fail('FILES_BOUND_REPOSITORY',403);
+    const rows=this.store.db.prepare('SELECT data FROM project_code_repositories WHERE project_id=?').all(id) as {data:string}[];
+    if(rows.some(item=>{
+      const repository=(JSON.parse(item.data) as {path:string}).path;
+      return existsSync(repository)&&inside(physical,realpathSync(repository));
+    }))fail('FILES_BOUND_REPOSITORY',403);
     return physical;
   }
   private entry(id:string,parent:string,name:string):FileEntry{
-    const path=parent?parent+'/'+name:name,stat=lstatSync(join(this.root(id),path));
+    const path=parent?parent+'/'+name:name,root=this.root(id),stat=lstatSync(join(root,projectLibraryPath(root,path)));
     return {name,path,kind:stat.isSymbolicLink()?'symlink':stat.isDirectory()?'directory':'file',size:stat.size,modified:stat.mtime.toISOString(),protected:this.isProtected(path)};
   }
   list(id:string,path:string,hidden:boolean){
-    const directory=this.locate(id,path);if(!statSync(directory).isDirectory())fail('FILES_NOT_DIRECTORY',422);
+    const directory=this.locate(id,path);
+    path=projectManuscriptPath(this.root(id),path);
+    if(!statSync(directory).isDirectory())fail('FILES_NOT_DIRECTORY',422);
     const names=readdirSync(directory).filter(name=>visibleEntry(path,name,hidden));
     if(names.length>5000)fail('FILES_DIRECTORY_TOO_LARGE',422);
     const entries=names.map(name=>this.entry(id,path,name)).sort((a,b)=>Number(b.kind==='directory')-Number(a.kind==='directory')||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
     return {root:this.root(id),path,entries};
+  }
+  private manuscriptInFolder(id:string,folder:string){
+    const path=manuscriptDirectory(this.root(id))+'/'+folder;
+    const marker=this.locate(id,path+'/paper.yaml',true);
+    if(!existsSync(marker))return;
+    try {
+      const bytes=this.bytes(marker,16384);
+      const record=manuscriptManifest.parse(JSON.parse(bytes.toString('utf8')));
+      return {id:record.paper_id??folder,path,marker,etag:hash(bytes),...record};
+    } catch(error) {if(error instanceof z.ZodError||error instanceof SyntaxError)return;throw error;}
+  }
+  private manuscriptEntries(id:string){
+    const folder=manuscriptDirectory(this.root(id));
+    return existsSync(this.locate(id,folder,true))?this.list(id,folder,false).entries:[];
+  }
+  private manuscript(id:string,paperId:string){
+    const key=manuscriptId.parse(paperId);
+    const paper=this.manuscriptEntries(id).filter(entry=>entry.kind==='directory')
+      .map(entry=>this.manuscriptInFolder(id,entry.name)).find(item=>item?.id===key);
+    return paper??fail('MANUSCRIPT_NOT_FOUND',404);
+  }
+  manuscriptPath(id:string,paperId:string){return this.manuscript(id,paperId).path;}
+  manuscripts(id:string){
+    const entries=this.manuscriptEntries(id);
+    const papers=[],legacy=[];
+    for(const entry of entries){
+      if(entry.kind!=='directory')continue;
+      const paper=this.manuscriptInFolder(id,entry.name);
+      if(!paper)continue;
+      const {marker,etag,format_version,paper_id,...details}=paper;
+      if(manuscriptId.safeParse(paper.id).success)papers.push(details);
+      else legacy.push({folder:entry.name,title:paper.title});
+    }
+    return {papers,legacy,unfiled:entries.length-papers.length};
+  }
+  adoptManuscript(id:string,value:unknown){
+    const input=z.object({folder:z.string().min(1).max(255).refine(name=>!name.startsWith('.')&&!/[\\/\x00-\x1f]/.test(name)),id:manuscriptId}).strict().parse(value);
+    const folder=manuscriptDirectory(this.root(id));
+    if(this.manuscripts(id).papers.some(paper=>paper.id===input.id)||existsSync(this.locate(id,folder+'/'+input.id,true)))fail('FILES_EXISTS');
+    this.writable(id,folder+'/'+input.folder);
+    const paper=this.manuscriptInFolder(id,input.folder);
+    if(!paper||paper.paper_id) return fail('MANUSCRIPT_NOT_FOUND',404);
+    this.writeManuscript(paper.marker,{format_version:1,paper_id:input.id,title:paper.title,status:paper.status,current:paper.current});
+    return this.manuscriptDetails(id,input.id);
+  }
+  private writeManuscript(marker:string,record:Parameters<typeof manuscriptDocument>[0]){
+    const temp=marker+'.'+randomUUID()+'.tmp';
+    try {
+      writeFileSync(temp,manuscriptDocument(record),{flag:'wx',mode:0o600});
+      renameSync(temp,marker);
+    } finally { if(existsSync(temp))unlinkSync(temp); }
+  }
+  manuscriptDetails(id:string,paperId:string){
+    const {marker,format_version,...paper}=this.manuscript(id,paperId);
+    const sections=manuscriptSection.options.map(key=>{
+      const path=paper.path+'/'+key;
+      const entry=this.entryIfPresent(id,paper.path,key);
+      return {key,path,exists:entry?.kind==='directory',blocked:Boolean(entry&&entry.kind!=='directory')};
+    });
+    const drafts:FileEntry[]=[];
+    const queue=sections.find(section=>section.key==='drafts')?.exists?[paper.path+'/drafts']:[];
+    for(let index=0;index<queue.length&&index<200;index++){
+      for(const entry of this.list(id,queue[index],false).entries){
+        if(entry.kind==='directory')queue.push(entry.path);
+        if(entry.kind==='file'&&draftExtension.test(entry.name))drafts.push(entry);
+      }
+    }
+    drafts.sort((a,b)=>b.modified.localeCompare(a.modified)||a.name.localeCompare(b.name,'zh-CN',{numeric:true}));
+    return {...paper,sections,drafts,currentAvailable:Boolean(paper.current&&drafts.some(entry=>entry.path===paper.path+'/'+paper.current))};
+  }
+  private entryIfPresent(id:string,parent:string,name:string){
+    try { return this.entry(id,parent,name); }
+    catch(error){ if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error; }
+  }
+  createManuscript(id:string,value:unknown){
+    const input=z.object({id:manuscriptId,title:manuscriptTitle}).strict().parse(value);
+    if(this.manuscripts(id).papers.some(paper=>paper.id===input.id))fail('FILES_EXISTS');
+    const path=manuscriptDirectory(this.root(id))+'/'+input.id;
+    const target=this.writable(id,path);
+    mkdirSync(dirname(target),{recursive:true});
+    mkdirSync(target);
+    const drafts=join(target,'drafts');
+    const marker=join(target,'paper.yaml');
+    let draftCreated=false;
+    try {
+      mkdirSync(drafts);draftCreated=true;
+      writeFileSync(marker,manuscriptDocument({format_version:1,title:input.title,status:'draft',current:null}),{flag:'wx',mode:0o600});
+    } catch(error) {
+      try { if(draftCreated)rmdirSync(drafts);rmdirSync(target); } catch { /* Preserve anything added concurrently. */ }
+      throw error;
+    }
+    return this.manuscriptDetails(id,input.id);
+  }
+  updateManuscript(id:string,value:unknown){
+    const input=z.object({id:manuscriptId,current:manuscriptDraftPath.nullable(),status:manuscriptStatus,etag:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(value);
+    const paper=this.manuscript(id,input.id);
+    this.writable(id,paper.path);
+    if(paper.etag!==input.etag)fail('FILES_CHANGED');
+    if(input.current){
+      const draft=this.locate(id,paper.path+'/'+input.current,true);
+      if(!existsSync(draft)||!lstatSync(draft).isFile()||!draftExtension.test(draft))fail('MANUSCRIPT_DRAFT_INVALID',422);
+    }
+    this.writeManuscript(paper.marker,{format_version:1,paper_id:paper.paper_id,title:paper.title,status:input.status,current:input.current});
+    return this.manuscriptDetails(id,input.id);
+  }
+  createManuscriptSection(id:string,value:unknown){
+    const input=z.object({id:manuscriptId,section:manuscriptSection}).strict().parse(value);
+    const {path}=this.manuscript(id,input.id);
+    const relative=path+'/'+input.section;
+    const target=this.writable(id,relative);
+    if(!existsSync(target))mkdirSync(target);
+    if(!lstatSync(target).isDirectory())fail('FILES_NOT_DIRECTORY',422);
+    return {path:relative};
   }
   search(id:string,query:string,hidden:boolean){
     if(!query.trim()||query.length>200)fail('INVALID_REQUEST',400);
@@ -87,8 +218,84 @@ export class ProjectFiles {
     const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW);
     try{const stat=fstatSync(fd);if(!stat.isFile()||stat.size>limit)fail('FILES_TOO_LARGE',413);return readFileSync(fd);}finally{closeSync(fd);}
   }
+  private sharedChatTarget(id:string,path:string,paperRoots:string[]){
+    const logical=path.split('/').filter(Boolean).join('/');
+    const [top,folder]=logical.split('/');
+    if(!top||top==='code'&&folder==='papers')
+      fail('FILES_MANAGED_READONLY',403);
+    const target=this.writable(id,logical,()=>false,true);
+    const canonical=relative(this.root(id),target).split(sep).join('/');
+    if(paperRoots.some(root=>inside(root,target)))fail('FILES_MANAGED_READONLY',403);
+    return {target,canonical};
+  }
+  private sharedChatDraft(workspace:string,canonical:string,createParents:boolean){
+    const parts=['shared-draft',...canonical.split('/')];
+    let path=workspace;
+    for(const part of parts.slice(0,-1)){
+      path=join(path,part);
+      if(createParents&&!existsSync(path)){
+        try{mkdirSync(path,{mode:0o700});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+      }
+      if(!lstatSync(path).isDirectory())fail('FILES_SYMLINK',403);
+    }
+    return join(path,parts.at(-1)!);
+  }
+  private sharedChatCurrent(target:string){
+    const stat=lstatSync(target,{throwIfNoEntry:false});
+    if(!stat)return {bytes:undefined,version:null,mode:0o600};
+    if(!stat.isFile())fail('FILES_NOT_FILE',422);
+    const bytes=this.bytes(target,uploadLimit);
+    return {bytes,version:hash(bytes),mode:stat.mode&0o777};
+  }
+  chatUploadSource(id:string,path:string){
+    if(internal.has(path.split('/')[0]))fail('AUTODL_UPLOAD_SOURCE_INVALID',403);
+    try{return this.locate(id,path);}catch(error){
+      if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))fail('AUTODL_UPLOAD_SOURCE_INVALID',404);
+      throw error;
+    }
+  }
+  sharedChatFile(id:string,input:z.infer<typeof sharedChatFileInput>,workspace:string,versions:Map<string,string|null>,paperRoots:string[]){
+    const {target,canonical}=this.sharedChatTarget(id,input.path,paperRoots);
+    const staged=versions.has(target);
+    if(input.operation==='stage-shared-file'){
+      const draft=this.sharedChatDraft(workspace,canonical,true);
+      if(!staged){
+        const {bytes,version}=this.sharedChatCurrent(target);
+        writeFileSync(draft,bytes??Buffer.alloc(0),{flag:'wx',mode:0o600});
+        versions.set(target,version);
+      }
+      return {path:canonical,draft,version:versions.get(target)};
+    }
+    if(!staged)fail('FILES_DRAFT_REQUIRED');
+    if(this.sharedPublishing.has(target))fail('FILES_PUBLISH_BUSY');
+    const draft=this.sharedChatDraft(workspace,canonical,false);
+    const bytes=this.bytes(draft,uploadLimit);
+    this.sharedPublishing.add(target);
+    try{
+      const current=this.sharedChatCurrent(target);
+      if(current.version!==versions.get(target))fail('VERSION_CONFLICT');
+      const parent=dirname(target);
+      mkdirSync(parent,{recursive:true});
+      const parentPath=relative(this.root(id),parent).split(sep).join('/');
+      this.locate(id,parentPath);
+      const temporary=join(parent,`.trash-publish-${randomUUID()}.tmp`);
+      try{
+        writeFileSync(temporary,bytes,{flag:'wx',mode:current.mode});
+        if(current.version===null){
+          try{linkSync(temporary,target);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')fail('VERSION_CONFLICT');throw error;}
+        }else{
+          if(this.sharedChatCurrent(target).version!==current.version)fail('VERSION_CONFLICT');
+          renameSync(temporary,target);
+        }
+      }finally{if(existsSync(temporary))unlinkSync(temporary);}
+      const version=hash(bytes);
+      versions.set(target,version);
+      return {path:canonical,draft,version,published:true};
+    }finally{this.sharedPublishing.delete(target);}
+  }
   preview(id:string,path:string){
     const target=this.locate(id,path);if(!statSync(target).isFile())fail('FILES_NOT_FILE',422);
+    path=projectManuscriptPath(this.root(id),path);
     const managed=this.managed(path),record=managed&&existsSync(join(this.root(id),'project.yaml'))?this.knowledge.get(id,managed.kind,managed.id):undefined;
     const stat=statSync(target),extension=extname(path).toLowerCase(),mime=mimeTypes[extension];
     const kind=mime==='application/pdf'?'pdf':mime?'image':textExtensions.has(extension)||basename(path)==='Dockerfile'||basename(path)==='Makefile'||basename(path)==='.gitignore'?'text':'binary';
@@ -101,7 +308,10 @@ export class ProjectFiles {
   save(id:string,value:unknown){
     const input=z.object({path:inputPath,etag:z.string().regex(/^[a-f0-9]{64}$/),content:z.string().max(textLimit),version:z.number().int().positive().optional()}).strict().parse(value);
     if(Buffer.byteLength(input.content)>textLimit)fail('FILES_TOO_LARGE',413);
-    if(this.blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
+    // Confirmed runs use their frozen method. Editing the live README still uses its content hash.
+    const blocked = /^experiments\/[a-z0-9][a-z0-9_-]{0,63}\/[a-z0-9][a-z0-9_-]{0,63}\/README\.md$/.test(input.path)
+      ? this.methodWriteBlocked : this.blocked;
+    if(blocked(id))fail('PROJECT_HAS_ACTIVE_TASKS');
     const path=this.locate(id,input.path),managed=this.managed(input.path);
     if(managed){
       if(!existsSync(join(this.root(id),'project.yaml')))fail('FILES_MANAGED_READONLY',403);
@@ -110,7 +320,7 @@ export class ProjectFiles {
       this.knowledge.write(id,managed.kind,{object_id:managed.id,base_version:record.version,content:parseKnowledgeMarkdown(input.content,record)});
     }else{
       if(!this.preview(id,input.path).editable)fail('FILES_MANAGED_READONLY',403);
-      this.writable(id,input.path);if(hash(this.bytes(path))!==input.etag)fail('FILES_CHANGED');
+      this.writable(id,input.path,blocked);if(hash(this.bytes(path))!==input.etag)fail('FILES_CHANGED');
       const temp=path+'.'+randomUUID()+'.tmp';
       try{writeFileSync(temp,input.content,{flag:'wx',mode:lstatSync(path).mode&0o777});renameSync(temp,path);}finally{if(existsSync(temp))unlinkSync(temp);}
     }
@@ -140,9 +350,9 @@ export class ProjectFiles {
     return hash(Buffer.from([stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(':')));
   }
   inspect(id:string,path:string){const target=this.locate(id,path);return {fingerprint:this.fingerprint(target)};}
-  private recycleRoot(id:string){
+  private recycleRoot(id:string,create=true){
     const root=this.root(id),internal=join(root,'.trash');
-    for(const path of [internal,join(internal,'recycle')]){if(existsSync(path)&&lstatSync(path).isSymbolicLink())fail('FILES_SYMLINK',403);mkdirSync(path,{recursive:true});}
+    for(const path of [internal,join(internal,'recycle')]){if(existsSync(path)&&lstatSync(path).isSymbolicLink())fail('FILES_SYMLINK',403);if(create)mkdirSync(path,{recursive:true});}
     return join(internal,'recycle');
   }
   recycle(id:string,value:unknown){
@@ -152,7 +362,8 @@ export class ProjectFiles {
     const directory=join(root,entry.id);mkdirSync(directory);writeFileSync(join(directory,'entry.json'),JSON.stringify(entry),{flag:'wx',mode:0o600});renameSync(source,join(directory,'content'));return {entry};
   }
   recycled(id:string){
-    const root=this.recycleRoot(id);return {entries:readdirSync(root).filter(name=>z.string().uuid().safeParse(name).success).flatMap(name=>{
+    const root=this.recycleRoot(id,false);if(!existsSync(root))return {entries:[]};
+    return {entries:readdirSync(root).filter(name=>z.string().uuid().safeParse(name).success).flatMap(name=>{
       const directory=join(root,name);if(lstatSync(directory).isSymbolicLink()||!existsSync(join(directory,'content')))return [];
       return [JSON.parse(readFileSync(join(directory,'entry.json'),'utf8')) as Recycled];
     }).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt))};

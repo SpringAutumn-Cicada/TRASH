@@ -6,13 +6,17 @@ import {readFileSync} from 'node:fs';
 
 const streams=new WeakMap<TrashStore,Set<()=>void>>();
 const active=(status:string)=>['queued','running'].includes(status);
-export function taskSummary(store:TrashStore,task:KnowledgeTask){
- const source=task.input.kind==='literature-card'?store.getSource(task.input.source_ids[0]):undefined;
- const latest=store.db.prepare('SELECT seq,at,message FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(task.task_id) as {seq:number;at:string;message:string}|undefined;
+type TaskHeader=Pick<KnowledgeTask,'task_id'|'project_id'|'status'|'created_at'|'error'|'output_id'|'attempt_of'> & {
+ input: Pick<KnowledgeTask['input'],'abstract_mode'|'kind'|'title'|'source_ids'|'include_source_wiki'|'wiki_level'>;
+};
+export function taskSummary(store:TrashStore,task:TaskHeader,title?:string){
+
+ const source=title===undefined&&task.input.kind==='literature-card'?store.getSource(task.input.source_ids[0]):undefined;
+ const latest=store.db.prepare('SELECT seq,at FROM knowledge_task_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(task.task_id) as {seq:number;at:string}|undefined;
  const started=store.db.prepare("SELECT at FROM knowledge_task_events WHERE task_id=? AND message LIKE 'Agent 版本：%' ORDER BY seq LIMIT 1").get(task.task_id) as {at:string}|undefined;
  let chapterTitle:string|undefined;try{if(active(task.status))chapterTitle=JSON.parse(readFileSync(projectRuntime(store.root,task.project_id,'tasks',task.task_id,'reading-progress.json'),'utf8')).title;}catch{/* Legacy task. */}
  const latestProgress=store.db.prepare("SELECT at,message FROM knowledge_task_events WHERE task_id=? AND (message LIKE 'PDF %' OR message LIKE '复用已完成批次 %' OR message LIKE '启动本机 %' OR message LIKE 'Markdown 已发布：%') ORDER BY seq DESC LIMIT 1").get(task.task_id) as {at:string;message:string}|undefined;
- return {task_id:task.task_id,title:source?.title??task.input.title,input:{abstract_mode:task.input.abstract_mode,kind:task.input.kind,title:task.input.title,source_ids:task.input.source_ids,include_source_wiki:task.input.include_source_wiki,wiki_level:task.input.wiki_level},status:task.status,error:task.error,output_id:task.output_id,created_at:task.created_at,started_at:started?.at,attempt_of:task.attempt_of,last_at:latest?.at,last_seq:latest?.seq??0,progress:chapterTitle??latestProgress?.message};
+ return {task_id:task.task_id,title:title??source?.title??task.input.title,input:{abstract_mode:task.input.abstract_mode,kind:task.input.kind,title:task.input.title,source_ids:task.input.source_ids,include_source_wiki:task.input.include_source_wiki,wiki_level:task.input.wiki_level},status:task.status,error:task.error,output_id:task.output_id,created_at:task.created_at,started_at:started?.at,attempt_of:task.attempt_of,last_at:latest?.at,last_seq:latest?.seq??0,progress:chapterTitle??latestProgress?.message};
 }
 export function taskReadingProgress(store:TrashStore,task:KnowledgeTask){
  try{

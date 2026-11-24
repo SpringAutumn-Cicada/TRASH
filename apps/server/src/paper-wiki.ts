@@ -2,32 +2,37 @@ import {resolveKnowledgeLink} from './knowledge-links.js';
 import {markdownReferences,knowledgeDocumentId,knowledgeBasePath} from '@trash/protocol';
 import {knowledgeFiles} from './knowledge-base-migration.js';
 import {existsSync} from 'node:fs';
-import {join,posix} from 'node:path';
+import {join} from 'node:path';
 
 export const paperWikiNames=['whoami.md','idcard.md','background.md','research_problem.md','contributions.md','method/method.md','results/results.md','limitations.md','insights.md','evidence.md'];
 export const paperWikiNavigation=[['题录','idcard.md'],['背景','background.md'],['研究问题','research_problem.md'],['贡献','contributions.md'],['方法','method/method.md'],['实验与结果','results/results.md'],['局限','limitations.md'],['可复用认识','insights.md'],['依据总览','evidence.md']] as const;
 export const paperWikiPaths=(source:string)=>paperWikiNames.map(name=>`knowledge_base/papers/${source}/${name}`);
 export const paperCompatibility=(name:string)=>['basic.md','key.md','detail.md','memory.md','index.md','problem.md','method/index.md'].includes(name)||(name.startsWith('evidence/')&&!/^evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(name));
+// Working notes are retained on disk but never published. Unknown Markdown still fails validation.
+export const paperWikiWorkFile=(path:string)=>path.split('/').at(-1)==='knowledge-plan.md';
 export function paperWikiOutputPaths(output:string,source:string,required:string[]){
  const prefix=`knowledge_base/papers/${source}/`;
- const found=existsSync(join(output,prefix))?knowledgeFiles(output,prefix.slice(0,-1)).filter(path=>knowledgeBasePath.test(path)&&!paperCompatibility(path.slice(prefix.length))):[];
- const paths=[...new Set([...required,...found])];if(paths.filter(path=>!path.slice(prefix.length).startsWith('evidence/')).length>40||paths.filter(path=>path.slice(prefix.length).startsWith('evidence/')).length>80)throw new Error('单篇最多40个知识页、80个依据条目，请合并重复内容');return paths;
+ const found=existsSync(join(output,prefix))?knowledgeFiles(output,prefix.slice(0,-1)).filter(path=>knowledgeBasePath.test(path)&&!paperWikiWorkFile(path)&&!paperCompatibility(path.slice(prefix.length))):[];
+ const paths=[...new Set([...required.filter(path=>!paperWikiWorkFile(path)),...found])];if(paths.filter(path=>!path.slice(prefix.length).startsWith('evidence/')).length>40||paths.filter(path=>path.slice(prefix.length).startsWith('evidence/')).length>80)throw new Error('单篇最多40个知识页、80个依据条目，请合并重复内容');return paths;
 }
-export function paperWikiIssues(source:string,files:{path:string;text:string}[]){
+export type PaperWikiIssue={path:string;reason:string;unsafe:boolean;missing_target?:string;referenced_by?:string[]};
+export function paperWikiIssues(source:string,files:{path:string;text:string}[],invalidPaths:string[]=[]){
  const unresolved=files.map(file=>({path:file.path,ids:markdownReferences(file.text).unresolved}));
  files=files.map(file=>({...file,text:markdownReferences(file.text).text}));
  const prefix=`knowledge_base/papers/${source}/`;const byPath=new Map(files.map(file=>[file.path,file.text]));
- const issues:{path:string;reason:string;unsafe:boolean}[]=[];
+ const issues:PaperWikiIssue[]=[];
+ const available=new Set([...byPath.keys(),...invalidPaths]);
+ const missing=new Map<string,Set<string>>();
  const issue=(path:string,reason:string)=>issues.push({path,reason,unsafe:false});
  for(const file of unresolved)for(const id of file.ids)issue(file.path,'引用式链接缺少定义：'+id);
  const paperTitle=byPath.get(prefix+'whoami.md')?.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').match(/^#\s+(.+)$/m)?.[1]?.trim();
  const graph=new Map<string,string[]>();
- for(const file of files){const links=[...file.text.replace(/```[\s\S]*?```/g,'').matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].flatMap(match=>{const target=resolveKnowledgeLink(file.path,match[1]);if(!target)return [];if(!target.startsWith(prefix)||!byPath.has(target))issue(file.path,'知识导航仅引用本篇实际输出的知识页：'+match[1]);return [target];});graph.set(file.path,links);}
+ for(const file of files){const links=[...file.text.replace(/```[\s\S]*?```/g,'').matchAll(/\[[^\]\n]+\]\(([^\s)]+)\)/g)].flatMap(match=>{const target=resolveKnowledgeLink(file.path,match[1]);if(!target)return [];if(!target.startsWith(prefix))issue(file.path,'知识导航仅引用本篇实际输出的知识页：'+match[1]);else if(!available.has(target)){const refs=missing.get(target)??new Set<string>();refs.add(file.path);missing.set(target,refs);}return [target];});graph.set(file.path,links);}
  const reachable=new Set([prefix+'whoami.md']);let changed=true;while(changed){changed=false;for(const path of [...reachable])for(const target of graph.get(path)??[])if(!reachable.has(target)){reachable.add(target);changed=true;}}
- for(const file of files)if(!reachable.has(file.path))issue(prefix+'whoami.md','该知识页未被论文导航或子目录覆盖：'+file.path.slice(prefix.length));
+ if(paperTitle&&!invalidPaths.includes(prefix+'whoami.md'))for(const file of files)if(!reachable.has(file.path))issue(prefix+'whoami.md','该知识页未被论文导航或子目录覆盖：'+file.path.slice(prefix.length));
  const records=files.filter(file=>/^evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(file.path.slice(prefix.length)));
- if(!records.length)issue(prefix+'evidence.md','至少提供一个独立依据条目，材料不足也需明确记载');
- for(const name of paperWikiNames)if(!byPath.has(prefix+name))issue(prefix+name,'缺少本篇必需知识页');
+ if(!records.length&&!invalidPaths.some(path=>path.startsWith(prefix+'evidence/'))&&![...missing.keys()].some(path=>path.startsWith(prefix+'evidence/')))issue(prefix+'evidence.md','至少提供一个独立依据条目，材料不足也需明确记载');
+ for(const name of paperWikiNames)if(!available.has(prefix+name))issue(prefix+name,'缺少本篇必需知识页');
  for(const file of files){
   if(!file.path.startsWith(prefix)){issue(file.path,'不得生成其他来源内容');continue;}
   const name=file.path.slice(prefix.length);
@@ -39,7 +44,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
    if(name==='whoami.md'&&!/^#\s+\S/.test(leading[0]??''))issue(file.path,'论文入口从当前页标题开始');
    if(isEvidence&&/\[论文总览\]\(/.test(body))issue(file.path,'独立依据文档不添加论文名与论文总览');
   }else{
-   if(!paperTitle||leading[0]!==paperTitle||!/^\[论文总览\]\([^\s)]+\)$/.test(leading[1]??'')||!/^#\s+\S/.test(leading[2]??''))issue(file.path,'普通知识子页前三个非空行依次为论文全名、论文总览链接、当前页标题');
+   if((paperTitle&&leading[0]!==paperTitle)||(!paperTitle&&!invalidPaths.includes(prefix+'whoami.md'))||!/^\[论文总览\]\([^\s)]+\)$/.test(leading[1]??'')||!/^#\s+\S/.test(leading[2]??''))issue(file.path,'普通知识子页前三个非空行依次为论文全名、论文总览链接、当前页标题');
    if(!(graph.get(file.path)??[]).includes(prefix+'whoami.md'))issue(file.path,'论文总览链接须指向本篇whoami.md');
   }
   if(!isEvidence&&(/\/pdf-view\?|\]\([^)]*\.pdf(?:[?#][^)]*)?\)/i.test(body)))issue(file.path,'PDF原文定位仅放独立evidence/ev-*.md');
@@ -70,7 +75,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
   }
   for(const ref of body.matchAll(/\[([^\]\n]+)\]\(([^\s)]+)\)/g)){
    const resolved=resolveKnowledgeLink(file.path,ref[2]);
-   if(resolved?.startsWith(prefix+'evidence/')){const id=posix.basename(resolved,'.md');if(!byPath.has(resolved)||ref[1]!==id||ref[2].includes('#'))issue(file.path,'依据链接须使用条目名并直达独立文件：'+ref[2]);}
+   if(resolved?.startsWith(prefix+'evidence/')){if(ref[2].includes('#'))issue(file.path,'依据链接须直达独立文件，不使用锚点：'+ref[2]);}
    if(resolved===prefix+'evidence.md'&&ref[2].includes('#'))issue(file.path,'不再引用统一依据页锚点');
   }
   if(name==='evidence.md'){
@@ -80,6 +85,7 @@ export function paperWikiIssues(source:string,files:{path:string;text:string}[])
    for(const record of records)if(!(graph.get(file.path)??[]).includes(record.path))issue(file.path,'依据目录遗漏条目：'+record.path);
   }
  }
+ for(const [target,refs] of missing)issues.push({path:target,reason:`缺少被引用文件，影响${refs.size}个页面：${[...refs].map(path=>path.slice(prefix.length)).join('、')}`,unsafe:false,missing_target:target,referenced_by:[...refs]});
  return issues;
 }
 /** Single-paper writing responsibilities; self-check remains targeted and in-turn. */
@@ -95,5 +101,5 @@ export const paperWikiSelfCheck=`本次生成或修复结束后，只在当前�
 
 export function paperWikiPrompt(source:string,wikiOnly:boolean){
  const prefix=`knowledge_base/papers/${source}/`;
- return `读取 literature-skill/SKILL.md、literature-skill/references/paper-wiki.md 和 input.json。当前采用新版单篇论文知识协议，优先于旧四文档、index与统一依据锚点规范。只处理 source_id=${source}。全文采用作者式研究说明，使用“本论文提出”“实验表明”或直接陈述，不使用“我们”，不机械重复主语；减少第三方审阅措辞，不添加原文未讨论且不影响准确表述的保守推断。作者口吻不代表已核验，不扩大原文结论。${wikiOnly?'基于本篇已有材料重组，不读取PDF或声称重新核验原文。':'完整读取本次全部四页图文批次笔记，在本次生成中综合全文并统一术语、条件与证据，直接组织Wiki组，不单独生成整篇认识文件或增加汇总调用。'}\n${paperWikiWritingGuidance}\n先在任务根目录保存knowledge-plan.md，列明本篇研究目标与贡献类型，再按实际论证需要列出职责页、必要机制/实验子页和稳定依据条目。算法/方法侧重机制与消融，基准/评估侧重任务及比较协议，系统/工具的方法侧重协作与工作流，实验页简述运行条件并呈现成本结果；其他类型按实际论证组织，混合贡献可组合，不为模板编造训练、实验或强制增加子页。保留已有人工补充，将旧正文的认识和原文定位分配到新页；无法迁移的人工内容在新页明确保留，不静默删除。先生成知识与结果、归并依据，最后生成whoami。\n全部Markdown写入 output/${prefix}。必需：${paperWikiNames.join('、')}。可选 method/<slug>.md、results/<slug>.md，slug仅小写英文、数字、单个连字符或下划线，不使用连续--。先写正文，再按实际论断生成事实依据；每个事实依据须有具体正文使用位置，目录收录不代替正文引用。合并重复条目，撤下无正文用途的依据，不强塞无关引用；ev-reading-scope通过scope_ref关联，不要求正文重复引用。不手动删除已发布旧文件，整组清单与归档由后台处理。局部修订不扩大整组替换。不为数量凑页，不生成旧basic/key/detail/memory或index/problem正文；独立依据放evidence/ev-<slug>.md；题录写入 idcard.md（kind: wiki-page），仅保留标题、作者、期刊/会议、发表时间、源码状态（有地址就填地址，没有写无）；whoami 的知识导航必须单向链接 ./idcard.md。现有非兼容知识子页仍有效时要一并保留并纳入导航。\n每页frontmatter knowledge_version: 2、kind: wiki-page、source_id: ${source}、level: single。稳定ID=${'wiki-'+source+'--'}加相对论文目录文件名去掉.md且将/替换为--。例如whoami=${knowledgeDocumentId(prefix+'whoami.md')}，方法总览=${knowledgeDocumentId(prefix+'method/method.md')}。\nwhoami仅正式题目、二级标题“ 一句话认识 ”（概括问题+方法，无性能数字和结果评价）、“ 知识导航 ”。知识导航核心九项必须按顺序使用 ${paperWikiNavigation.map(([label,name])=>label+'→./'+name).join('、')}；每项格式为- [固定名称](对应路径)：简短内容说明，说明根据本篇实际内容填写，不省略、不复制正文。必要的额外子页导航排在九项之后，或由方法/结果总览覆盖。作者、DOI、源码等题录不放入whoami。background保留“概览”“已有研究与不足”和研究问题/依据链接；研究问题、贡献、方法、实验、局限、可复用认识继续使用references/paper-wiki.md对应职责标题，按上述内容重点写作。概览保存核心认识与限定，不写“本页介绍”，不重复检索摘要、适合回答和长篇关联栏目。\n依据协议：evidence.md仅为轻量目录（page_role: evidence-index），标题后只列出全部依据链接，不写目录说明、范围概括或条目简介，由whoami链接，不把目录塞入题录。每条依据保存为evidence/ev-<slug>.md（page_role: evidence、pdf_hash: 实际64位SHA256；原文缺失写unknown），正文第一行固定为[依据总览](../evidence.md)，空一行后一级标题为ev-<slug>，正文使用**定位：**、**事实：**、**边界：**三个非空加粗字段，不使用二级标题；事实支持正文到相应具体层级，关键数字带对象、条件及单位，组件映射有实际关系，不只复述主题；无需复制完整表格，仅定位的内容在边界明确待回查，缺失材料不补造；保留与本条直接相关的条件、实际异常与材料缺口，不自动凑批评；无额外缺口可简述适用条件，不硬截字数；记录本篇source_id、真实PDF哈希、页码/图表/章节、原文链接、支持范围、作者事实与推断边界；无法核实明确写未知。每条独立记录元数据保留其来源版本；共同阅读范围集中于ev-reading-scope：此条目客观简述真实覆盖范围和材料类型，定位仅实际页范围加一个原PDF入口，不逐页列链接；边界区分原生成与当前整理，说明复用笔记及图像/代码/实验核验情况，不默认完整阅读，不套用作者式主语。批次文件名、任务标识和哈希留元数据或历史，不重复正文。其他条目frontmatter写scope_ref: ev-reading-scope；核验状态写verification: unknown或not-reverified或verified，仅实际复核原文后才可写verified。不要重复迁移说明或公共范围段落，条目特有缺口仍写边界，不凭笔记存在宣称已核验。知识正文使用[ev-名称](按当前路径计算的evidence/ev-名称.md)，不用笼统的“依据”标签或旧evidence.md#锚点；不要把必要条件藏入依据。只有独立evidence/ev-*.md依据文档不添加论文名和论文总览。其余子页（包括evidence.md目录）前三个非空行依次为与whoami一致的论文全名（普通文本）、[论文总览](相对路径whoami.md)、当前页一级标题，三者间各留一空行。whoami导航覆盖知识页与依据目录，目录链接全部条目；依据不手写固定返回知识页链接，Agent从反向引用取得使用位置。\n不生成其他论文、摘要或跨论文主题。不实现depth或渐进读取协议。按规定目录、依据链接及页面分工直接写作，机械校验由后台处理。信息密度遵守 references/paper-wiki.md：方法只解释完整方法链路，理解结果必需的设置在实验页简写、配置细节按需留依据，材料缺口集中依据；表格存数据、正文解释差异与反例；局限保留原文明示不足、认识提炼设计启示，不重复摘要。概览直接讲核心内容，不写审阅式评价；方法页仅解释原理、设计依据与机制衔接，不写配置内容。依据目录仅保留全部条目链接，公共范围保存在ev-reading-scope等条目，每个独立条目仍需带自己的版本与范围，原文地址可用引用式链接定义复用。保留影响结论的条件，不硬截断、不新增压缩调用；完成后的轻量自查仅执行一次，以调用末尾说明及references/paper-wiki.md为准，不另做全文回读或增加调用。用户要求：`;
+ return `读取 literature-skill/SKILL.md、literature-skill/references/paper-wiki.md 和 input.json。当前采用新版单篇论文知识协议，优先于旧四文档、index与统一依据锚点规范。只处理 source_id=${source}。全文采用作者式研究说明，使用“本论文提出”“实验表明”或直接陈述，不使用“我们”，不机械重复主语；减少第三方审阅措辞，不添加原文未讨论且不影响准确表述的保守推断。作者口吻不代表已核验，不扩大原文结论。${wikiOnly?'基于本篇已有材料重组，不读取PDF或声称重新核验原文。':'完整读取本次全部四页图文批次笔记，在本次生成中综合全文并统一术语、条件与证据，直接组织Wiki组，不单独生成整篇认识文件或增加汇总调用。'}\n${paperWikiWritingGuidance}\n先在任务根目录（input.json同级、output/外）保存knowledge-plan.md，不将规划文件写入发布目录；不生成method/whoami.md、results/whoami.md重复导航，必要子页由已有方法/结果总览覆盖。列明本篇研究目标与贡献类型，再按实际论证需要列出职责页、必要机制/实验子页和稳定依据条目。算法/方法侧重机制与消融，基准/评估侧重任务及比较协议，系统/工具的方法侧重协作与工作流，实验页简述运行条件并呈现成本结果；其他类型按实际论证组织，混合贡献可组合，不为模板编造训练、实验或强制增加子页。保留已有人工补充，将旧正文的认识和原文定位分配到新页；无法迁移的人工内容在新页明确保留，不静默删除。先生成知识与结果、归并依据，最后生成whoami。\n仅发布的知识Markdown写入 output/${prefix}。必需：${paperWikiNames.join('、')}。可选 method/<slug>.md、results/<slug>.md，slug仅小写英文、数字、单个连字符或下划线，不使用连续--。先写正文，再按实际论断生成事实依据；每个事实依据须有具体正文使用位置，目录收录不代替正文引用。合并重复条目，撤下无正文用途的依据，不强塞无关引用；ev-reading-scope通过scope_ref关联，不要求正文重复引用。不手动删除已发布旧文件，整组清单与归档由后台处理。局部修订不扩大整组替换。不为数量凑页，不生成旧basic/key/detail/memory或index/problem正文；独立依据放evidence/ev-<slug>.md；题录写入 idcard.md（kind: wiki-page），仅保留标题、作者、期刊/会议、发表时间、源码状态（有地址就填地址，没有写无）；whoami 的知识导航必须单向链接 ./idcard.md。现有非兼容知识子页仍有效时要一并保留并纳入导航。\n对照references/paper-wiki.md的三类交付示例：每页frontmatter必须从文件首行---开始，元数据后再写正文；whoami从# 论文全名开始，不能省略#。每页frontmatter knowledge_version: 2、kind: wiki-page、source_id: ${source}、level: single。稳定ID=${'wiki-'+source+'--'}加相对论文目录文件名去掉.md且将/替换为--。例如whoami=${knowledgeDocumentId(prefix+'whoami.md')}，方法总览=${knowledgeDocumentId(prefix+'method/method.md')}。\nwhoami仅正式题目、二级标题“ 一句话认识 ”（概括问题+方法，无性能数字和结果评价）、“ 知识导航 ”。知识导航核心九项必须按顺序使用 ${paperWikiNavigation.map(([label,name])=>label+'→./'+name).join('、')}；每项格式为- [固定名称](对应路径)：简短内容说明，说明根据本篇实际内容填写，不省略、不复制正文。必要的额外子页导航排在九项之后，或由方法/结果总览覆盖。作者、DOI、源码等题录不放入whoami。background保留“概览”“已有研究与不足”和研究问题/依据链接；研究问题、贡献、方法、实验、局限、可复用认识继续使用references/paper-wiki.md对应职责标题，按上述内容重点写作。概览保存核心认识与限定，不写“本页介绍”，不重复检索摘要、适合回答和长篇关联栏目。\n依据协议：evidence.md仅为轻量目录（page_role: evidence-index），标题后只列出全部依据链接，不写目录说明、范围概括或条目简介，由whoami链接，不把目录塞入题录。每条依据保存为evidence/ev-<slug>.md（page_role: evidence、pdf_hash: 实际64位SHA256；原文缺失写unknown），正文第一行固定为[依据总览](../evidence.md)，空一行后一级标题为ev-<slug>，正文使用**定位：**、**事实：**、**边界：**三个非空加粗字段，不使用二级标题；事实支持正文到相应具体层级，关键数字带对象、条件及单位，组件映射有实际关系，不只复述主题；无需复制完整表格，仅定位的内容在边界明确待回查，缺失材料不补造；保留与本条直接相关的条件、实际异常与材料缺口，不自动凑批评；无额外缺口可简述适用条件，不硬截字数；记录本篇source_id、真实PDF哈希、页码/图表/章节、原文链接、支持范围、作者事实与推断边界；无法核实明确写未知。每条独立记录元数据保留其来源版本；共同阅读范围集中于ev-reading-scope：此条目客观简述真实覆盖范围和材料类型，定位仅实际页范围加一个原PDF入口，不逐页列链接；边界区分原生成与当前整理，说明复用笔记及图像/代码/实验核验情况，不默认完整阅读，不套用作者式主语。批次文件名、任务标识和哈希留元数据或历史，不重复正文。其他条目frontmatter写scope_ref: ev-reading-scope；核验状态写verification: unknown或not-reverified或verified，仅实际复核原文后才可写verified。不要重复迁移说明或公共范围段落，条目特有缺口仍写边界，不凭笔记存在宣称已核验。知识正文使用[ev-名称](按当前路径计算的evidence/ev-名称.md)或清晰的事实/机制名称作为显示标签，链接直达独立文件，不用笼统的“依据”标签或锚点；不要把必要条件藏入依据。只有独立evidence/ev-*.md依据文档不添加论文名和论文总览。其余子页（包括evidence.md目录）前三个非空行依次为与whoami一致的论文全名（普通文本）、[论文总览](相对路径whoami.md)、当前页一级标题，三者间各留一空行。whoami导航覆盖知识页与依据目录，目录链接全部条目；依据不手写固定返回知识页链接，Agent从反向引用取得使用位置。\n不生成其他论文、摘要或跨论文主题。不实现depth或渐进读取协议。按规定目录、依据链接及页面分工直接写作，机械校验由后台处理。信息密度遵守 references/paper-wiki.md：方法只解释完整方法链路，理解结果必需的设置在实验页简写、配置细节按需留依据，材料缺口集中依据；表格存数据、正文解释差异与反例；局限保留原文明示不足、认识提炼设计启示，不重复摘要。概览直接讲核心内容，不写审阅式评价；方法页仅解释原理、设计依据与机制衔接，不写配置内容。依据目录仅保留全部条目链接，公共范围保存在ev-reading-scope等条目，每个独立条目仍需带自己的版本与范围，原文地址可用引用式链接定义复用。保留影响结论的条件，不硬截断、不新增压缩调用；完成后的轻量自查仅执行一次，以调用末尾说明及references/paper-wiki.md为准，不另做全文回读或增加调用。用户要求：`;
 }

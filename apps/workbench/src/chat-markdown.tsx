@@ -3,12 +3,13 @@ import React, { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { copyText } from './clipboard.js';
 
-function inline(text:string,allowRelativeLinks=false):React.ReactNode[]{
+function inline(text:string,allowRelativeLinks=false,onOpenResearch?:(path:string)=>void):React.ReactNode[]{
   return text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^\s)]+\))/g).map((part,index)=>{
+    if(onOpenResearch && /^`research\/[^/`\r\n]+\.md`$/i.test(part))return <button type="button" className="text-button" key={index} onClick={()=>onOpenResearch(part.slice(1,-1))}>{part.slice(1,-1)}</button>;
     if(part.startsWith('`')&&part.endsWith('`'))return <code key={index}>{part.slice(1,-1)}</code>;
     if(part.startsWith('**')&&part.endsWith('**'))return <strong key={index}>{part.slice(2,-2)}</strong>;
     const link=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if(link&&(/^(https?:\/\/|#)/i.test(link[2])||/^\/api\/v1\/projects\/[^/]+\/sources\/[^/]+\/pdf-view(?:[?#]|$)/.test(link[2])||(allowRelativeLinks&&!/^[a-z][a-z0-9+.-]*:/i.test(link[2])&&!link[2].startsWith('//'))))return <a key={index} href={link[2]} target={/^(https?:|\/api\/)/i.test(link[2])?'_blank':undefined} rel="noopener noreferrer">{link[1]}</a>;
+    if(link&&(/^\/projects\/[\w-]+\/coordination\?action=memory&focus=[a-f\d-]{36}$/i.test(link[2])||/^(https?:\/\/|#)/i.test(link[2])||/^\/api\/v1\/projects\/[^/]+\/sources\/[^/]+\/pdf-view(?:[?#]|$)/.test(link[2])||(allowRelativeLinks&&!/^[a-z][a-z0-9+.-]*:/i.test(link[2])&&!link[2].startsWith('//'))))return <a key={index} href={link[2]} target={/^(https?:|\/api\/)/i.test(link[2])?'_blank':undefined} rel="noopener noreferrer">{link[1]}</a>;
     return part;
   });
 }
@@ -16,8 +17,8 @@ function CodeBlock({language,body}:{language:string;body:string}){
   const [copied,setCopied]=useState(false),[error,setError]=useState(false);
   return <div className="chat-code-block"><header><span>{language||'代码'}</span><button type="button" onClick={()=>{void copyText(body).then(()=>{setCopied(true);setError(false);}).catch(()=>setError(true));}}>{copied?<Check size={13}/>:<Copy size={13}/>} {error?'复制失败，请手动选择':copied?'已复制':'复制代码'}</button></header><pre><code>{body}</code></pre></div>;
 }
-export function ChatMarkdown({text,allowRelativeLinks=false}:{text:string;allowRelativeLinks?:boolean}){
-  const renderInline=(value:string)=>inline(value,allowRelativeLinks);
+export const ChatMarkdown=React.memo(function ChatMarkdown({text,allowRelativeLinks=false,onOpenResearch}:{text:string;allowRelativeLinks?:boolean;onOpenResearch?:(path:string)=>void}){
+  const renderInline=(value:string)=>inline(value,allowRelativeLinks,onOpenResearch);
   const lines=markdownReferences(text).text.replace(/\r\n/g,'\n').split('\n'),blocks:React.ReactNode[]=[];
   const first=lines.findIndex(line=>line.trim());
   const next=lines.slice(first+1).find(line=>line.trim())?.trim();
@@ -48,4 +49,4 @@ export function ChatMarkdown({text,allowRelativeLinks=false}:{text:string;allowR
     blocks.push(<p key={blocks.length}>{renderInline(paragraph.join('\n'))}</p>);
   }
   return <div className="chat-markdown">{blocks}</div>;
-}
+});

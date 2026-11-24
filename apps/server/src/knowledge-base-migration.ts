@@ -1,10 +1,11 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,lstatSync,mkdirSync,readdirSync,readFileSync,realpathSync,renameSync,writeFileSync,copyFileSync,rmSync,unlinkSync,rmdirSync} from 'node:fs';
 import {dirname,join,posix,sep} from 'node:path';
+import {projectLibraryPath} from '@trash/storage';
 import {knowledgePath,knowledgeBasePath,legacyKnowledgePath} from '@trash/protocol';
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 export function safeKnowledgeFile(root:string,path:string){
- let current=root;for(const part of path.split('/')){if(!part||part==='.'||part==='..')throw new Error('KNOWLEDGE_PATH_INVALID');current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');}
+ let current=root;for(const part of projectLibraryPath(root,path).split('/')){if(!part||part==='.'||part==='..')throw new Error('KNOWLEDGE_PATH_INVALID');current=join(current,part);if(existsSync(current)&&lstatSync(current).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');}
  if(!current.startsWith(root+sep))throw new Error('KNOWLEDGE_PATH_INVALID');return current;
 }
 export function knowledgeFiles(root:string,dir:string):string[]{
@@ -20,11 +21,12 @@ export function resolveBasePath(root:string,path:string){
  const candidates=[knowledgePath(path),...['summary','hypothesis','discovery'].map(level=>knowledgePath(path,level))];
  return candidates.find(candidate=>candidate!==path&&existsSync(safeKnowledgeFile(root,candidate)))??path;
 }
-export function rewriteKnowledgeText(text:string,from:string,to:string,paths:Record<string,string>){
+export function rewriteKnowledgeText(text:string,from:string,to:string,paths:Record<string,string>,preserveSourceAnchors=false){
  let fence='';
  return text.split('\n').map(line=>{
   const marker=line.match(/^\s*([`~]{3,})/);if(marker){if(!fence)fence=marker[1][0];else if(fence===marker[1][0])fence='';return line;}if(fence)return line;
   return line.replace(/(!?\[[^\]\n]+\]\()([^\s)]+)([^)]*\))/g,(all,prefix:string,href:string,suffix:string)=>{
+   if(preserveSourceAnchors&&href.startsWith('#'))return prefix+posix.relative(posix.dirname(to),from)+href+suffix;
    if(href.startsWith('/api/')||/^(?:[a-z]+:|\/\/|#)/i.test(href))return all;
    const [raw,fragment='']=href.split(/(?=[?#])/s);let target:string;try{target=decodeURIComponent(raw);}catch{return all;}
    const old=posix.normalize(target.startsWith('/')?target.slice(1):posix.join(posix.dirname(from),target));
@@ -78,7 +80,7 @@ export function migrateKnowledgeBase(rootInput:string,expected:string){
   writeFileSync(join(base,'AGENTS.md'),'# 知识库阅读与维护\n\n先读知识库 index.md，再读具体论文 papers/<source_id>/whoami.md；按问题进入背景、研究问题、方法机制、贡献、实验结果、局限与综合认识，原文出处归并到evidence.md。不读取或生成旧卡片兼容入口；精确结果回查结果页、依据页及原文。区分全文证据与摘要级声明。关联、导航和证据分开，保留人工补充、稳定ID和出处。不要默认读取全库；分批总结不是正式主题。运行缓存和任务日志位于项目 .trash/，不作为研究事实。\n');
   mkdirSync(join(base,'maintenance'),{recursive:true});writeFileSync(join(base,'maintenance/log.md'),(existsSync(safeKnowledgeFile(root,'.trash/wiki-log.md'))?readFileSync(safeKnowledgeFile(root,'.trash/wiki-log.md'),'utf8')+'\n':'')+'# 知识维护记录\n\n迁移保留文档ID、原始资料与历史快照。平台后续发布和命名操作在此记录。\n');
   for(const item of preview.items)if(hash(readFileSync(safeKnowledgeFile(root,item.from),'utf8'))!==item.hash)throw new Error('VERSION_CONFLICT');
-  const target=safeKnowledgeFile(root,'knowledge_base');if(existsSync(target))throw new Error('KNOWLEDGE_BASE_CONFLICT');
+  const target=safeKnowledgeFile(root,'knowledge_base');if(existsSync(target)){if(readdirSync(target).length)throw new Error('KNOWLEDGE_BASE_CONFLICT');rmdirSync(target);}
   const manifest={version:1,paths,beforeHashes,afterHashes,backup,at:new Date().toISOString()};
   const file=safeKnowledgeFile(root,'.trash/knowledge-base-migration.json');writeFileSync(file+'.tmp',JSON.stringify(manifest,null,2));renameSync(base,target);renameSync(file+'.tmp',file);
   for(const item of preview.items){const original=safeKnowledgeFile(root,item.from);if(hash(readFileSync(original,'utf8'))===item.hash)unlinkSync(original);}

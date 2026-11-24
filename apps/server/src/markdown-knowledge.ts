@@ -1,8 +1,11 @@
+import {invalidateSourceAnalysis} from './source-analysis-cache.js';
+import {legacyMaterialTitle} from './research-exploration-format.js';
+import {topicGroupIssues,topicManifest,topicPaths} from './topic-wiki.js';
 import {paperMembership,groupPath,readPaperGroup,groupPhysical,classifyPaperFiles,taskGeneratedHashes,type GroupStatus,type PaperGroup} from './paper-wiki-groups.js';
 import {PaperWikiVersions,recoverPaperVersionWrites} from './paper-wiki-versions.js';
 import {paperCompatibility,paperWikiIssues} from './paper-wiki.js';
-import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId} from '@trash/protocol';
-import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText} from './knowledge-base-migration.js';
+import {markdownReferences,knowledgeBasePath,legacyKnowledgePath,knowledgePath,knowledgeDocumentId,libraryLogicalPath} from '@trash/protocol';
+import {knowledgeFiles,migrationManifest,resolveBasePath,rewriteKnowledgeText,safeKnowledgeFile} from './knowledge-base-migration.js';
 import {knowledgeLinks,knowledgeAliases,type KnowledgeLink} from './knowledge-links.js';
 import {parseBasicCard,applyBasicCard,applyIdcard,sourceContentHash,legacySourceContentHash} from './source-bibliography.js';
 import type { KnowledgeVersion } from "@trash/protocol";
@@ -12,20 +15,34 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TrashStore } from '@trash/storage';
 
-export type MarkdownDocument={group_status?:GroupStatus;id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
+export type MarkdownDocument={topic_id?:string;group_status?:GroupStatus;id:string;kind:'literature-card'|'wiki-page';source_id?:string;card_type?:'basic'|'detail'|'key';title:string;document_title?:string;path:string;text:string;hash:string;modified:string;status:string;stale?:boolean;level?:string;summary?:string;characters?:number;dependencies?:{path:string;hash:string}[];links?:KnowledgeLink[];aliases?:string[];material_scope?:'fulltext'|'abstract';coverage?:string;directions?:string;batch_label?:string;page_role?:string;pdf_hash?:string;scope_ref?:string;verification?:string};
+type IndexedKnowledge={documents:Omit<MarkdownDocument,'text'>[];errors:{path:string;error:string}[]};
+const isEvidenceAttachment=({path,page_role}:Pick<MarkdownDocument,'path'|'page_role'>)=>
+  page_role==='evidence'||page_role==='evidence-index'||/^knowledge_base\/papers\/source_[^/]+\/evidence(?:\.md|\/[^/]+\.md)$/.test(path);
+const indexCaches=new WeakMap<TrashStore,Map<string,{until:number;value:IndexedKnowledge}>>();
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
-function fail(code:string,statusCode=409):never{throw Object.assign(new Error(code),{statusCode});}
+function fail(code:string,statusCode=409,detail?:string):never{throw Object.assign(new Error(code),{statusCode,detail});}
 function rejectSymlink(path:string){try{if(lstatSync(path).isSymbolicLink())fail('KNOWLEDGE_PATH_INVALID',403);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 export const skillRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-wiki/',import.meta.url));
-const knowledgeSkillFiles=['SKILL.md','references/wiki.md','references/paper-wiki.md','references/research-exploration.md'];
-const synthesisRoot=fileURLToPath(new URL('../../../.agents/skills/trash-literature-synthesis/',import.meta.url));
-// References moved during the skill split; retain the existing staged layout.
-const skillFile=(name:string)=>join(name==='references/wiki.md'||name==='references/research-exploration.md'?synthesisRoot:skillRoot,name);
-export function skillText(){return knowledgeSkillFiles.map(name=>readFileSync(skillFile(name),'utf8')).join('\n\n');}
-export function stageKnowledgeSkill(directory:string){
-  // Remove obsolete staged rules when continuing a previously created task.
-  for(const name of ['basic.md','cards.md']){const path=join(directory,'literature-skill','references',name);if(existsSync(path)){rejectSymlink(path);unlinkSync(path);}}
-  for(const name of knowledgeSkillFiles){const target=join(directory,'literature-skill',name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(skillFile(name),'utf8'),{mode:0o600});}
+const skillReferences = {
+  'trash-experiment-method': [],
+  'trash_git_sync': ['references/tools.md'],
+  'trash-literature-wiki': ['references/paper-wiki.md'],
+  'trash-literature-synthesis': ['references/wiki.md', 'references/synthesis.md'],
+  'trash-research-exploration': ['references/research-exploration.md'],
+  'trash-research-map': [],
+  'trash-research-background': [],
+  'trash-abstract-wiki': [],
+  'trash_analyze_code_environment': ['references/report-format.md']
+} as const;
+export type KnowledgeSkill = keyof typeof skillReferences;
+const skillFiles = (skill:KnowledgeSkill) => ['SKILL.md', ...skillReferences[skill]];
+const skillFile=(skill:KnowledgeSkill,name:string)=>join(skillRoot,'..',skill,name);
+export function skillText(skill:KnowledgeSkill='trash-literature-wiki'){return skillFiles(skill).map(name=>readFileSync(skillFile(skill,name),'utf8')).join('\n\n');}
+export function stageKnowledgeSkill(directory:string,skill:KnowledgeSkill='trash-literature-wiki',folder='literature-skill'){
+  const files=skillFiles(skill);
+  for(const name of ['basic.md','cards.md','wiki.md','paper-wiki.md','research-exploration.md','synthesis.md']){const path=join(directory,folder,'references',name);if(!files.includes('references/'+name)&&existsSync(path)){rejectSymlink(path);unlinkSync(path);}}
+  for(const name of files){const target=join(directory,folder,name);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,readFileSync(skillFile(skill,name),'utf8'),{mode:0o600});}
 }
 /** A paper's status follows its current entry graph, never unrelated leftover files. */
 export function currentPaperWiki(documents:Pick<MarkdownDocument,'path'|'source_id'|'kind'|'stale'|'links'|'dependencies'|'group_status'>[],source:string){
@@ -50,46 +67,61 @@ export function currentPaperWiki(documents:Pick<MarkdownDocument,'path'|'source_
 }
 export class MarkdownKnowledge {
   constructor(private store:TrashStore){}
+  invalidate(project:string){indexCaches.get(this.store)?.delete(project);invalidateSourceAnalysis(this.store,project);}
   root(project:string){if(!this.store.getProject(project))fail('PROJECT_NOT_FOUND',404);const root=join(this.store.root,'projects',project);mkdirSync(root,{recursive:true});return realpathSync(root);}
   locate(project:string,path:string){
+    path=libraryLogicalPath(path);
     if(!legacyKnowledgePath.test(path)&&!knowledgeBasePath.test(path)&&!/^abstract-library\/(notes|wiki)\/source_[A-Za-z0-9_-]+\.md$/.test(path))fail('KNOWLEDGE_PATH_INVALID',400);
-    const root=this.root(project);path=resolveBasePath(root,path);const target=resolve(root,path);let current=root;
-    for(const part of path.split('/')){current=join(current,part);rejectSymlink(current);}
-    if(!target.startsWith(root+sep))fail('KNOWLEDGE_PATH_INVALID',403);return target;
+    const root=this.root(project);path=knowledgeBasePath.test(path)?path:resolveBasePath(root,path);return safeKnowledgeFile(root,path);
   }
-  private internal(project:string,path:string){const root=this.root(project);let current=root;for(const part of path.split('/')){current=join(current,part);rejectSymlink(current);}return current;}
+  private internal(project:string,path:string){return safeKnowledgeFile(this.root(project),path);}
   parse(project:string,path:string,text:string):MarkdownDocument{
-    if(Buffer.byteLength(text)>1024*1024||text.includes('\0'))fail('KNOWLEDGE_FILE_INVALID',422);
+    if(Buffer.byteLength(text)>1024*1024||text.includes('\0'))fail('KNOWLEDGE_FILE_INVALID',422,'文件超过1MB或包含空字符');
     const references=markdownReferences(text);if(references.unresolved.length)fail('KNOWLEDGE_REFERENCE_UNDEFINED',422);
-    const match=text.replace(/\r\n/g,'\n').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);if(!match)fail('KNOWLEDGE_FILE_INVALID',422);
-    const meta:Record<string,string>={};for(const line of match[1].split('\n')){const m=line.match(/^([a-z_]+):\s*([A-Za-z0-9_-]+)\s*$/);if(m){if(meta[m[1]])fail('KNOWLEDGE_FILE_INVALID',422);meta[m[1]]=m[2];}}
+    const match=text.replace(/\r\n/g,'\n').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);if(!match)fail('KNOWLEDGE_FILE_INVALID',422,'元数据必须从文件首行 --- 开始，并以独立的 --- 行结束');
+    const meta:Record<string,string>={};for(const line of match[1].split('\n')){const m=line.match(/^([a-z_]+):\s*([A-Za-z0-9_-]+)\s*$/);if(m){if(meta[m[1]])fail('KNOWLEDGE_FILE_INVALID',422,'元数据字段重复：'+m[1]);meta[m[1]]=m[2];}}
     const kind=meta.kind==='wiki-page'?'wiki-page':'literature-card';
-    if(kind==='literature-card'||(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1]?.split('/').slice(1).join('/')??'')))fail('LEGACY_CARD_REMOVED',410);
-    if(meta.kind!==kind||!meta.id||meta.id.length>180||knowledgeDocumentId(path)!==meta.id)fail('KNOWLEDGE_FILE_INVALID',422);
-    if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
-    if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422);
+    if(kind==='literature-card'||(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1]?.split('/').slice(1).join('/')??'')))fail('LEGACY_CARD_REMOVED',410,'仅接受新版 wiki-page 元数据及允许的知识页路径');
+    if(meta.kind!==kind)fail('KNOWLEDGE_FILE_INVALID',422,'kind 必须为 wiki-page');
+    if(!meta.id||meta.id.length>180||knowledgeDocumentId(path)!==meta.id)fail('KNOWLEDGE_FILE_INVALID',422,`id 与路径不匹配：实际 ${meta.id??'缺失'}，期望 ${knowledgeDocumentId(path)}`);
+    if(path.startsWith('knowledge_base/explorations/')){
+    const index=path.endsWith('/index.md');
+    if(meta.level!=='exploration'||meta.page_role!==(index?'exploration-index':'exploration-topic')||meta.source_id||
+      (!index&&(!/^exploration_[a-f0-9-]+$/.test(meta.exploration_run_id??'')||
+        path!==`knowledge_base/explorations/wiki-exploration-${meta.exploration_candidate_id}.md`)))
+      fail('INVALID_EXPLORATION_METADATA',422,'探索文档的路径与来源标识不一致');
+  }
+  if(kind==='wiki-page'&&!meta.id.startsWith('wiki-'))fail('KNOWLEDGE_FILE_INVALID',422);
+    if(path.includes('/papers/')&&meta.id.includes('--')&&(kind!=='wiki-page'||meta.level!=='single'||!meta.source_id||!path.startsWith(`knowledge_base/papers/${meta.source_id}/`)))fail('KNOWLEDGE_FILE_INVALID',422,`论文元数据要求 level: single、source_id 与路径一致；实际 level=${meta.level??'缺失'}、source_id=${meta.source_id??'缺失'}`);
+    if(meta.topic_id&&(!/^wiki-[A-Za-z0-9_-]+$/.test(meta.topic_id)||!topicPaths(meta.topic_id).includes(path)||meta.level!=='topic'||meta.source_id||meta.page_role!==(meta.id===meta.topic_id?'topic-synthesis':'topic-page')))fail('INVALID_TOPIC_METADATA',422,'主题身份、页面角色或路径不一致');
     if(meta.source_id&&this.store.getSource(meta.source_id)?.project_id!==project)fail('SOURCE_NOT_FOUND',404);
-    if(/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(path)&&(meta.page_role!=='evidence'||!(/^(?:[a-f0-9]{64}|unknown)$/.test(meta.pdf_hash??''))))fail('EVIDENCE_METADATA_REQUIRED',422);
+    if(/\/evidence\/ev-[a-z0-9][a-z0-9_-]*\.md$/.test(path)&&(meta.page_role!=='evidence'||!(/^(?:[a-f0-9]{64}|unknown)$/.test(meta.pdf_hash??''))))fail('EVIDENCE_METADATA_REQUIRED',422,'独立依据要求 page_role: evidence 和 pdf_hash: 64位SHA256或unknown');
     if(meta.scope_ref&&!/^ev-[a-z0-9][a-z0-9_-]*$/.test(meta.scope_ref))fail('EVIDENCE_SCOPE_INVALID',422);
     if(meta.verification&&!['unknown','not-reverified','verified'].includes(meta.verification))fail('EVIDENCE_VERIFICATION_INVALID',422);
-    const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422);
+    const title=match[2].match(/^#\s+(.+)$/m)?.[1]?.trim();if(!title)fail('KNOWLEDGE_FILE_INVALID',422,'正文缺少一级标题：需要独立一行 # 标题（总览使用 # 论文全名）');
     if(meta.card_type==='basic')parseBasicCard(text);
     const hash=digest(text);
     const section=(heading:string)=>match[2].split(/^##\s+/m).slice(1).find(part=>part.split('\n')[0].trim()===heading)?.split('\n').slice(1).join('\n').trim();
-    return {page_role:meta.page_role,pdf_hash:meta.pdf_hash,scope_ref:meta.scope_ref,verification:meta.verification,material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:section('批次标识')??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:[...knowledgeLinks(path,text),...(meta.page_role==='evidence'&&meta.scope_ref&&path.split('/').at(-1)!==meta.scope_ref+'.md'?[{path:join(dirname(path),meta.scope_ref+'.md'),label:meta.scope_ref,relation:'范围关联',reason:'共同阅读范围（元数据）',evidence:false,usage:'scope' as const,source_line:0,source_section:'',source_anchor:''}]:[])],aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(markdownReferences(match[2]).text.match(/^## (?:概览|一句话认识|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
+    const batchSection=section('批次标识');
+    const batchLabel=batchSection===undefined?undefined:markdownReferences(batchSection).text.trim();
+    return {topic_id:meta.topic_id,page_role:meta.page_role,pdf_hash:meta.pdf_hash,scope_ref:meta.scope_ref,verification:meta.verification,material_scope:'fulltext',coverage:section('材料范围'),directions:section('覆盖方向'),batch_label:batchLabel??(/^文献知识第\d+层分组\d+$/.test(title)?title:undefined),links:[...knowledgeLinks(path,text),...(meta.page_role==='evidence'&&meta.scope_ref&&path.split('/').at(-1)!==meta.scope_ref+'.md'?[{path:join(dirname(path),meta.scope_ref+'.md'),label:meta.scope_ref,relation:'范围关联',reason:'共同阅读范围（元数据）',evidence:false,usage:'scope' as const,source_line:0,source_section:'',source_anchor:''}]:[])],aliases:knowledgeAliases(text),id:meta.id,kind,source_id:meta.source_id,card_type:meta.card_type as 'basic'|'detail'|'key'|undefined,title,path,text,hash,modified:new Date().toISOString(),status:'accepted',level:/^文献知识第\d+层分组\d+$/.test(title)?'summary':meta.level??(meta.source_id?'single':'topic'),summary:(markdownReferences(match[2]).text.match(/^## (?:概览|一句话认识|研究问题|何时读取|适用问题)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]??match[2]).replace(/^#+[^\n]*$/gm,'').replace(/\[[^\]]*\]\([^)]*\)/g,'').replace(/\s+/g,' ').trim().slice(0,180),characters:text.length};
   }
   // Version 2 is opt-in: pre-existing Markdown remains on disk and is never indexed.
   private isCurrent(text:string){return /^knowledge_version:\s*2\s*$/m.test(text.split(/---\r?\n/)[1]??'');}
   private writeIndex(project:string,value:unknown){const file=this.internal(project,'.trash/knowledge-index-v2.json');mkdirSync(dirname(file),{recursive:true});const temp=file+'.tmp';writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,file);}
   index(project:string,force=false,includeRetired=false){
+    let cache=indexCaches.get(this.store);if(!cache){cache=new Map();indexCaches.set(this.store,cache);}
+    const cached=cache.get(project);
+    const copy=(value:IndexedKnowledge):IndexedKnowledge=>({documents:value.documents.filter(doc=>includeRetired||!doc.group_status||doc.group_status==='current').map(doc=>({...doc,links:doc.links?.map(link=>({...link})),dependencies:doc.dependencies?.map(ref=>({...ref})),aliases:doc.aliases?.slice()})),errors:value.errors.map(error=>({...error}))});
+    if(!force&&cached&&cached.until>Date.now())return copy(cached.value);
     this.recover(project);
     this.store.db.exec("CREATE TABLE IF NOT EXISTS knowledge_search_v2(project TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(project,path))");
     type Entry={signature:string;document?:Omit<MarkdownDocument,'text'>;error?:string};
     let old:Record<string,Entry>={};try{old=JSON.parse(readFileSync(this.internal(project,'.trash/knowledge-index-v2.json'),'utf8')).entries??{};}catch{/* Rebuildable index. */}
     const entries:Record<string,Entry>={},errors:{path:string;error:string}[]=[];
     const migrated=migrationManifest(this.root(project));
-    const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
-    for(const path of scan.filter(path=>!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-group-usage-9:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    const scan=migrated?knowledgeFiles(this.root(project),'knowledge_base').filter(path=>knowledgeBasePath.test(path)&&!path.includes('/abstracts/')):['literature/cards','wiki','knowledge_base/explorations'].flatMap(dir=>knowledgeFiles(this.root(project),dir));
+    for(const path of scan.filter(path=>(!path.startsWith('knowledge_base/')||knowledgeBasePath.test(path))&&!path.startsWith('literature/cards/')&&!(path.includes('/papers/')&&paperCompatibility(path.split('/papers/')[1].split('/').slice(1).join('/'))))){try{const physical=this.locate(project,path),info=lstatSync(physical),signature=`knowledge-topic-group-11:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
       if(!force&&old[path]?.signature===signature)entries[path]=old[path];
       else{if(info.size>1024*1024)fail('KNOWLEDGE_FILE_INVALID',422);const text=readFileSync(physical,'utf8');if(!this.isCurrent(text)){entries[path]={signature};continue;}const {text:body,...document}=this.parse(project,path,text);void body;document.modified=info.mtime.toISOString();entries[path]={signature,document};}
       if(entries[path].error)errors.push({path,error:entries[path].error!});
@@ -105,33 +137,49 @@ export class MarkdownKnowledge {
     const membership=new Map([...new Set(paperDocuments.flatMap(doc=>doc.source_id&&doc.path.startsWith(`knowledge_base/papers/${doc.source_id}/`)?[doc.source_id]:[]))].map(source=>[source,paperMembership(this.root(project),source,paperDocuments).current]));
     for(const entry of Object.values(entries)){const doc=entry.document;if(doc?.source_id&&membership.has(doc.source_id)&&doc.path.startsWith(`knowledge_base/papers/${doc.source_id}/`))doc.group_status=membership.get(doc.source_id)!.has(doc.path)?'current':'unassigned';}
     const active=(doc:Omit<MarkdownDocument,'text'>|undefined)=>Boolean(doc&&(!doc.group_status||doc.group_status==='current'));
-    this.store.db.transaction(()=>{for(const [path,entry] of Object.entries(entries)){if(!active(entry.document)){this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,path);continue;}if(!entry.document)continue;const cached=this.store.db.prepare('SELECT hash FROM knowledge_search_v2 WHERE project=? AND path=?').get(project,path) as {hash:string}|undefined;if(force||cached?.hash!==entry.document.hash)this.store.db.prepare('INSERT OR REPLACE INTO knowledge_search_v2(project,path,hash,text) VALUES(?,?,?,?)').run(project,path,entry.document.hash,readFileSync(this.locate(project,path),'utf8'));}for(const row of this.store.db.prepare('SELECT path FROM knowledge_search_v2 WHERE project=?').all(project) as {path:string}[])if(!active(entries[row.path]?.document))this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,row.path);})();
+    this.store.db.transaction(()=>{
+      const searchable=new Set<string>();
+      for(const [path,{document}] of Object.entries(entries)){
+        if(!document||!active(document)||isEvidenceAttachment(document))continue;
+        searchable.add(path);
+        const cached=this.store.db.prepare('SELECT hash FROM knowledge_search_v2 WHERE project=? AND path=?').get(project,path) as {hash:string}|undefined;
+        if(force||cached?.hash!==document.hash)this.store.db.prepare('INSERT OR REPLACE INTO knowledge_search_v2(project,path,hash,text) VALUES(?,?,?,?)').run(project,path,document.hash,readFileSync(this.locate(project,path),'utf8'));
+      }
+      for(const row of this.store.db.prepare('SELECT path FROM knowledge_search_v2 WHERE project=?').all(project) as {path:string}[]){
+        if(!searchable.has(row.path))this.store.db.prepare('DELETE FROM knowledge_search_v2 WHERE project=? AND path=?').run(project,row.path);
+      }
+    })();
     if(force||JSON.stringify(entries)!==JSON.stringify(old))this.writeIndex(project,{version:2,entries});
     const displayTitle=(d:Omit<MarkdownDocument,'text'>)=>d.source_id&&!d.id.includes('--')?(this.store.getSource(d.source_id)?.title||d.title):d.title;
     const lines=['# Wiki 导航','平台生成，可从 Markdown 重建；按需检索，不要求每轮全文读取。',''];
-    for(const entry of Object.values(entries)){const d=entry.document;if(d?.kind==='wiki-page'&&active(d))lines.push(`- [${displayTitle(d).replace(/[\[\]\r\n]/g,' ')}](../${d.path}) · ${d.level} · ${d.summary??''}`);}
+    for(const entry of Object.values(entries)){const d=entry.document;if(d?.kind==='wiki-page'&&active(d)&&!isEvidenceAttachment(d))lines.push(`- [${displayTitle(d).replace(/[\[\]\r\n]/g,' ')}](../${d.path}) · ${d.level} · ${d.summary??''}`);}
     const navigation=this.internal(project,'.trash/wiki-index.md'),navigationText=lines.join('\n')+'\n';
     if(!existsSync(navigation)||readFileSync(navigation,'utf8')!==navigationText){mkdirSync(dirname(navigation),{recursive:true});writeFileSync(navigation+'.tmp',navigationText,{mode:0o600});renameSync(navigation+'.tmp',navigation);}
     if(migrated){
       const homepage=['# 知识库','原始全文与摘要分开管理；卡片、研究记忆与主题统一导航。',''];
       const paperEntry=(d:Omit<MarkdownDocument,'text'>)=>d.path.includes('/papers/')&&(d.path===`knowledge_base/papers/${d.source_id}/whoami.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/whoami.md`)&&(d.path===`knowledge_base/papers/${d.source_id}/index.md`||(!Object.values(entries).some(entry=>entry.document?.path===`knowledge_base/papers/${d.source_id}/index.md`)&&(d.id===`wiki-${d.source_id}`||d.card_type==='key')))));
       for(const [label,test] of [['项目总览',(d:Omit<MarkdownDocument,'text'>)=>d.level==='overview'],['论文知识',paperEntry],['摘要知识',(d:Omit<MarkdownDocument,'text'>)=>d.material_scope==='abstract'&&(d.kind==='wiki-page'||!Object.values(entries).some(entry=>entry.document?.source_id===d.source_id&&entry.document?.kind==='wiki-page'))],['知识主题',(d:Omit<MarkdownDocument,'text'>)=>d.level==='topic'],['研究假设',(d:Omit<MarkdownDocument,'text'>)=>d.level==='hypothesis'],['发现清单',(d:Omit<MarkdownDocument,'text'>)=>d.level==='discovery'],['分批总结',(d:Omit<MarkdownDocument,'text'>)=>d.level==='summary']] as const){
-        homepage.push('## '+label);for(const entry of Object.values(entries)){const doc=entry.document;if(doc&&active(doc)&&test(doc))homepage.push('- ['+displayTitle(doc).replace(/[\[\]\r\n]/g,' ')+(doc.card_type?' · '+doc.card_type:'')+']('+doc.path.replace(/^knowledge_base\//,'')+')');}
+        homepage.push('## '+label);for(const entry of Object.values(entries)){const doc=entry.document;if(doc&&active(doc)&&!isEvidenceAttachment(doc)&&test(doc))homepage.push('- ['+displayTitle(doc).replace(/[\[\]\r\n]/g,' ')+(doc.card_type?' · '+doc.card_type:'')+']('+doc.path.replace(/^knowledge_base\//,'')+')');}
       }
       const home=this.internal(project,'knowledge_base/index.md'),body=homepage.join('\n')+'\n';if(!existsSync(home)||readFileSync(home,'utf8')!==body){writeFileSync(home+'.tmp',body,{mode:0o600});renameSync(home+'.tmp',home);}
     }
     const documents=Object.values(entries).flatMap(e=>e.document?[{...e.document}]:[]);
+    const byPath=new Map(documents.map(doc=>[doc.path,doc]));
+    const sourceHashes=new Map<string,{current:string;legacy:string}>();
+    for(const source of this.store.listSources(project,true))sourceHashes.set(source.source_id,{current:sourceContentHash(source),legacy:legacySourceContentHash(source)});
     for(const doc of documents){
       if(doc.kind==='wiki-page'&&doc.level==='single'){doc.document_title=doc.title;doc.title=displayTitle(doc);}
       doc.status='accepted'; // Legacy wire status: validated Markdown is immediately usable.
       if(doc.material_scope==='abstract'){doc.stale=false;continue;}
-      if(doc.source_id){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/knowledge-sources/${doc.id}.json`),'utf8'));doc.stale=stamp.hash!==sourceContentHash(this.store.getSource(doc.source_id))&&stamp.hash!==legacySourceContentHash(this.store.getSource(doc.source_id));}catch{doc.stale=true;}}
+      if(doc.source_id){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/knowledge-sources/${doc.id}.json`),'utf8'));doc.stale=stamp.hash!==sourceHashes.get(doc.source_id)?.current&&stamp.hash!==sourceHashes.get(doc.source_id)?.legacy;}catch{doc.stale=true;}}
       if(doc.card_type==='key'){const detail=documents.find(d=>d.source_id===doc.source_id&&d.card_type==='detail');try{const pair=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-pairs/${doc.id}.json`),'utf8'));doc.stale=Boolean(doc.stale)||!detail||(Object.entries(migrated?.beforeHashes??{}).some(([path,hash])=>hash===pair.detail&&migrated?.afterHashes?.[migrated.paths[path]]===detail.hash)?false:pair.detail!==detail.hash)||(Object.entries(migrated?.beforeHashes??{}).some(([path,hash])=>hash===pair.key&&migrated?.afterHashes?.[migrated.paths[path]]===doc.hash)?false:pair.key!==doc.hash);}catch{doc.stale=true;}}
-      if(doc.kind==='wiki-page'){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-dependencies/${doc.id}.json`),'utf8')) as {path:string;hash:string}[];doc.dependencies=stamp.map(ref=>{const path=resolveBasePath(this.root(project),ref.path);return {path,hash:migrated?.beforeHashes?.[ref.path]===ref.hash?migrated.afterHashes?.[path]??ref.hash:ref.hash};}).filter(ref=>!doc.source_id||!ref.path.startsWith(`knowledge_base/papers/${doc.source_id}/`)||(doc.links??[]).some(link=>link.path===ref.path&&!['catalog','navigation'].includes(link.usage??'')));doc.stale=Boolean(doc.stale)||doc.dependencies.some(ref=>documents.find(d=>d.path===ref.path)?.hash!==ref.hash);}catch{doc.dependencies=[];doc.stale=true;}}
+      if(doc.kind==='wiki-page'){try{const stamp=JSON.parse(readFileSync(this.internal(project,`.trash/markdown-dependencies/${doc.id}.json`),'utf8')) as {path:string;hash:string}[];doc.dependencies=stamp.map(ref=>{const path=knowledgeBasePath.test(ref.path)?ref.path:resolveBasePath(this.root(project),ref.path);return {path,hash:migrated?.beforeHashes?.[ref.path]===ref.hash?migrated.afterHashes?.[path]??ref.hash:ref.hash};}).filter(ref=>!doc.source_id||!ref.path.startsWith(`knowledge_base/papers/${doc.source_id}/`)||(doc.links??[]).some(link=>link.path===ref.path&&!['catalog','navigation'].includes(link.usage??'')));doc.stale=Boolean(doc.stale)||doc.dependencies.some(ref=>byPath.get(ref.path)?.hash!==ref.hash);}catch{doc.dependencies=[];doc.stale=true;}}
     }
     // Propagate invalidation through the actual dependency graph, including missing files.
-    for(let i=0;i<documents.length;i++){let changed=false;for(const doc of documents)if(!doc.stale&&doc.dependencies?.some(ref=>documents.find(d=>d.path===ref.path)?.stale)){doc.stale=true;changed=true;}if(!changed)break;}
-    return {documents:documents.filter(doc=>includeRetired||active(doc)).sort((a,b)=>b.modified.localeCompare(a.modified)),errors};
+    for(let i=0;i<documents.length;i++){let changed=false;for(const doc of documents)if(!doc.stale&&doc.dependencies?.some(ref=>byPath.get(ref.path)?.stale)){doc.stale=true;changed=true;}if(!changed)break;}
+    const value={documents:documents.sort((a,b)=>b.modified.localeCompare(a.modified)),errors};
+    cache.set(project,{until:Date.now()+2000,value});
+    return copy(value);
   }
   read(project:string,id:string){
     if(id.startsWith('abstract-material-')){
@@ -140,28 +188,33 @@ export class MarkdownKnowledge {
       const text='# '+source.title+'\n\n'+source.authors.join(', ')+'\n\n'+(source.publication_date??'')+'\n\n'+(source.abstract??'');
       return {id,kind:'literature-card' as const,material_scope:'abstract' as const,card_type:'detail' as const,level:'abstract',title:source.title,source_id:source.source_id,path:'abstract-library/materials/'+source.source_id+'.md',text,hash:digest(text),modified:source.imported_at,status:'accepted',stale:false};
     }
-    const entry=this.index(project,false,true).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash)fail('VERSION_CONFLICT');return {...entry,text};}
-  list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.read(project,d.id))};}
-  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean;include_summaries?:boolean}={}){
-    const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level));
+    const entry=this.index(project,false,true).documents.find(d=>d.id===id);if(!entry)fail('NOT_FOUND',404);return this.readIndexed(project,entry);}
+  readIndexed(project:string,entry:Omit<MarkdownDocument,'text'>){const text=readFileSync(this.locate(project,entry.path),'utf8');if(digest(text)!==entry.hash){this.invalidate(project);fail('VERSION_CONFLICT');}return {...entry,text};}
+  list(project:string){const indexed=this.index(project);return {...indexed,documents:indexed.documents.map(d=>this.readIndexed(project,d))};}
+  query(project:string,options:{page?:number;limit?:number;kind?:string;level?:string;q?:string;rescan?:boolean;include_summaries?:boolean;include_evidence?:boolean;current_topic_directory?:string;archived_topic_discoveries?:Set<string>;summary_titles?:Map<string,string>}={}){
+    const indexed=this.index(project,options.rescan),q=options.q?.trim().toLowerCase();let docs=indexed.documents.filter(d=>(!options.kind||d.kind===options.kind)&&(!options.level||d.level===options.level)&&(!options.current_topic_directory||d.page_role!=='topic-index'||d.id===options.current_topic_directory)&&!options.archived_topic_discoveries?.has(d.id));
+    if(!options.include_evidence||q)docs=docs.filter(doc=>!isEvidenceAttachment(doc));
     if(options.kind==='wiki-page'&&!options.level&&!q&&!options.include_summaries)docs=docs.filter(doc=>doc.level!=='summary');
+    if(options.summary_titles)docs=docs.map(doc=>doc.level==='summary'?{...doc,title:legacyMaterialTitle(doc.title,doc.modified,options.summary_titles?.get(doc.id))}:doc);
     const matches:Record<string,string>={};if(q)docs=docs.filter(doc=>{if((doc.title+' '+(doc.aliases??[]).join(' ')+' '+doc.summary).toLowerCase().includes(q))return true;const hit=this.store.db.prepare('SELECT substr(text,max(1,instr(lower(text),?)-70),220) AS snippet FROM knowledge_search_v2 WHERE project=? AND path=? AND instr(lower(text),?)>0').get(q,project,doc.path,q) as {snippet:string}|undefined;if(!hit)return false;matches[doc.id]=hit.snippet;return true;});
     const rank:Record<string,number>={overview:0,topic:1,hypothesis:2,discovery:3,single:4,summary:5};docs.sort((a,b)=>(rank[a.level??'']??4)-(rank[b.level??'']??4)||b.modified.localeCompare(a.modified));
     const limit=Math.min(100,Math.max(1,options.limit??30)),page=Math.max(1,options.page??1);return {documents:docs.slice((page-1)*limit,page*limit).map(d=>({...d,...(matches[d.id]?{snippet:matches[d.id]}:{})})),total:docs.length,page,limit,errors:indexed.errors};
   }
   graph(project:string){
-    const {documents,errors}=this.index(project);
+    const {documents:all,errors}=this.index(project);
+    const documents=all.filter(doc=>!isEvidenceAttachment(doc));
+    const attachments=new Set(all.filter(isEvidenceAttachment).map(doc=>doc.path));
     const nodes=documents.map(d=>({id:d.id,path:d.path,title:d.title,kind:d.kind,level:d.level,source_id:d.source_id,card_type:d.card_type,batch_label:d.batch_label,coverage:d.coverage,directions:d.directions,summary:d.summary??'',stale:Boolean(d.stale)}));
     // Abstract records share the directory index but remain excluded from full-text synthesis adapters.
-    const byPath=new Map(nodes.map(n=>[n.path,n]));for(const [old,path] of Object.entries(migrationManifest(this.root(project))?.paths??{})){const target=byPath.get(path);if(target)byPath.set(old,target);}
+    const byPath=new Map(nodes.map(n=>[n.path,n]));for(const [old,path] of Object.entries(migrationManifest(this.root(project))?.paths??{})){const target=byPath.get(path);if(target)byPath.set(old,target);else if(attachments.has(path))attachments.add(old);}
     const edges:{id:string;source:string;target:string;relation:string;reason:string;evidence:boolean}[]=[],broken:{source:string;path:string}[]=[];
     for(const doc of documents){
-      for(const link of doc.links??[]){const target=byPath.get(link.path);if(!target){broken.push({source:doc.id,path:link.path});continue;}if(target.id===doc.id)continue;
+      for(const link of doc.links??[]){if(attachments.has(link.path))continue;const target=byPath.get(link.path);if(!target){broken.push({source:doc.id,path:link.path});continue;}if(target.id===doc.id)continue;
         const evidence=link.evidence||(!['catalog','scope','navigation'].includes(link.usage??'')&&Boolean(doc.dependencies?.some(ref=>ref.path===link.path)));
         const key=digest(JSON.stringify([doc.id,target.id,link.relation,link.reason,evidence])).slice(0,24);
         if(!edges.some(e=>e.id===key))edges.push({id:key,source:doc.id,target:target.id,relation:evidence?'依据':link.relation,reason:link.reason,evidence});
       }
-      for(const ref of doc.dependencies??[]){const target=byPath.get(ref.path);if(!target){broken.push({source:doc.id,path:ref.path});continue;}if(target.id===doc.id||edges.some(e=>e.source===doc.id&&e.target===target.id&&(e.evidence||['目录收录','范围关联','导航'].includes(e.relation))))continue;
+      for(const ref of doc.dependencies??[]){if(attachments.has(ref.path))continue;const target=byPath.get(ref.path);if(!target){broken.push({source:doc.id,path:ref.path});continue;}if(target.id===doc.id||edges.some(e=>e.source===doc.id&&e.target===target.id&&(e.evidence||['目录收录','范围关联','导航'].includes(e.relation))))continue;
         edges.push({id:digest(doc.id+':dependency:'+target.id).slice(0,24),source:doc.id,target:target.id,relation:'依据',reason:'生成或编辑时记录的依据',evidence:true});
       }
     }
@@ -204,10 +257,10 @@ export class MarkdownKnowledge {
     const terms=[...new Set([...new Intl.Segmenter('zh',{granularity:'word'}).segment(query.toLowerCase())].filter(item=>item.isWordLike&&item.segment.length>1).map(item=>item.segment))].slice(0,30);
     const score=(d:typeof docs[number])=>terms.reduce((n,t)=>n+Number((d.title+' '+(d.aliases??[]).join(' ')).toLowerCase().includes(t))*8,0);
     const hits=terms.length?new Map((this.store.db.prepare(`SELECT path,(${terms.map(()=>"CASE WHEN instr(lower(text),?)>0 THEN 1 ELSE 0 END").join('+')}) AS score FROM knowledge_search_v2 WHERE project=?`).all(...terms,project) as {path:string;score:number}[]).map(row=>[row.path,row.score])):new Map<string,number>();
-    const ranked=docs.filter(d=>d.page_role!=='evidence'&&d.page_role!=='evidence-index'&&!d.path.endsWith('/evidence.md')&&(d.kind==='wiki-page'||d.card_type==='key')).map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
+    const ranked=docs.filter(d=>!isEvidenceAttachment(d)&&(d.kind==='wiki-page'||d.card_type==='key')).map(d=>({d,score:score(d)+(hits.get(d.path)??0)+Number((d.summary??'').toLowerCase().includes(query.toLowerCase()))*2})).filter(v=>v.score>0).sort((a,b)=>b.score-a.score);
     const selected=ranked.slice(0,6).map(v=>v.d);
     for(const d of [...selected])for(const path of [...(d.dependencies??[]).map(r=>r.path),...(d.links??[]).map(l=>l.path)]){
-      const related=docs.find(item=>item.path===path);if(related&&related.page_role!=='evidence'&&related.page_role!=='evidence-index'&&!related.path.endsWith('/evidence.md')&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
+      const related=docs.find(item=>item.path===path);if(related&&!isEvidenceAttachment(related)&&!selected.some(item=>item.id===related.id)&&selected.length<10)selected.push(related);
     }
     let remaining=Math.min(24000,Math.max(1000,budget));const omitted:string[]=[];
     const records=selected.flatMap(d=>{const text=this.read(project,d.id).text;if(text.length>remaining){omitted.push(d.id);return [];}remaining-=text.length;return [{id:d.id,path:d.path,title:d.title,source_id:d.source_id,source_title:d.source_id?this.store.getSource(d.source_id)?.title:undefined,hash:d.hash,stale:d.stale,text}];});
@@ -248,7 +301,7 @@ export class MarkdownKnowledge {
     const events=(this.store.db.prepare('SELECT id,at,operation,data FROM knowledge_memory_events WHERE project=? ORDER BY at DESC,id DESC LIMIT 30 OFFSET ?').all(project,(Math.max(1,page)-1)*30) as {id:string;at:string;operation:string;data:string}[]).map(row=>({...row,...JSON.parse(row.data),data:undefined}));
     return {events,total,page,limit:30};
   }
-  stamp(project:string,id:string,refs:{path:string;hash:string}[],merge=false){const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});if(merge){try{const previous=JSON.parse(readFileSync(file,'utf8')) as {path:string;hash:string}[];refs=[...previous.filter(old=>!refs.some(ref=>ref.path===old.path)),...refs];}catch{/* First stamp. */}}writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
+  stamp(project:string,id:string,refs:{path:string;hash:string}[],merge=false){this.invalidate(project);const file=this.internal(project,`.trash/markdown-dependencies/${id}.json`);mkdirSync(dirname(file),{recursive:true});if(merge){try{const previous=JSON.parse(readFileSync(file,'utf8')) as {path:string;hash:string}[];refs=[...previous.filter(old=>!refs.some(ref=>ref.path===old.path)),...refs];}catch{/* First stamp. */}}writeFileSync(file,JSON.stringify(refs),{mode:0o600});}
   private recover(project:string){
     const journal=this.internal(project,'.trash/markdown-transaction.json');if(!existsSync(journal)){recoverPaperVersionWrites(this.store,this,project);return;}
     const batch=JSON.parse(readFileSync(journal,'utf8')) as {committed:boolean;files:{path:string;text:string|null;before:string|null}[]};
@@ -278,6 +331,7 @@ export class MarkdownKnowledge {
     return this.save(project,doc.path,text,expected);
   }
   private writeBatch(project:string,files:{path:string;text:string|null}[]){
+    this.invalidate(project);
     if(new Set(files.map(file=>file.path)).size!==files.length)fail('DUPLICATE_TRANSACTION_PATH',422);
     const root=this.root(project),journal=this.internal(project,'.trash/markdown-transaction.json');
     const rows=files.map(file=>{const target=groupPhysical(root,file.path);return {...file,before:existsSync(target)?readFileSync(target,'utf8'):null};});
@@ -313,10 +367,18 @@ export class MarkdownKnowledge {
     this.writeBatch(project,plan.writes);this.recordOperation(project,'paper-group-migration',[],`${source}：归档${plan.group.archives.length>previousArchiveCount?plan.group.archives.at(-1)?.files.length??0:0}个已确认历史文件；不确定文件保留`);return plan.group;
   }
   save(project:string,path:string,text:string,expected:string|null){return this.commit(project,[{path,text,expected}])[0];}
-  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={},options:{preserveSourceVersions?:boolean;skipPaperVersion?:boolean;deferPaperVersion?:boolean;taskId?:string;fullPaperSource?:string;restorePaperSource?:string}={}){
+  commit(project:string,files:{path:string;text:string;expected:string|null}[],baselines:Record<string,{authors?:string[];title:string;publication_date?:string;year?:number;revision?:number}>={},options:{preserveSourceVersions?:boolean;skipPaperVersion?:boolean;deferPaperVersion?:boolean;taskId?:string;fullPaperSource?:string;restorePaperSource?:string;fullTopicId?:string}={}){
+    files=files.map(file=>({...file,path:libraryLogicalPath(file.path)}));
+    this.invalidate(project);
     this.recover(project);
     if(!files.length||files.length>128||new Set(files.map(f=>f.path)).size!==files.length)fail('INVALID_REQUEST',400);
     const targets=files.map(original=>{const normalized=original.text.replace(/\r\n/g,'\n');const text=normalized.replace(/^---\n([\s\S]*?)\n---\n/,(_all,front:string)=>'---\nknowledge_version: 2\n'+front.replace(/^knowledge_version:.*\n?/gm,'')+'\n---\n');const manifest=migrationManifest(this.root(project));const nextPath=manifest?.paths[original.path]??knowledgePath(original.path,text.match(/^level:\s*(\S+)/m)?.[1]);const file={...original,path:manifest?nextPath:original.path,text:manifest&&nextPath!==original.path?rewriteKnowledgeText(text,original.path,nextPath,manifest.paths):text};const target=this.locate(project,file.path),before=existsSync(target)?readFileSync(target,'utf8'):null;if((before===null?null:digest(before))!==file.expected)fail('VERSION_CONFLICT');return {...file,target,before,doc:this.parse(project,file.path,file.text)};});
+    for(const target of targets)if(target.before){
+      if(target.doc.page_role==='exploration-topic'){
+        const origin=/^exploration_run_id:[ \t]*(exploration_[a-f0-9-]+)[ \t]*$/m;
+        if(target.before.match(origin)?.[1]!==target.text.match(origin)?.[1])fail('RESEARCH_ORIGIN_IMMUTABLE',422);
+      }
+      const priorTopic=target.before.match(/^topic_id:\s*(wiki-[A-Za-z0-9_-]+)\s*$/m)?.[1];if(priorTopic&&priorTopic!==target.doc.topic_id)fail('TOPIC_ID_IMMUTABLE',422,'已有主题页不可更改或移除 topic_id');}
     for(const target of targets.filter(t=>t.doc.card_type==='basic' || t.doc.path.endsWith('/idcard.md') || t.doc.path.includes('/idcard-')))if(target.doc.path.endsWith('/idcard.md')===false)parseBasicCard(target.text);
     if(targets.length>1&&!targets.some(t=>t.doc.path.includes('/idcard'))&&!targets.every(t=>t.doc.kind==='wiki-page')&&!targets.some(t=>t.doc.source_id&&['index.md','whoami.md'].some(name=>t.doc.path===`knowledge_base/papers/${t.doc.source_id}/${name}`))){
       const cards=targets.filter(t=>t.doc.kind==='literature-card'),wiki=targets.filter(t=>t.doc.kind==='wiki-page');
@@ -342,6 +404,13 @@ export class MarkdownKnowledge {
       if(!targets.some(file=>file.path===prefix+'whoami.md')||targets.some(file=>!file.path.startsWith(prefix)||file.doc.source_id!==options.fullPaperSource))fail('INVALID_PAPER_GROUP',422);
       const issues=paperWikiIssues(options.fullPaperSource,targets);if(issues.length)fail('INVALID_PAPER_GROUP: '+issues.map(issue=>issue.reason).join('；'),422);
     }
+    if(options.fullTopicId){
+      // Agent validates source scope and citations; commit independently validates group structure and live links.
+      const available=this.index(project).documents;
+      const sources=[...new Set(available.flatMap(doc=>doc.source_id?[doc.source_id]:[]))];
+      const checked=topicGroupIssues(options.fullTopicId,targets,sources,available.map(doc=>doc.path));
+      if(checked.length)fail('INVALID_TOPIC_GROUP: '+checked.map(issue=>issue.reason).join('；'),422);
+    }
     // All checks and writes are synchronous: no other server request can interleave this commit.
     const beforeDocuments=this.index(project,false,true).documents;
     const previousDependencies=new Map(beforeDocuments.map(d=>[d.path,d.dependencies??[]]));
@@ -363,15 +432,28 @@ export class MarkdownKnowledge {
       const pending=[...selected];while(pending.length){const doc=map.get(pending.pop()!);for(const link of doc?.links??[])if(link.path.startsWith(`knowledge_base/papers/${source}/`)&&map.has(link.path)&&!selected.has(link.path)){selected.add(link.path);pending.push(link.path);}}
       groupWrites.push({path:groupPath(source),text:JSON.stringify({...previous,at:new Date().toISOString(),current:[...selected].flatMap(path=>{const doc=map.get(path);return doc?[{path,hash:doc.hash}]:[];})})});
     }
+    if(options.fullTopicId){
+      const id=options.fullTopicId,previous=topicManifest(this.root(project),id);
+      const current=targets.map(file=>({path:file.path,hash:file.doc.hash}));
+      if(previous?.current.some(file=>!current.some(next=>next.path===file.path)))fail('TOPIC_GROUP_PAGE_REMOVED',422);
+      const manifest={version:1,topic_id:id,revision:(previous?.revision??0)+1,at:new Date().toISOString(),task_id:options.taskId,current};
+      groupWrites.push({path:`.trash/topic-groups/${id}.json`,text:JSON.stringify(manifest)},{path:`.trash/topic-group-history/${id}/${manifest.revision}.json`,text:JSON.stringify(manifest)});
+    }
+    if(!options.fullTopicId)for(const id of new Set(targets.flatMap(file=>file.doc.topic_id?[file.doc.topic_id]:[]))){
+      const previous=topicManifest(this.root(project),id);if(!previous)continue;
+      const current=previous.current.map(file=>{const updated=targets.find(target=>target.path===file.path);return updated?{path:file.path,hash:updated.doc.hash}:file;});
+      const manifest={...previous,revision:previous.revision+1,at:new Date().toISOString(),task_id:options.taskId,current};
+      groupWrites.push({path:`.trash/topic-groups/${id}.json`,text:JSON.stringify(manifest)},{path:`.trash/topic-group-history/${id}/${manifest.revision}.json`,text:JSON.stringify(manifest)});
+    }
     const historyWrites=staged.flatMap(file=>[...(file.before===null?[]:[{path:`.trash/markdown-history/${file.doc.id}/${digest(file.before)}.md`,text:file.before}]),{path:`.trash/markdown-history/${file.doc.id}/${file.doc.hash}.md`,text:file.text}]);
     const stamps:{path:string;text:string|null}[]=[];
     for(const file of staged){
-      const refs=(file.doc.links??[]).filter(link=>link.evidence||link.relation==='范围关联').map(link=>{const stagedTarget=targets.find(target=>target.path===link.path),old=previousDependencies.get(file.path)?.find(ref=>ref.path===link.path),physical=this.locate(project,link.path);return {path:link.path,hash:options.fullPaperSource&&stagedTarget?stagedTarget.doc.hash:old?.hash??stagedTarget?.doc.hash??(existsSync(physical)?digest(readFileSync(physical,'utf8')):'missing')};});
+      const refs=(file.doc.links??[]).filter(link=>link.evidence||link.relation==='范围关联').map(link=>{const stagedTarget=targets.find(target=>target.path===link.path),old=previousDependencies.get(file.path)?.find(ref=>ref.path===link.path),physical=this.locate(project,link.path);return {path:link.path,hash:(options.fullPaperSource||options.fullTopicId)&&stagedTarget?stagedTarget.doc.hash:(options.fullTopicId?undefined:old?.hash)??stagedTarget?.doc.hash??(existsSync(physical)?digest(readFileSync(physical,'utf8')):'missing')};});
       if(file.doc.kind==='wiki-page')stamps.push({path:`.trash/markdown-dependencies/${file.doc.id}.json`,text:JSON.stringify(refs)});
       if(file.doc.source_id){const text=options.preserveSourceVersions?sourceVersions.get(file.doc.id):JSON.stringify({hash:sourceContentHash(this.store.getSource(file.doc.source_id))});if(text!==undefined)stamps.push({path:`.trash/knowledge-sources/${file.doc.id}.json`,text});}
     }
     const writes=new Map([...historyWrites,...groupWrites,...stamps,...staged.map(({path,text})=>({path,text}))].map(file=>[file.path,file]));
-    this.writeBatch(project,[...writes.values()]);
+    this.writeBatch(project,[...writes.values()]);this.invalidate(project);
     for(const file of staged.filter(f=>f.doc.card_type==='basic')){const source=this.store.getSource(file.doc.source_id!);if(source)this.store.db.transaction(()=>applyBasicCard(this.store,source,file.text,file.doc.hash,baselines[source.source_id]))();}
     for(const file of staged.filter(f=>f.doc.source_id&&f.path===`knowledge_base/papers/${f.doc.source_id}/idcard.md`)){const source=this.store.getSource(file.doc.source_id!);if(source)this.store.db.transaction(()=>applyIdcard(this.store,source,file.text,file.doc.hash,baselines[source.source_id]))();}
     const detail=staged.find(f=>f.doc.card_type==='detail'),key=staged.find(f=>f.doc.card_type==='key');if(detail&&key&&detail.doc.source_id===key.doc.source_id){const stamp=this.internal(project,`.trash/markdown-pairs/${key.doc.id}.json`);mkdirSync(dirname(stamp),{recursive:true});writeFileSync(stamp,JSON.stringify({detail:detail.doc.hash,key:key.doc.hash}),{mode:0o600});}
@@ -379,7 +461,15 @@ export class MarkdownKnowledge {
     this.recordOperation(project,'publish',staged.map(f=>({id:f.doc.id,path:f.path,hash:f.doc.hash})));
     return staged.map(f=>f.doc);
   }
-  history(project:string,id:string){if(!/^[A-Za-z0-9_-]+$/.test(id))fail('INVALID_REQUEST',400);const dir=this.internal(project,`.trash/markdown-history/${id}`);return existsSync(dir)?readdirSync(dir).filter(n=>/^[a-f0-9]{64}\.md$/.test(n)).map(n=>({hash:n.slice(0,-3),text:readFileSync(join(dir,n),'utf8')})):[];}
+  history(project:string,id:string){
+    if(!/^[A-Za-z0-9_-]+$/.test(id))fail('INVALID_REQUEST',400);
+    const dir=this.internal(project,`.trash/markdown-history/${id}`);
+    return existsSync(dir)?readdirSync(dir).filter(n=>/^[a-f0-9]{64}\.md$/.test(n)).map(n=>{
+      const file=join(dir,n);
+      return {hash:n.slice(0,-3),text:readFileSync(file,'utf8'),at:lstatSync(file).mtime.toISOString()};
+    }):[];
+  }
+  recycleDocument(project:string,id:string,expected:string){const doc=this.read(project,id);if(doc.hash!==expected)fail('VERSION_CONFLICT');if(doc.level==='overview'||doc.source_id||doc.path.endsWith('/index.md')||doc.page_role==='exploration-topic')fail('KNOWLEDGE_DOCUMENT_DELETE_BLOCKED',409);const target=this.locate(project,doc.path);rejectSymlink(target);const backup=this.internal(project,`.trash/knowledge-recycle/${id}/${doc.hash}.md`);mkdirSync(dirname(backup),{recursive:true});renameSync(target,backup);for(const file of [this.internal(project,`.trash/markdown-dependencies/${id}.json`),this.internal(project,`.trash/knowledge-sources/${id}.json`)])if(existsSync(file))unlinkSync(file);this.invalidate(project);this.recordOperation(project,'回收知识条目',[{id,path:doc.path,hash:doc.hash}],'条目从知识库目录移入回收站，可通过维护记录追溯。');return {deleted:true,id,path:doc.path};}
 }
 
 /** Adapter for workflow counters and dependency selection; Markdown remains the source. */

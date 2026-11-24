@@ -21,3 +21,67 @@
 :root[data-theme="blue"] .error-notice{background:#fff1eb;color:#a5513a;border-color:#f2d7cb}
 :root[data-theme="blue"] .theme-control{background:#fff}
 @media(max-width:500px){.theme-control{gap:4px;padding:0 6px}.theme-control select{max-width:72px;font-size:10px}.topbar-right{gap:7px}.local-indicator{gap:5px}}
+
+/* Semantic tokens: --green remains an alias for existing primary-action styles. */
+:root{--accent:var(--green);--accent-hover:#095540;--accent-bright:var(--green);--accent-soft:var(--green-soft);--page-bg:#f4f6f5;--surface-soft:#f7f9f8;--nav-bg:#f7f9f8;--nav-ink:#26352e;--nav-muted:#75817c;--nav-hover:#edf1ef;--nav-selected:var(--green-soft);--nav-selected-ink:var(--green);--nav-border:var(--line);--accent-line:color-mix(in srgb,var(--accent) 30%,var(--line));--scroll-thumb:#a5b5ae;--success:#23866b;--success-soft:#eaf5ef;--warning:#a67524;--warning-soft:#faf2e2;--danger:#c34e61;--danger-soft:#fceef0;--shadow-soft:0 4px 20px #2523340a}
+:root[data-theme="blue"]{--accent-hover:#174fa8;--page-bg:#f3f7fc;--surface-soft:#f6f9fd;--nav-bg:#f6f9fd;--nav-ink:#1d2b3c;--nav-muted:#687b91;--nav-hover:#edf3fc;--scroll-thumb:#9baec9}
+:root[data-theme="graphite-purple"]{--ink:#252334;--muted:#716b7f;--line:#e1dce9;--surface:#fff;--green:#7654bb;--green-soft:#f0eaf9;--accent:#7654bb;--accent-bright:#9170cb;--accent-hover:#6543a4;--accent-soft:#f0eaf9;--page-bg:#f6f6f8;--surface-soft:#f8f6fb;--nav-bg:#242633;--nav-ink:#f1eef7;--nav-muted:#beb8cc;--nav-hover:#30313f;--nav-selected:#42364f;--nav-selected-ink:#f5efff;--nav-border:#3c3b4b;--accent-line:#d4c5e9;--scroll-thumb:#b5a7c8;--coral:#c34e61;--coral-soft:#fceef0;--teal:#ece5f5;--focus-ring:#9170cb;color:var(--ink);background:var(--page-bg);color-scheme:light}
+
+/* Shared framework and controls follow root tokens, including portal dialogs. */
+:root body,:root .workspace-shell,:root .workspace-main{background:var(--page-bg);color:var(--ink)}
+:root .workspace-header,:root .workspace-pages,:root .topbar{background:var(--surface);border-color:var(--line)}
+:root .project-sidebar,:root .sidebar{background:var(--nav-bg);color:var(--nav-ink);border-color:var(--nav-border)}
+:root .project-sidebar :is(.brand,.sidebar-back,.sidebar-page-link,.sidebar-project-link,.icon-button){color:var(--nav-ink)}
+:root .project-sidebar :is(.sidebar-list-heading,.sidebar-empty,.local-indicator,.sidebar-current-project small){color:var(--nav-muted)}
+:root .project-sidebar :is(.sidebar-back,.sidebar-page-link,.sidebar-project-link):hover{background:var(--nav-hover);color:var(--nav-ink)}
+:root .project-sidebar :is(.sidebar-page-link.active,.sidebar-project-link.selected){background:var(--nav-selected);color:var(--nav-selected-ink);border-color:var(--nav-border);box-shadow:inset 3px 0 var(--accent-bright)}
+:root .project-sidebar :is(.sidebar-current-project,.sidebar-footer){border-color:var(--nav-border)}
+:root .project-sidebar :is(.sidebar-current-symbol,.sidebar-project-glyph){background:var(--nav-selected);color:var(--nav-ink)}
+:root .project-sidebar :is(.sidebar-search,.sidebar-secondary,.theme-control){background:var(--nav-hover);border-color:var(--nav-border);color:var(--nav-muted)}
+:root .project-sidebar .sidebar-search input,:root .project-sidebar .theme-control select{color:var(--nav-ink)}
+:root .project-sidebar input::placeholder{color:var(--nav-muted)}
+:root .project-sidebar .secondary-button{background:var(--nav-hover);border-color:var(--nav-border);color:var(--nav-ink)}
+:root .theme-control{border-radius:8px;height:34px}
+:root .theme-control select option{background:var(--surface);color:var(--ink)}
+:root .primary-button{background:var(--accent);border-color:var(--accent);color:#fff}
+:root .primary-button:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
+:root .secondary-button{background:var(--surface);border-color:var(--line);color:var(--ink)}
+:root .secondary-button:hover:not(:disabled){background:var(--accent-soft);border-color:var(--accent-line)}
+:root :is(button,input,textarea,select,summary,a):focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+:root input[type="checkbox"],:root input[type="radio"],:root progress{accent-color:var(--accent)}
+:root .workspace-content :is(.project-row,.source-row):hover{background:var(--surface-soft)}
+:root .workspace-content :is(.project-symbol,.openalex-icon){color:var(--accent);background:var(--accent-soft)}
+:root .workspace-content .segment-list article{border-left-color:var(--accent-line)}
+:root :is(.local-indicator i,.status-dot){background:var(--success)}
+:root .error-notice{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 25%,var(--line))}
+:root[data-theme="graphite-purple"] :is(.workspace-menu,.library-popover,.modal,.paper-version-panel){background:var(--surface);color:var(--ink);border-color:var(--line)}
+:root[data-theme="graphite-purple"] :is(.workspace-pages>button.active,.tab.active){color:var(--accent);border-bottom-color:var(--accent)}
+:root[data-theme="graphite-purple"] .brand-mark{background:var(--accent);color:#fff}
+:root[data-theme="graphite-purple"] #modal-root>.modal-backdrop{background:rgb(24 23 34 / 58%)}
+:root[data-theme="graphite-purple"] :is(.workspace-menu,.library-popover){box-shadow:0 10px 30px #25233418}
+:root{scrollbar-color:var(--scroll-thumb) var(--page-bg);scrollbar-width:thin}
+:root ::-webkit-scrollbar{width:7px;height:7px}
+:root ::-webkit-scrollbar-track{background:transparent}
+:root ::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:10px}
+:root ::-webkit-scrollbar-button{display:none}
+:root .project-sidebar{scrollbar-color:var(--nav-muted) transparent}
+:root .project-sidebar ::-webkit-scrollbar-thumb{background:var(--nav-border)}
+
+/* Sidebar component rules load after the base workspace stylesheet; keep dark navigation contrast explicit. */
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-back{background:#30313f;color:#f1eef7;border-color:#575268}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-back:hover{background:#42364f;color:#fff;border-color:#9170cb}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-current-project strong{color:#f1eef7}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-current-project small{color:#beb8cc}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-current-symbol{background:#42364f;color:#f5efff}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link{background:transparent;color:#beb8cc}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link:hover{background:#30313f;color:#fff}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-page-link.active{background:#42364f;color:#f5efff;border-color:#575268}
+:root[data-theme="graphite-purple"] .project-sidebar .sidebar-secondary{background:#30313f;color:#f1eef7}
+
+/* Final cascade guard for the graphite-purple default after legacy workspace rules. */
+html[data-theme="graphite-purple"] body{background:#f6f6f8;color:#252334}
+html[data-theme="graphite-purple"] .workspace-shell{background:#f6f6f8;color:#252334}
+html[data-theme="graphite-purple"] .project-sidebar{background:#242633 !important;color:#f1eef7;border-color:#3c3b4b}
+html[data-theme="graphite-purple"] .workspace-main{background:#f6f6f8;color:#252334}
+html[data-theme="graphite-purple"] .project-sidebar .local-indicator{color:#beb8cc}
+html[data-theme="graphite-purple"] .project-sidebar .local-indicator i{background:#42aa88}

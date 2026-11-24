@@ -13,7 +13,8 @@ import type { IncomingMessage } from "node:http";
 import type { DatasetRef } from "@trash/protocol";
 import { experimentError, type ExperimentStore } from "@trash/storage";
 import type { RemoteConnection } from "./ssh.js";
-import { directoryLabel, ensureRemoteDirectory } from "./workspace.js";
+import { autoDLDirectories, remoteDirectoryLabel } from "@trash/protocol";
+import { ensureRemoteDirectory } from "./workspace.js";
 const execute=promisify(execFile);
 const MAX_DATASET_BYTES=5*1024**3;
 const validateZip=String.raw`import sys,zipfile,stat,pathlib,hashlib,json
@@ -102,7 +103,7 @@ export class DatasetUploadService {
   const archiveType=filename.toLowerCase().endsWith('.zip')?'zip':/\.(tar|tar\.gz|tgz)$/i.test(filename)?'tar':undefined;
   if(extract&&!archiveType)experimentError('DATASET_ARCHIVE_INVALID',400);
   const declared=Number(request.headers['content-length']);if(Number.isFinite(declared)&&declared>MAX_DATASET_BYTES)experimentError('REQUEST_TOO_LARGE',413);
-  const id='dataset_'+randomUUID(),parent=posix.join(root,'datasets'),target=posix.join(parent,directoryLabel(name));
+  const id='dataset_'+randomUUID(),parent=posix.join(root,autoDLDirectories.data),target=posix.join(parent,remoteDirectoryLabel(name));
   let dataset:DatasetRef={dataset_id:id,project_id:project,profile_id:profile,name,version:'1',notes:'',path:target,verification_status:'unverified',transfer_status:'uploading',transfer_request_id:requestId,transfer_stage:'receiving',transfer_sent:0,transfer_total:Number(request.headers['content-length'])||0};
   const transfer:Transfer={project,dataset:id,controller:new AbortController(),stage:'receiving'};this.transfers.set(requestId,transfer);
   let temporary:string|undefined,owned=false;

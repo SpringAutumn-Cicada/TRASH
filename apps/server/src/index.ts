@@ -1,14 +1,24 @@
+import { methodDraftInput } from "./experiment/method-agent.js";
+import { CodeDirectoryMigration, codeMigrationPending } from './code-directory-migration.js';
+import { ManuscriptEvidence } from './manuscript-evidence.js';
+import { ExperimentCoordination } from "./coordination.js";
+import { chatSkills } from "./project-chat-skills.js";
+import {legacyMaterialTitle} from './research-exploration-format.js';
+import {topicVersions} from './topic-wiki.js';
 import {PaperWikiVersions} from './paper-wiki-versions.js';
 import {evidenceMigrationPreview,migrateEvidence} from './evidence-migration.js';
 import {projectQuestions,saveProjectQuestion} from './research-questions.js';
 import {ResearchExploration} from './research-exploration.js';
 import {migrationPreview,migrateKnowledgeBase,rollbackKnowledgeBase} from './knowledge-base-migration.js';
+import {libraryMigrationPending,libraryPreview,migrateLibrary,rollbackLibrary} from './library-migration.js';
+import {pdfPreparation} from './pdf-preparation.js';
 import {abstractFile,abstractText} from './abstract-library.js';
 import {closeTaskStreams} from './task-events.js';
-import {bibliographyState,parseIdcard} from './source-bibliography.js';
+import {sourceAnalyses,streamSourceAnalyses} from './source-analyses.js';
+import {closeProjectStreams,projectStream,publishProjectChange} from './project-updates.js';
 import { PdfReading } from "./pdf-reading.js";
-import { createResearchFolder } from "./project-layout.js";
-import { currentPaperWiki, MarkdownKnowledge } from "./markdown-knowledge.js";
+import { createResearchFolder, ensureResearchDirectory } from "./project-layout.js";
+import { MarkdownKnowledge } from "./markdown-knowledge.js";
 import { uploadChatAttachment, resolveChatAttachments } from "./chat-attachments.js";
 import { ProjectFiles } from "./project-files.js";
 import { directoryRepairBusy } from "./experiment/directory-repair.js";
@@ -22,11 +32,11 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { knowledgeTaskInputSchema, literatureSearchResultSchema, makeId, PROTOCOL_VERSION, sourceSchema, type LiteratureSearchResult, type Source } from "@trash/protocol";
 import { pdfViewerAsset, OpenAlexProvider, fetchPublicWebpage, parseImportedFile, parseWebpage, type LiteratureSearchProvider, type ParsedSource } from "@trash/literature";
-import { TrashStore, KnowledgeStore } from "@trash/storage";
+import { TrashStore, KnowledgeStore, projectLibraryPath } from "@trash/storage";
 import { knowledgeRoute } from "./knowledge.js";
 import { KnowledgeAgent } from "./knowledge-agent.js";
 import { LiteratureAnalysis } from "./literature-analysis.js";
-import { CodeAgent } from "./code-agent.js";
+import { CodeAgent, chatRepositoryId } from "./code-agent.js";
 import { projectChatTool } from "./project-chat-tools.js";
 import { ExperimentService } from "./experiment/service.js";
 import { experimentRoute } from "./experiment/routes.js";
@@ -131,7 +141,7 @@ function jsonError(error: unknown): { status: number; code: string } {
   return { status: 500, code: "INTERNAL_ERROR" };
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, exploration:ResearchExploration, workspaces: ProjectWorkspaces, files: ProjectFiles): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, store: TrashStore, provider: LiteratureSearchProvider, staticRoot: string, knowledge: KnowledgeStore, agent: KnowledgeAgent, experiments: ExperimentService, codeAgent: CodeAgent, analysis: LiteratureAnalysis, exploration:ResearchExploration, workspaces: ProjectWorkspaces, files: ProjectFiles, coordination: ExperimentCoordination): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
   if(url.pathname.startsWith('/api/v1/pdf-assets/')&&method==='GET'){try{const path=url.pathname.slice('/api/v1/pdf-assets/'.length);const bytes=await pdfViewerAsset(path);response.writeHead(200,{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':bytes.length,'cache-control':'public, max-age=86400'});response.end(bytes);}catch{sendJson(response,404,{error:'NOT_FOUND'});}return;}
@@ -145,6 +155,11 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     sendJson(response, 200, { name: "trash", status: "ready", protocol_version: PROTOCOL_VERSION });
     return;
   }
+  if(url.pathname==="/api/v1/settings/git-identity"){
+    response.setHeader("cache-control","no-store");
+    if(method==="GET"){sendJson(response,200,{identity:experiments.repository.gitIdentity.get()});return;}
+    if(method==="PUT"){sendJson(response,200,{identity:experiments.repository.gitIdentity.save(await readJson(request))});return;}
+  }
   if (url.pathname === "/api/v1/projects" && method === "GET") {
     sendJson(response, 200, { projects: store.listProjects() });
     return;
@@ -156,8 +171,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     sendJson(response, 201, { project: restoreKnowledge(store, value) }); return;
   }
   if (url.pathname === "/api/v1/projects" && method === "POST") {
-    const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).default(''),research_area:z.string().trim().min(1).max(500),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).default([]),research_stage:z.enum(['exploration','focused']).default('exploration'),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional(),workspace:z.object({root:z.string().min(1).optional(),name:z.string().min(1)}).strict().optional()}).strict().parse(await readJson(request));
-    const project=store.createProject({title:input.title,research_question:input.research_question,research_area:input.research_area,research_interests:input.research_interests,research_stage:input.research_stage,module:input.module??{id:'apt-provenance',version:'0.1.0'}});
+    const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).default(''),research_area:z.string().trim().max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).default([]),research_stage:z.enum(['exploration','focused']).default('exploration'),module:z.object({id:z.string().regex(/^[a-z][a-z0-9-]*$/),version:z.string().min(1)}).strict().optional(),workspace:z.object({root:z.string().min(1).optional(),name:z.string().min(1)}).strict().optional()}).strict().parse(await readJson(request));
+    const project=store.createProject({title:input.title,research_question:input.research_question,research_area:input.research_area||undefined,research_interests:input.research_interests,research_stage:input.research_stage,module:input.module??{id:'apt-provenance',version:'0.1.0'}});
     try{await workspaces.initialize(project.project_id,input.workspace?{...input.workspace,root:input.workspace.root??join(store.root,"workspaces")}:undefined);}
     catch(error){store.db.prepare("DELETE FROM projects WHERE project_id=?").run(project.project_id);workspaceError(error);}
     sendJson(response, 201, { project });
@@ -169,16 +184,42 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     const project = store.getProject(projectId);
     if (!project) { sendJson(response, 404, { error: "PROJECT_NOT_FOUND" }); return; }
     const subpath = projectRoute[2] ?? "";
+    const anchor=join(store.root,'projects',projectId);
+    const libraryRoute=subpath==='workspace/library'||subpath==='workspace/library/rollback';
+    if(libraryMigrationPending(anchor)&&!libraryRoute&&!(subpath==='workspace'&&method==='GET')){
+      sendJson(response,409,{error:'LIBRARY_MIGRATION_PENDING'});return;
+    }
+    if(codeMigrationPending(anchor)&&!(subpath==='workspace'&&method==='GET')&&subpath!=='workspace/code-layout'&&subpath!=='workspace/code-layout/rollback'){
+      sendJson(response,409,{error:'CODE_MOVE_RESUME_FIRST'});return;
+    }
     if(!subpath&&method==='PATCH'){
-      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_area:z.string().trim().min(1).max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
+      const input=z.object({title:z.string().trim().min(1).max(120),research_question:z.string().trim().max(10000).optional(),research_constraints:z.string().trim().max(10000).optional(),research_area:z.string().trim().max(500).optional(),research_interests:z.array(z.string().trim().min(1).max(200)).max(30).optional(),research_stage:z.enum(['exploration','focused']).optional(),expected_updated_at:z.string().optional()}).strict().parse(await readJson(request));
       if(input.expected_updated_at&&input.expected_updated_at!==project.updated_at){sendJson(response,409,{error:'VERSION_CONFLICT'});return;}
       if(project.research_questions&&input.research_question!==undefined){sendJson(response,409,{error:'USE_RESEARCH_QUESTIONS'});return;}
       const at=new Date().toISOString(),{expected_updated_at,...changes}=input;
+      if(changes.research_area==='')changes.research_area=undefined;
       store.db.prepare('UPDATE projects SET data=?,updated_at=? WHERE project_id=?').run(JSON.stringify({...project,...changes,updated_at:at}),at,projectId);
       sendJson(response,200,{project:store.getProject(projectId)});return;
     }
     if(subpath==="workspace" && method==="GET"){sendJson(response,200,workspaces.state(projectId));return;}
     if(workspaces.busy(projectId)){sendJson(response,409,{error:"WORKSPACE_MIGRATING"});return;}
+    if(libraryRoute){
+      if(subpath==='workspace/library'&&method==='GET'){sendJson(response,200,libraryPreview(anchor));return;}
+      if(method==='POST'){
+        const input=z.object({confirm:z.literal(true),fingerprint:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict().parse(await readJson(request));
+        if(workspaces.busy(projectId)||(workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||directoryRepairBusy(store,projectId)||pdfPreparation(store).busy(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){
+          sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;
+        }
+        try {
+          const result=subpath==='workspace/library'?migrateLibrary(anchor,input.fingerprint):rollbackLibrary(anchor);
+          new MarkdownKnowledge(store).invalidate(projectId);
+          publishProjectChange(store,projectId,{wiki:true});
+          sendJson(response,200,result);
+        }catch(error){workspaceError(error);}
+        return;
+      }
+      sendJson(response,404,{error:'NOT_FOUND'});return;
+    }
     if(subpath==='research-questions'&&method==='GET'){sendJson(response,200,{project,questions:projectQuestions(project)});return;}
     const questionRoute=subpath.match(/^research-questions\/(question_[A-Za-z0-9_-]+)$/);
     if((subpath==='research-questions'&&method==='POST')||(questionRoute&&method==='PATCH')){
@@ -189,18 +230,64 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(!questionRoute&&input.source_run_id){const candidate=exploration.candidates(projectId,input.source_run_id).find(c=>c.id===input.source_candidate_id);if(!candidate?.complete){sendJson(response,422,{error:'RESEARCH_CANDIDATE_INCOMPLETE'});return;}evidence=candidate.evidence;}
       sendJson(response,200,saveProjectQuestion(store,project,{...input,evidence},questionRoute?.[1]));return;
     }
+    const topicStopAfter=z.enum(['materials','discovery','synthesis']).optional();
     const candidatesRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/candidates$/);
     if(candidatesRoute&&method==='GET'){sendJson(response,200,{project,candidates:exploration.candidates(projectId,candidatesRoute[1])});return;}
-    if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.list(projectId)});return;}
+    if(subpath==='research-exploration/exploration-documents'&&method==='POST'){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      sendJson(response,200,exploration.refreshExplorationDocuments(projectId));return;
+    }
+    if(subpath==='research-exploration/direction-materials'&&method==='GET'){
+      const selection=z.object({topic_ids:z.array(z.string().min(1)).max(1000),source_ids:z.array(z.string().min(1)).max(100)}).parse({
+        topic_ids:url.searchParams.getAll('topic_id'),source_ids:url.searchParams.getAll('source_id'),
+      });
+      sendJson(response,200,exploration.directionMaterials(projectId,selection));return;
+    }
+    if(subpath==='research-exploration'&&method==='GET'){sendJson(response,200,{runs:exploration.summaries(projectId),capabilities:{multi_topic:true,progress_summary:true,stage_checkpoints:true,topic_preview:true,research_skills:['map','background','synthesis','exploration'],version:16}});return;}
     if(subpath==='research-exploration'&&method==='POST'){
       if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const input=z.object({source_ids:z.array(z.string()).min(1).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional()}).strict().parse(await readJson(request));
+      const input=z.object({source_ids:z.array(z.string()).max(100),instructions:z.string().max(5000).default(''),question_id:z.string().optional(),mode:z.enum(['directions','research-map','comparison','background','topics']).default('directions'),topic_ids:z.array(z.string().min(1)).max(1000).default([]),topic_token:z.string().regex(/^[a-f0-9]{64}$/).optional(),stop_after:topicStopAfter}).strict().parse(await readJson(request));
+      if((input.stop_after&&input.mode!=='topics')||(input.topic_token&&(input.mode!=='directions'||input.question_id||!input.topic_ids.length))||(!input.topic_token&&input.topic_ids.length>30)){sendJson(response,400,{error:'INVALID_REQUEST'});return;}
       const question=input.question_id?projectQuestions(project).find(q=>q.id===input.question_id):undefined;
       if(input.question_id&&!question){sendJson(response,404,{error:'RESEARCH_QUESTION_NOT_FOUND'});return;}
-      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question)});return;
+      sendJson(response,202,{run:exploration.start(projectId,input.source_ids,input.instructions,question,input.mode,input.topic_ids,input.stop_after,input.topic_token)});return;
+    }
+    const topicPreviewRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/topics\/([a-f0-9]{20})\/(preview|publish)$/);
+    if(topicPreviewRoute){
+      const [,runId,topicId,action]=topicPreviewRoute;
+      if(action==='preview'&&method==='GET'){sendJson(response,200,{draft:exploration.readPreview(projectId,runId,topicId)});return;}
+      if(method==='POST'){
+        if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
+        const body=await readJson(request);
+        if(action==='preview'){
+          z.object({}).strict().parse(body);
+          sendJson(response,202,{run:exploration.generatePreview(projectId,runId,topicId)});return;
+        }
+        const input=z.object({task_id:z.string().regex(/^task_[a-f0-9-]+$/),confirm:z.literal(true)}).strict().parse(body);
+        sendJson(response,200,{run:exploration.publishPreview(projectId,runId,topicId,input.task_id)});return;
+      }
+    }
+    const stageRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/stop-after$/);
+    if(stageRoute&&method==='POST'){
+      const input=z.object({stop_after:z.enum(['materials','discovery','synthesis'])}).strict().parse(await readJson(request));
+      sendJson(response,200,{run:exploration.setStopAfter(projectId,stageRoute[1],input.stop_after)});return;
     }
     const explorationAction=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(resume|cancel)$/);
-    if(explorationAction&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1]):exploration.cancel(projectId,explorationAction[1])});return;}
+    if(explorationAction&&method==='POST'){const input=z.object({confirm:z.literal(true),topic_id:z.string().optional(),stop_after:topicStopAfter}).strict().parse(await readJson(request));if((input.topic_id||input.stop_after)&&explorationAction[2]!=='resume'){sendJson(response,400,{error:'INVALID_REQUEST'});return;}sendJson(response,200,{run:explorationAction[2]==='resume'?exploration.resume(projectId,explorationAction[1],input.topic_id,input.stop_after):exploration.cancel(projectId,explorationAction[1])});return;}
+    const rediscoverRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/rediscover$/);
+    if(rediscoverRoute&&method==='POST'){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));sendJson(response,202,{run:exploration.rediscover(projectId,rediscoverRoute[1])});return;}
+    const appendRoute=subpath.match(/^research-exploration\/(exploration_[a-f0-9-]+)\/(append-preview|append)$/);
+    if(appendRoute&&method==='POST'){
+      const sourceIds=z.array(z.string().min(1)).min(1).max(100);
+      const body=await readJson(request),runId=appendRoute[1];
+      if(appendRoute[2]==='append-preview'){
+        const input=z.object({source_ids:sourceIds}).strict().parse(body);
+        sendJson(response,200,{plan:exploration.previewAppend(projectId,runId,input.source_ids)});return;
+      }
+      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
+      const input=z.object({source_ids:sourceIds,token:z.string().regex(/^[a-f0-9]{64}$/),stop_after:topicStopAfter}).strict().parse(body);
+      sendJson(response,202,{run:exploration.appendSources(projectId,runId,input.source_ids,input.token,input.stop_after)});return;
+    }
     const pdfView=subpath.match(/^sources\/([^/]+)\/pdf-view$/);
     if(pdfView&&method==='GET'){const source=store.getSource(pdfView[1]);if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}response.writeHead(302,{location:`/pdf-reader?project=${encodeURIComponent(projectId)}&source=${encodeURIComponent(pdfView[1])}&hash=${encodeURIComponent(url.searchParams.get('hash')??'')}`});response.end();return;}
     const pdfRoute=subpath.match(/^sources\/([^/]+)\/pdf(?:\/pages\/(\d+))?$/);
@@ -209,9 +296,89 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(pdfRoute[2]){const page=await pdf.page(projectId,pdfRoute[1],Number(pdfRoute[2]),Number(url.searchParams.get('scale')??2200));const bytes=await import('node:fs/promises').then(fs=>fs.readFile(page.path));response.writeHead(200,{'content-type':'image/png','content-length':bytes.length,'cache-control':'private, max-age=3600','x-content-type-options':'nosniff'});response.end(bytes);return;}
       const doc=await pdf.document(projectId,pdfRoute[1]);sendJson(response,200,{source_id:doc.source_id,hash:doc.hash,artifact_id:doc.artifact_id,pageCount:doc.pageCount,pages:doc.pages});return;
     }
+    if(subpath==='workspace/code-layout'||subpath==='workspace/code-layout/rollback'){
+      const selection=z.object({kind:z.enum(['repository','reproduction']),id:z.string().min(1).max(160)});
+      const service=new CodeDirectoryMigration(experiments,projectId);
+      try{
+        if(subpath==='workspace/code-layout'&&method==='GET'){
+          const query=url.searchParams;
+          sendJson(response,200,query.has('id')?service.preview(selection.strict().parse(Object.fromEntries(query))):{items:service.list()});return;
+        }
+        if(method==='POST'){
+          const input=selection.extend({confirm:z.literal(true),fingerprint:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict().parse(await readJson(request));
+          if(workspaces.busy(projectId)||(workspaces.requests.get(projectId)??0)>1||agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){
+            sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;
+          }
+          const key={kind:input.kind,id:input.id};
+          sendJson(response,200,subpath.endsWith('/rollback')?service.rollback(key):service.migrate(key,input.fingerprint));return;
+        }
+      }catch(error){workspaceError(error);}
+      sendJson(response,404,{error:'NOT_FOUND'});return;
+    }
+    if(subpath==='workspace/research'&&method==='POST'){
+      if(workspaces.busy(projectId)){sendJson(response,409,{error:'WORKSPACE_MIGRATING'});return;}
+      try { ensureResearchDirectory(store.root,projectId); }
+      catch(error){workspaceError(error);}
+      sendJson(response,200,{path:'research'});return;
+    }
     if(subpath==='workspace/research-folders'&&method==='POST'){
       if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
       sendJson(response,201,createResearchFolder(store,projectId,await readJson(request)));return;
+    }
+    if(subpath==='workspace/manuscripts'||subpath.startsWith('workspace/manuscripts/')){
+      try{
+        if(subpath==='workspace/manuscripts'&&method==='GET'){
+          sendJson(response,200,files.manuscripts(projectId));return;
+        }
+        if(subpath==='workspace/manuscripts/detail'&&method==='GET'){
+          sendJson(response,200,files.manuscriptDetails(projectId,url.searchParams.get('id')??''));return;
+        }
+        if(subpath==='workspace/manuscripts/evidence'&&(method==='GET'||method==='POST')){
+          const evidence=new ManuscriptEvidence(store);
+          const paperPath=files.manuscriptPath(projectId,url.searchParams.get('id')??'');
+          if(method==='GET'){
+            const resultId=url.searchParams.get('result_id');
+            sendJson(response,200,resultId?evidence.versions(projectId,resultId):evidence.read(projectId,anchor,paperPath));
+          }else{
+            const input=await readJson(request);
+            if(workspaces.busy(projectId)){sendJson(response,409,{error:'WORKSPACE_MIGRATING'});return;}
+            sendJson(response,200,evidence.update(projectId,anchor,files.manuscriptPath(projectId,url.searchParams.get('id')??''),input));
+          }
+          return;
+        }
+        if(subpath==='workspace/manuscripts/repository'&&method==='GET'){
+          const paperId=url.searchParams.get('id')??'';
+          files.manuscriptPath(projectId,paperId);
+          sendJson(response,200,{repository:experiments.repository.forPaper(projectId,paperId)??null,repositories:experiments.data.repositories(projectId)});return;
+        }
+        if(subpath==='workspace/manuscripts/repository'&&method==='POST'){
+          const input=z.discriminatedUnion('action',[
+            z.object({id:z.string(),action:z.literal('create')}).strict(),
+            z.object({id:z.string(),action:z.literal('link'),repository_id:z.string()}).strict(),
+            z.object({id:z.string(),action:z.literal('bind'),path:z.string().min(1)}).strict()
+          ]).parse(await readJson(request));
+          files.manuscriptPath(projectId,input.id);
+          if(workspaces.busy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
+          if(input.action==='create'){
+            sendJson(response,201,{repository:await experiments.repository.initializePaper(projectId,input.id,anchor)});return;
+          }
+          const repositoryId=input.action==='link'?input.repository_id:(await experiments.repository.bind(projectId,{path:input.path},false)).repository_id;
+          sendJson(response,200,{repository:experiments.repository.linkPaper(projectId,input.id,repositoryId)});return;
+        }
+        if(method==='POST'){
+          const actions={
+            'workspace/manuscripts':files.createManuscript.bind(files),
+            'workspace/manuscripts/update':files.updateManuscript.bind(files),
+            'workspace/manuscripts/adopt':files.adoptManuscript.bind(files),
+            'workspace/manuscripts/section':files.createManuscriptSection.bind(files)
+          };
+          if(Object.hasOwn(actions,subpath)){
+            const input=await readJson(request);
+            sendJson(response,subpath.endsWith('/update')?200:201,actions[subpath as keyof typeof actions](projectId,input));return;
+          }
+        }
+      }catch(error){workspaceError(error);}
+      sendJson(response,404,{error:'NOT_FOUND'});return;
     }
     if(subpath==="files"||subpath.startsWith("files/")){
       const path=url.searchParams.get("path")??"",hidden=url.searchParams.get("hidden")==="true";
@@ -227,7 +394,9 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         const action=subpath.slice('files/'.length);
         if(method==="POST"&&Object.hasOwn(actions,action)){
           const body=await readJson(request,action==="save"?12*1024*1024+8192:MAX_JSON_BYTES);if(workspaces.busy(projectId))throw Object.assign(new Error("WORKSPACE_MIGRATING"),{statusCode:409});
-          sendJson(response,200,actions[action as keyof typeof actions](projectId,body));return;
+          const result=actions[action as keyof typeof actions](projectId,body);
+          new MarkdownKnowledge(store).invalidate(projectId);
+          sendJson(response,200,result);return;
         }
       }catch(error){
         if((error as NodeJS.ErrnoException).code==='EEXIST')throw Object.assign(new Error('FILES_EXISTS'),{statusCode:409});
@@ -248,7 +417,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     if ((subpath === "literature-analysis" || subpath === "literature-analysis/cancel" || subpath === "literature-analysis/resume") && method === "POST") {
       const input=z.object({ confirm: z.literal(true),mode:z.enum(['all','missing','changed','synthesis','overview']).default('all'),source_ids:z.array(z.string().min(1)).max(1000).optional(),title:z.string().min(1).max(500).optional(),instructions:z.string().max(10000).optional() }).strict().parse(await readJson(request));
       if (subpath.endsWith("/cancel")) { sendJson(response, 200, { analysis: analysis.cancel(projectId) }); return; }
-      if (codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
       if(subpath.endsWith('/resume')){sendJson(response,202,{analysis:analysis.resume(projectId)});return;}
       sendJson(response, 202, { analysis: analysis.start(projectId,input.mode,input) }); return;
     }
@@ -260,12 +428,64 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const sourceId=decodeURIComponent(deleteSourceRoute[1]);
       const referenced=new MarkdownKnowledge(store).index(projectId).documents.some(doc=>doc.source_id===sourceId||(doc.links??[]).some(link=>link.path.includes(sourceId)));
       if(referenced){sendJson(response,409,{error:'SOURCE_IN_USE'});return;}
-      sendJson(response, 200, store.deleteSource(projectId, sourceId)); return;
+      const result=store.deleteSource(projectId,sourceId);
+      publishProjectChange(store,projectId,{tasks:true,sources:[sourceId]});
+      sendJson(response,200,result); return;
     }
     if (subpath === "agent-tools" && method === "POST") {
       const token = (request.headers.authorization ?? "").replace(/^Bearer /, "");
+      const task=codeAgent.toolTask(projectId,token);
+      const body = await readJson(request);
+      const op=body&&typeof body==="object"&&"operation" in body?String(body.operation):"";
+      if(task.coordination?.consultation&&op.startsWith("request-")){sendJson(response,403,{error:"AGENT_TOOL_READONLY"});return;}
+      if(op.startsWith("coordination-") || task.coordination&&task.coordination.kind!=="assignment"){
+        sendJson(response,200,await coordination.tool(projectId,task,body)); return;
+      }
+      if(op==="request-git-import-choice"){
+        sendJson(response,200,codeAgent.requestGitImportChoice(projectId,token,body));return;
+      }
+      if(op==="git-sync-plan"||op==="git-sync-runs"){
+        sendJson(response,200,codeAgent.gitExperimentTool(projectId,token,body));return;
+      }
+      if(body&&typeof body==="object"&&"operation" in body&&body.operation==="request-choice"){
+        sendJson(response,200,codeAgent.requestChoice(projectId,token,body));return;
+      }
+      if(op==="request-git-autodl-choice"){
+        sendJson(response,200,await codeAgent.requestGitUploadChoice(projectId,token,body));return;
+      }
+      if (body && typeof body === "object" && "operation" in body && body.operation === "load-chat-skill") {
+        sendJson(response, 200, codeAgent.loadChatSkill(projectId, token, body)); return;
+      }
+      if (body && typeof body === "object" && "operation" in body &&
+        (body.operation === "stage-shared-file" || body.operation === "publish-shared-file")) {
+        sendJson(response, 200, codeAgent.sharedFileTool(projectId, token, body)); return;
+      }
+      if (body && typeof body === "object" && "operation" in body &&
+        (body.operation === "paper-code-list" || body.operation === "paper-code-read")) {
+        sendJson(response, 200, await codeAgent.paperCodeTool(projectId, token, body)); return;
+      }
+      // Older turns can still call the original local commit operation name.
+      const localCommit=op==="git-commit"||op==="request-git-commit-choice";
+      if(localCommit||["paper-code-run","autodl-targets","autodl-upload-file","autodl-upload-code","git-sync-versions","git-sync-upload"].includes(op)){
+        const controller=new AbortController();
+        const disconnect=()=>controller.abort();
+        response.once('close',disconnect);
+        try{
+          const result=localCommit
+            ? await codeAgent.gitCommit(projectId,token,body,controller.signal)
+            : op==="paper-code-run"
+              ? await codeAgent.paperCodeRun(projectId,token,body,controller.signal)
+              : await codeAgent.autoDLTool(projectId,token,body,controller.signal);
+          if(!response.destroyed)sendJson(response,200,result);
+        }finally{response.off('close',disconnect);}
+        return;
+      }
+      if (body && typeof body === "object" && "operation" in body &&
+        ["method-experiments", "method-context", "method-draft"].includes(String(body.operation))) {
+        sendJson(response, 200, codeAgent.methodChatTool(projectId, token, body as Record<string,unknown>)); return;
+      }
       const permission = codeAgent.authorizeTool(projectId, token);
-      const result = await projectChatTool(store, projectId, await readJson(request), permission.writable);
+      const result = await projectChatTool(store, projectId, body, permission);
       codeAgent.recordTool(projectId, token, result); sendJson(response, 200, result); return;
     }
     if(subpath==='chat/attachments'&&method==='POST'){
@@ -282,12 +502,17 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
     }
     if (subpath === 'markdown-knowledge' || subpath.startsWith('markdown-knowledge/')) {
       const markdown=new MarkdownKnowledge(store);
-      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true'}));return;}
+      if(subpath==='markdown-knowledge'&&method==='GET'){const number=(name:string,fallback:number)=>{const value=Number(url.searchParams.get(name)??fallback);return Number.isFinite(value)?Math.max(1,Math.floor(value)):fallback;};const current=url.searchParams.get('current_topic_directory')==='true'?exploration.topicDirectories(projectId).current:undefined;sendJson(response,200,markdown.query(projectId,{page:number('page',1),limit:number('limit',30),kind:url.searchParams.get('kind')??undefined,level:url.searchParams.get('level')??undefined,q:url.searchParams.get('q')??undefined,rescan:url.searchParams.get('rescan')==='true',include_summaries:url.searchParams.get('include_summaries')==='true',include_evidence:url.searchParams.get('include_evidence')==='true',current_topic_directory:current?.id,summary_titles:url.searchParams.get('include_summaries')==='true'?exploration.summaryTitles(projectId):undefined,archived_topic_discoveries:url.searchParams.get('current_topic_discovery')==='true'?new Set(exploration.topicDiscoveries(projectId).archived.map(doc=>doc.id)):undefined}));return;}
       if(subpath==='markdown-knowledge/summary-name-preview'&&method==='GET'){sendJson(response,200,{items:markdown.summaryNamePreview(projectId)});return;}
       if(subpath==='markdown-knowledge/rename-summary'&&method==='POST'){const input=z.object({id:z.string(),title:z.string().trim().min(4).max(150),expected:z.string()}).strict().parse(await readJson(request));sendJson(response,200,{document:markdown.renameSummary(projectId,input.id,input.title,input.expected)});return;}
       if(subpath==='markdown-knowledge/migration-preview'&&method==='GET'){sendJson(response,200,migrationPreview(markdown.root(projectId)));return;}
-      if(subpath==='markdown-knowledge/home'&&method==='GET'){const root=markdown.root(projectId);markdown.index(projectId);const manifest=migrationPreview(root);const file=join(root,'knowledge_base/index.md');sendJson(response,200,{path:'knowledge_base/index.md',text:existsSync(file)?readFileSync(file,'utf8'):'# 知识库\n请先预览并迁移到 knowledge_base/。',migration:manifest.migrated});return;}
-      if(subpath==='markdown-knowledge/maintenance-log'&&method==='GET'){const file=join(markdown.root(projectId),'knowledge_base/maintenance/log.md');sendJson(response,200,{text:existsSync(file)?readFileSync(file,'utf8'):'暂无维护记录。'});return;}
+      if(subpath==='markdown-knowledge/home'&&method==='GET'){
+        const root=markdown.root(projectId),{archived}=exploration.topicDirectories(projectId),manifest=migrationPreview(root),file=join(root,projectLibraryPath(root,'knowledge_base/index.md'));
+        const oldLinks=new Set(archived.map(doc=>doc.path.replace(/^knowledge_base\//,'')));
+        const text=existsSync(file)?readFileSync(file,'utf8').split('\n').filter(line=>!oldLinks.has(line.match(/^- \[.*\]\(([^)]+)\)$/)?.[1]??'')).join('\n'):'# 知识库\n请先预览并迁移到 knowledge_base/。';
+        sendJson(response,200,{path:'knowledge_base/index.md',text,migration:manifest.migrated});return;
+      }
+      if(subpath==='markdown-knowledge/maintenance-log'&&method==='GET'){const root=markdown.root(projectId),file=join(root,projectLibraryPath(root,'knowledge_base/maintenance/log.md'));sendJson(response,200,{text:existsSync(file)?readFileSync(file,'utf8'):'暂无维护记录。'});return;}
       if(['markdown-knowledge/migrate','markdown-knowledge/rollback-migration'].includes(subpath)&&method==='POST'){
         const input=z.object({confirm:z.literal(true),expected:z.string().optional()}).strict().parse(await readJson(request));
         if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}
@@ -306,7 +531,24 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(subpath==='markdown-knowledge/navigation'&&method==='GET'){const input=z.object({page:z.coerce.number().int().min(1).default(1),limit:z.coerce.number().int().min(1).max(100).default(30),q:z.string().max(500).optional()}).parse(Object.fromEntries(url.searchParams));sendJson(response,200,markdown.navigation(projectId,input));return;}
       if(subpath==='markdown-knowledge/context'&&method==='GET'){const input=z.object({q:z.string().min(1).max(500),budget:z.coerce.number().int().min(1000).max(24000).default(16000)}).parse(Object.fromEntries(url.searchParams));sendJson(response,200,markdown.context(projectId,input.q,input.budget));return;}
       if(subpath==='markdown-knowledge/log'&&method==='GET'){const page=z.coerce.number().int().positive().default(1).parse(url.searchParams.get('page')??undefined);sendJson(response,200,markdown.operations(projectId,page));return;}
-      if(subpath==='markdown-knowledge/document'&&method==='GET'){sendJson(response,200,{document:markdown.read(projectId,url.searchParams.get('id')??'')});return;}
+      if(subpath==='markdown-knowledge/document'&&method==='GET'){
+        const document=markdown.read(projectId,url.searchParams.get('id')??'');
+        if(document.page_role==='exploration-topic'){
+          const candidate=exploration.explorationOrigin(projectId,document);
+          const added=candidate&&projectQuestions(project).some(question=>question.source_run_id===candidate.run_id&&question.source_candidate_id===candidate.candidate_id);
+          sendJson(response,200,{document:{...document,exploration_candidate:candidate&&{...candidate,added}}});return;
+        }
+        if(document.level==='summary'){
+          const title=legacyMaterialTitle(document.title,document.modified,exploration.summaryTitles(projectId).get(document.id));
+          sendJson(response,200,{document:{...document,title}});return;
+        }
+        if(document.level==='discovery'){
+          const {current,archived}=exploration.topicDiscoveries(projectId);
+          sendJson(response,200,{document:{...document,topic_discovery_history:current?.id===document.id||archived.some(doc=>doc.id===document.id)}});return;
+        }
+        sendJson(response,200,{document});return;
+      }
+      if(subpath==='markdown-knowledge/delete'&&method==='POST'){const input=z.object({id:z.string().min(1),expected:z.string().length(64),confirm:z.literal(true)}).strict().parse(await readJson(request));if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))){sendJson(response,409,{error:'PROJECT_HAS_ACTIVE_TASKS'});return;}sendJson(response,200,markdown.recycleDocument(projectId,input.id,input.expected));return;}
       if(subpath==='markdown-knowledge/paper-versions'&&method==='GET'){const source=z.string().regex(/^source_[A-Za-z0-9_-]+$/).parse(url.searchParams.get('source_id'));sendJson(response,200,{...new PaperWikiVersions(store,markdown,projectId,source).list(),busy:agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)||knowledge.tasks(projectId).some(task=>['queued','running'].includes(task.status))});return;}
       if(subpath==='markdown-knowledge/paper-versions/file'&&method==='GET'){const source=z.string().regex(/^source_[A-Za-z0-9_-]+$/).parse(url.searchParams.get('source_id'));sendJson(response,200,new PaperWikiVersions(store,markdown,projectId,source).file(url.searchParams.get('version_id')??'',url.searchParams.get('path')??''));return;}
       if(['markdown-knowledge/paper-versions/preview','markdown-knowledge/paper-versions/action'].includes(subpath)&&method==='POST'){
@@ -315,8 +557,13 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
         if(subpath.endsWith('/preview')){sendJson(response,200,manager.preview(input.action,input.id,input.paths));return;}
         if(!input.confirm||!input.expected){sendJson(response,400,{error:'请先预览并确认操作'});return;}
         if(agent.isProjectBusy(projectId)||codeAgent.busy(projectId)||experiments.busyProject(projectId)){sendJson(response,409,{error:'项目有活动任务，完成后可操作'});return;}
-        sendJson(response,200,manager.act({...input,expected:input.expected}));return;
+        const result=manager.act({...input,expected:input.expected});
+        if(input.action!=='note')markdown.invalidate(projectId);
+        sendJson(response,200,result);return;
       }
+      if(subpath==='markdown-knowledge/topic-versions'&&method==='GET'){const id=z.string().regex(/^wiki-[A-Za-z0-9_-]+$/).parse(url.searchParams.get('id'));sendJson(response,200,{versions:topicVersions(markdown.root(projectId),id)});return;}
+      if(subpath==='markdown-knowledge/topic-directory-versions'&&method==='GET'){sendJson(response,200,exploration.directoryVersions(projectId,url.searchParams.get('id')??''));return;}
+      if(subpath==='markdown-knowledge/topic-discovery-versions'&&method==='GET'){sendJson(response,200,exploration.discoveryVersions(projectId,url.searchParams.get('id')??''));return;}
       if(subpath==='markdown-knowledge/history'&&method==='GET'){sendJson(response,200,{versions:markdown.history(projectId,url.searchParams.get('id')??'')});return;}
       if(method==='POST'){
         // Local saves/reviews use the document hash, not the project-wide Agent lock.
@@ -325,19 +572,103 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       }
       sendJson(response,404,{error:'NOT_FOUND'});return;
     }
-    if (subpath === "chat/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose === "project-chat").map(task => ({ ...task, logs: "" })) }); return; }
+    if(subpath==="coordination/memory/evidence"&&method==="GET"){
+      sendJson(response,200,coordination.memory.evidence(projectId,z.string().uuid().parse(url.searchParams.get("id")),
+        z.coerce.number().int().nonnegative().parse(url.searchParams.get("offset")??0)));return;
+    }
+    if(subpath==="coordination/memory"&&method==="GET"){
+      response.setHeader("cache-control","no-store");
+      const id=url.searchParams.get("id");
+      const revision=url.searchParams.get("revision");
+      sendJson(response,200,id?coordination.memoryDetail(projectId,z.string().uuid().parse(id),
+        revision?z.coerce.number().int().positive().parse(revision):undefined):
+        coordination.memory.list(projectId,z.string().max(300).parse(url.searchParams.get("q")??""),z.coerce.number().int().nonnegative().parse(url.searchParams.get("offset")??0)));
+      return;
+    }
+    const coordinationProcess = subpath.match(/^coordination\/messages\/(code_[a-f0-9-]+)\/process$/);
+    if (coordinationProcess && method === "GET") {
+      response.setHeader("cache-control","no-store");
+      sendJson(response,200,coordination.messageProcess(projectId,coordinationProcess[1]));
+      return;
+    }
+    if (subpath === "coordination") {
+      response.setHeader("cache-control","no-store");
+      if (method === "GET") { sendJson(response,200,coordination.view(projectId)); return; }
+      if (method === "POST") {
+        const origin=request.headers.origin, host=request.headers.host;
+        if (!host || !origin || ![`http://${host}`,`https://${host}`].includes(origin) || request.headers.authorization) { sendJson(response,403,{error:"ORIGIN_NOT_ALLOWED"}); return; }
+        sendJson(response,200,await coordination.action(projectId,await readJson(request))); return;
+      }
+    }
+    if (subpath === "chat/tasks" && method === "GET") { sendJson(response,200,codeAgent.chatHistory(projectId)); return; }
+    if (subpath === "chat/write-targets" && method === "GET") {
+      response.setHeader("cache-control","no-store");
+      sendJson(response,200,codeAgent.writeTargets(projectId));return;
+    }
+    if (subpath === "chat/skills" && method === "GET") { sendJson(response,200,{skills:chatSkills}); return; }
+    if (subpath === "chat/model-config" && method === "GET") {
+      sendJson(response,200,await codeAgent.chatModelConfig(projectId));return;
+    }
+    const conversationRoute=subpath.match(/^chat\/conversations\/([^/]+)\/(rename|delete|repository)$/);
+    if(conversationRoute&&method==='POST'){
+      const [,id,action]=conversationRoute;
+      const body=await readJson(request);
+      if(action==='rename'){
+        const {title}=z.object({title:z.string().trim().min(1).max(120)}).strict().parse(body);
+        codeAgent.changeConversation(projectId,id,{title});
+      }else if(action==='repository'){
+        const input=z.object({repository_id:chatRepositoryId.nullable()}).strict().parse(body);
+        codeAgent.changeConversation(projectId,id,input);
+      }else{
+        z.object({confirm:z.literal(true)}).strict().parse(body);
+        codeAgent.changeConversation(projectId,id,{deleted:true});
+      }
+      sendJson(response,200,{ok:true});return;
+    }
     if (subpath === "chat/tasks" && method === "POST") {
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
       sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request), toolUrl) }); return;
     }
-    const chatAppend = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/append$/);
-    if (chatAppend && method === "POST") {
+    const chatChoice = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/choices\/([a-f0-9-]+)$/);
+    if(chatChoice&&method==="POST"){
+      const host=request.headers.host;
+      const origin=request.headers.origin;
+      if(request.headers.authorization||!host||(origin!==`http://${host}`&&origin!==`https://${host}`)||
+        request.headers["sec-fetch-site"]&&request.headers["sec-fetch-site"]!=="same-origin"){
+        sendJson(response,403,{error:"ORIGIN_NOT_ALLOWED"});return;
+      }
+      const toolUrl=`http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
+      sendJson(response,200,await codeAgent.choose(projectId,chatChoice[1],chatChoice[2],await readJson(request),toolUrl));return;
+    }
+    const chatContinuation = subpath.match(/^chat\/tasks\/(code_[a-f0-9-]+)\/(append|resume)$/);
+    if (chatContinuation && method === "POST") {
       const toolUrl = `http://127.0.0.1:${request.socket.localPort}/api/v1/projects/${encodeURIComponent(projectId)}/agent-tools`;
-      sendJson(response, 201, { task: await codeAgent.append(projectId, chatAppend[1], await readJson(request), toolUrl) }); return;
+      const body=await readJson(request);
+      if(chatContinuation[2]==='append'){
+        sendJson(response,201,{task:await codeAgent.append(projectId,chatContinuation[1],body,toolUrl)});return;
+      }
+      z.object({}).strict().parse(body);
+      const {process_groups:_processes,recovery_operations:_ops,...task}=await coordination.resume(projectId,chatContinuation[1],toolUrl);
+      sendJson(response,200,{task});return;
+    }
+    if (subpath === "experiment-method/tasks" && method === "GET") {
+      const selection = methodDraftInput.parse({
+        direction_id: url.searchParams.get("direction_id"),
+        scheme_id: url.searchParams.get("scheme_id"),
+      });
+      response.setHeader("cache-control", "no-store");
+      sendJson(response, 200, { tasks: codeAgent.methodTasks(projectId, selection.direction_id, selection.scheme_id) });
+      return;
     }
     if (subpath === "code-agent/detect" && method === "GET") { sendJson(response, 200, await codeAgent.detect()); return; }
-    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => task.purpose !== "project-chat").map(task => ({ ...task, logs: "", response: "" })) }); return; }
+    if (subpath === "code-agent/tasks" && method === "GET") { sendJson(response, 200, { tasks: codeAgent.list(projectId).filter(task => !task.purpose).map(task => ({ ...task, logs: "", response: "" })) }); return; }
     if (subpath === "code-agent/tasks" && method === "POST") { sendJson(response, 201, { task: await codeAgent.start(projectId, await readJson(request)) }); return; }
+    if (subpath === "experiment-method/tasks" && method === "POST") {
+      const input = z.object({ method: methodDraftInput, instructions: z.string().max(30000) }).strict().parse(await readJson(request));
+      const task = await codeAgent.start(projectId, { ...input, sandbox:"read-only", confirm:true });
+      sendJson(response, 201, { task_id: task.task_id });
+      return;
+    }
     const codeTask = subpath.match(/^code-agent\/tasks\/(code_[a-f0-9-]+)(?:\/(cancel|acknowledge))?$/);
     if (codeTask && method === "GET" && !codeTask[2]) { const task = codeAgent.list(projectId).find(t => t.task_id === codeTask[1]); if (!task) { sendJson(response, 404, { error: "NOT_FOUND" }); return; } sendJson(response, 200, { task }); return; }
     if (codeTask && method === "POST" && codeTask[2]) {
@@ -345,8 +676,8 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if (codeTask[2] === "cancel") codeAgent.cancel(projectId, codeTask[1]); else codeAgent.acknowledge(projectId, codeTask[1]);
       sendJson(response, 200, { accepted: true }); return;
     }
-    if (codeAgent.busy(projectId) && ((subpath.startsWith("repository") && method !== "GET") || ((subpath === "experiment-runs" || /^experiment-runs\/[^/]+\/retry$/.test(subpath)) && method === "POST"))) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
-    if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson)) return;
+    if ((subpath.startsWith("repository") || subpath === "experiment-catalog/register") && method !== "GET" && codeAgent.busy(projectId)) { sendJson(response, 409, { error: "CODE_AGENT_BUSY" }); return; }
+    if (await experimentRoute(request,response,url,projectId,subpath,experiments,readJson,sendJson,files)) return;
     if (subpath === "overview" && method === "GET") {
       sendJson(response, 200, projectOverview(store, projectId));
       return;
@@ -361,14 +692,20 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       sendJson(response, 200, deleted);
       return;
     }
+    if(subpath==='source-analyses/stream'&&method==='GET'){
+      streamSourceAnalyses(store,agent,projectId,response);
+      return;
+    }
+    if(subpath==='knowledge-tasks/changes'&&method==='GET'){
+      const stream=projectStream(store,projectId,response);
+      stream.onUpdate(update=>{if(update.tasks)stream.send('change',{});});
+      stream.send('ready',{});
+      return;
+    }
     if(subpath==='source-analyses' && method==='GET'){
-      const markdown=new MarkdownKnowledge(store);
-      const docs=markdown.index(projectId).documents;
-      const tasks=knowledge.tasks(projectId).filter(t=>!(t as {dismissed_reanalysis?:boolean}).dismissed_reanalysis&&t.input.include_source_wiki&&Number((t.snapshot as {prompt_version?:number}).prompt_version)>=4).sort((a,b)=>b.created_at.localeCompare(a.created_at));
-      sendJson(response,200,store.listSources(projectId).map(source=>{const task=tasks.find(t=>t.input.source_ids[0]===source.source_id);const idcard=docs.find(doc=>doc.path===`knowledge_base/papers/${source.source_id}/idcard.md`);let bibliography:ReturnType<typeof parseIdcard>|undefined;
-      if(idcard){try{bibliography=parseIdcard(markdown.read(projectId,idcard.id).text);const manual=bibliographyState(store,source.source_id).manual??[];for(const field of ['title','authors','publication_date'] as const)if(manual.includes(field))delete bibliography[field];}catch{/* Keep original source metadata when no readable idcard is available. */}}
-      const wiki=currentPaperWiki(docs,source.source_id);
-      return {bibliography,hasWiki:wiki.hasWiki,stale:wiki.stale,currentWikiFiles:wiki.current_paths.length,oldWikiFiles:wiki.retired_paths.length,source_id:source.source_id,status:task?.status,error:task?.error,hasOutputs:docs.some(d=>d.source_id===source.source_id),hasBasic:docs.some(d=>d.source_id===source.source_id&&d.card_type==='basic'),metadataPending:Boolean(bibliographyState(store,source.source_id).suggestion),task_id:task?.task_id,can_resume:task?agent.resumable(task):false};}));return;
+      const sourceId=url.searchParams.get('source_id')??undefined;
+      sendJson(response,200,sourceAnalyses(store,agent,projectId,sourceId));
+      return;
     }
     const keepOriginal=subpath.match(/^sources\/([^/]+)\/keep-original$/);
     if(keepOriginal&&method==='POST'){
@@ -377,14 +714,18 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
       const docs=new MarkdownKnowledge(store).index(projectId).documents.filter(doc=>doc.source_id===sourceId);
       if(!docs.some(doc=>doc.kind==='wiki-page')){sendJson(response,409,{error:'ORIGINAL_ANALYSIS_REQUIRED'});return;}
-      const tasks=knowledge.tasks(projectId).filter(task=>task.input.include_source_wiki&&task.input.source_ids[0]===sourceId);
-      const latest=tasks.sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
+      const tasks=store.db.prepare(`SELECT task_id,status,created_at FROM knowledge_task_summaries
+        WHERE project_id=? AND include_source_wiki=1 AND json_extract(source_ids,'$[0]')=?
+        ORDER BY created_at DESC,task_id DESC`).all(projectId,sourceId) as {task_id:string;status:string;created_at:string}[];
+      const latest=tasks[0];
       if(!latest||latest.task_id!==input.task_id||latest.status==='completed'){sendJson(response,409,{error:'TASK_FINISHED'});return;}
       if(['queued','running'].includes(latest.status))agent.cancel(projectId,latest.task_id);
-      for(const task of tasks.filter(task=>task.created_at<=latest.created_at&&['failed','interrupted','cancelled'].includes(task.status))){
-        store.db.prepare("UPDATE knowledge_tasks SET data=json_set(data,'$.dismissed_reanalysis',json('true')) WHERE task_id=?").run(task.task_id);
-      }
+      store.db.prepare(`UPDATE knowledge_tasks SET data=json_set(data,'$.dismissed_reanalysis',json('true'))
+        WHERE task_id IN (SELECT task_id FROM knowledge_task_summaries WHERE project_id=? AND include_source_wiki=1
+        AND json_extract(source_ids,'$[0]')=? AND status IN ('failed','interrupted','cancelled')
+        AND dismissed_reanalysis=0)`).run(projectId,sourceId);
       knowledge.event(latest.task_id,'用户退出重新分析，保留当前已整理版本；日志与草稿保留');
+      publishProjectChange(store,projectId,{sources:[sourceId]});
       sendJson(response,200,{preserved:true});return;
     }
     const sourceAnalysis=subpath.match(/^sources\/([^/]+)\/analyze$/);
@@ -392,11 +733,15 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const input=z.object({confirm:z.literal(true),regenerate:z.boolean().default(false),resume:z.boolean().default(false)}).strict().parse(await readJson(request));
       const sourceId=decodeURIComponent(sourceAnalysis[1]),source=store.getSource(sourceId);
       if(!source||source.project_id!==projectId){sendJson(response,404,{error:'SOURCE_NOT_FOUND'});return;}
-      if(codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
-      const active=knowledge.tasks(projectId).find(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['queued','running'].includes(t.status));
-      if(active){sendJson(response,200,{task_id:active.task_id,status:active.status});return;}
+      const latestTask=(statuses:string[])=>store.db.prepare(`SELECT task_id,status FROM knowledge_task_summaries
+        WHERE project_id=? AND include_source_wiki=1 AND json_extract(source_ids,'$[0]')=?
+        AND status IN (${statuses.map(()=>'?').join(',')}) ORDER BY created_at DESC,task_id DESC LIMIT 1`)
+        .get(projectId,sourceId,...statuses) as {task_id:string;status:string}|undefined;
+      const active=latestTask(['queued','running']);
+      if(active){sendJson(response,200,active);return;}
       if(input.resume){
-        const previous=knowledge.tasks(projectId).filter(t=>t.input.include_source_wiki&&t.input.source_ids[0]===sourceId&&['failed','interrupted','cancelled'].includes(t.status)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
+        const attempt=latestTask(['failed','interrupted','cancelled']);
+        const previous=attempt&&knowledge.task(projectId,attempt.task_id);
         if(!previous){sendJson(response,409,{error:'SOURCE_RESUME_UNAVAILABLE'});return;}
         const [task]=agent.enqueue(projectId,{...previous.input,timeout_seconds:[900,1800].includes(previous.input.timeout_seconds)?3600:previous.input.timeout_seconds,regenerate:true},previous.task_id);
         sendJson(response,202,{task_id:task.task_id,status:task.status});return;
@@ -405,7 +750,6 @@ async function route(request: IncomingMessage, response: ServerResponse, store: 
       const [task]=agent.enqueue(projectId,knowledgeTaskInputSchema.parse({kind:'literature-card',source_ids:[sourceId],title:source.title,include_source_wiki:true,regenerate:input.regenerate}));
       sendJson(response,202,{task_id:task.task_id,status:task.status});return;
     }
-    if(subpath.startsWith('knowledge-tasks')&&method==='POST'&&codeAgent.busy(projectId)){sendJson(response,409,{error:'CODE_AGENT_BUSY'});return;}
     if (await knowledgeRoute(request, response, url, projectId, subpath, store, knowledge, readJson, sendJson, agent)) return;
     const attachmentRoute = subpath.match(/^sources\/([^/]+)\/attachments$/);
     if (attachmentRoute && method === "POST") {
@@ -564,14 +908,28 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
   const store = options.store ?? new TrashStore();
   const provider = options.provider ?? new OpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY });
   const staticRoot = options.staticRoot ?? resolve(fileURLToPath(new URL("../../workbench/dist/", import.meta.url)));
-  const knowledge = new KnowledgeStore(store.db);
+  const knowledge = new KnowledgeStore(store.db,{
+    task(task){
+      const sources=task.input.include_source_wiki&&!task.input.abstract_mode?task.input.source_ids.slice(0,1):[];
+      publishProjectChange(store,task.project_id,{tasks:true,sources});
+    },
+    event(id,message){
+      if(!/^(Agent 版本：|PDF |复用已完成批次 |启动本机 |Markdown 已发布：)/.test(message))return;
+      const row=store.db.prepare('SELECT project_id FROM knowledge_task_summaries WHERE task_id=?').get(id) as {project_id:string}|undefined;
+      if(row)publishProjectChange(store,row.project_id,{tasks:true});
+    }
+  });
   const workspaces = new ProjectWorkspaces(store, knowledge);
   const agent = new KnowledgeAgent(store, knowledge);
   const experiments = new ExperimentService(store);
-  const codeAgent = new CodeAgent(store, experiments);
+  const codeAgent = new CodeAgent(store, experiments,()=>agent.hasRunningTasks());
+  experiments.runWriteConflict=path=>codeAgent.runWriteConflict(path);
+  const coordination = new ExperimentCoordination(store,codeAgent,experiments);
+  agent.canStart=()=>!codeAgent.hasUnrestrictedWriter();
+  codeAgent.onSettled=()=>{for(const project of store.listProjects())agent.resumeQueued(project.project_id);};
   const analysis = new LiteratureAnalysis(store, knowledge, agent);
   const exploration=new ResearchExploration(store,knowledge,agent);
-  const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)));
+  const files = new ProjectFiles(store,id=>workspaces.busy(id)||agent.isProjectBusy(id)||codeAgent.busy(id)||experiments.busyProject(id)||directoryRepairBusy(store,id)||knowledge.tasks(id).some(task=>["queued","running"].includes(task.status)), id=>workspaces.busy(id));
   const server = createServer((request, response) => {
     const host = request.headers.host ?? "";
     const origin = request.headers.origin;
@@ -598,13 +956,14 @@ export function createWorkbenchServer(options: WorkbenchServerOptions = {}): { s
     let tracked:string|undefined;
     try{tracked=match?decodeURIComponent(match[1]):undefined;}catch{sendJson(response,400,{error:"INVALID_REQUEST"});return;}
     if(tracked)workspaces.requests.set(tracked,(workspaces.requests.get(tracked)??0)+1);
-    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, exploration, workspaces, files).catch(onError).finally(()=>{
+    void route(request, response, store, provider, staticRoot, knowledge, agent, experiments, codeAgent, analysis, exploration, workspaces, files, coordination).catch(onError).finally(()=>{
       if(tracked){const count=(workspaces.requests.get(tracked)??1)-1;if(count)workspaces.requests.set(tracked,count);else workspaces.requests.delete(tracked);}
     });
   });
+  server.on("listening",()=>{const address=server.address();if(address&&typeof address!=="string")coordination.listen(address.port);});
   // Streaming datasets can reach 5 GiB; retain a bounded receive deadline for slow uploads.
   server.requestTimeout = 2 * 60 * 60 * 1000;
-  server.on("close", () => { closeTaskStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
-  return { server, store, closeConnections: () => {closeTaskStreams(store);workspaces.close();experiments.terminals.close();} };
+  server.on("close", () => { coordination.close();closeTaskStreams(store);closeProjectStreams(store);workspaces.close(); codeAgent.close(); experiments.close(); agent.close(); });
+  return { server, store, closeConnections: () => {coordination.close();closeTaskStreams(store);closeProjectStreams(store);workspaces.close();experiments.terminals.close();} };
 }
 

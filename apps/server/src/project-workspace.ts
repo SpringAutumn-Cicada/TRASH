@@ -1,9 +1,11 @@
+import { manuscriptDirectory } from './manuscript-layout.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, readdirSync, mkdirSync, writeFileSync, renameSync, symlinkSync, rmSync, readlinkSync } from 'node:fs';
 import { mkdir, readdir, lstat, readlink, symlink, copyFile, realpath, statfs } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { TrashStore, KnowledgeStore } from '@trash/storage';
+import { TrashStore, KnowledgeStore, libraryLayoutEnabled, libraryLayoutMarker, projectLibraryPath } from '@trash/storage';
 import { z } from 'zod';
+import { libraryMigrationPending } from './library-migration.js';
 
 export function workspaceError(error:unknown):never {
   if(error instanceof z.ZodError)throw error;
@@ -19,7 +21,7 @@ export function workspaceError(error:unknown):never {
 function fail(message:string,statusCode=409):never {
   throw Object.assign(new Error(message),{statusCode});
 }
-const directories=['literature/originals','literature/parsed','code','data','experiments','manuscript','.trash'];
+const directories=['literature/originals','literature/parsed','code','data','experiments','research','.trash'];
 const requestSchema=z.object({root:z.string().min(1).max(4096).refine(value=>isAbsolute(value)&&!value.includes('\0')),name:z.string().trim().min(1).max(120).refine(value=>value!=='.'&&value!=='..'&&!/[\\/]/.test(value)&&!Array.from(value).some(character=>character.charCodeAt(0)<32))}).strict();
 type Job={id:string;projectId:string;status:'copying'|'verifying'|'switching'|'completed'|'failed'|'interrupted';source:string;target:string;stage:string;backup?:string;files:number;bytes:number;totalFiles:number;totalBytes:number;externalLinks:string[];error?:string;createdAt:string};
 type Entry={path:string;size:number;link?:string;hash?:string};
@@ -65,13 +67,13 @@ export class ProjectWorkspaces {
       else if(Array.isArray(value))for(const entry of value)visit(entry,key);
       else if(value&&typeof value==='object')for(const [name,entry] of Object.entries(value))visit(entry,name);
     };
-    for(const table of ['experiment_repositories','experiment_datasets','experiment_plans'])for(const row of this.store.db.prepare(`SELECT data FROM ${table} WHERE project_id=?`).all(id) as {data:string}[])visit(JSON.parse(row.data));
+    for(const table of ['experiment_repositories','project_code_repositories','experiment_datasets','experiment_plans'])for(const row of this.store.db.prepare(`SELECT data FROM ${table} WHERE project_id=?`).all(id) as {data:string}[])visit(JSON.parse(row.data));
     return [...refs];
   }
   state(id:string){
     const anchor=this.anchor(id),path=existsSync(anchor)?realpathSync(anchor):anchor;
     const backups=readdirSync(this.jobRoot()).filter(name=>name.endsWith('.json')).map(name=>JSON.parse(readFileSync(join(this.jobRoot(),name),'utf8')) as Job).filter(job=>job.projectId===id&&job.status==='completed'&&job.backup).map(job=>({id:job.id,path:job.backup!}));
-    return {path,backups,externalReferences:this.externalReferences(id,path),configured:existsSync(join(path,'project.yaml')),defaultRoot:join(this.store.root,'workspaces'),folder:basename(path),migration:this.jobs.get(id)??null};
+    return {path,backups,externalReferences:this.externalReferences(id,path),configured:existsSync(join(path,'project.yaml')),defaultRoot:join(this.store.root,'workspaces'),folder:basename(path),migration:this.jobs.get(id)??null,library:{migrated:libraryLayoutEnabled(path),pending:libraryMigrationPending(path)}};
   }
   private async destination(value:unknown){
     const input=requestSchema.parse(value),root=await realpath(input.root),target=join(root,input.name);
@@ -92,6 +94,8 @@ export class ProjectWorkspaces {
       const root=join(this.store.root,'workspaces');mkdirSync(root,{recursive:true});
       target=await this.destination(value??{root,name:id});this.reservations.add(target);
       mkdirSync(target);created=true;
+      mkdirSync(join(target,'.trash'));
+      json(join(target,libraryLayoutMarker),{version:1});
       this.layout(id,target);symlinkSync(target,this.anchor(id),'dir');linked=true;
       this.materialize(id);return this.state(id);
     }catch(error){
@@ -101,7 +105,8 @@ export class ProjectWorkspaces {
     }finally{this.active.delete(id);if(target)this.reservations.delete(target);}
   }
   private layout(id:string,root:string){
-    for(const dir of directories){
+    const paperDirectory=manuscriptDirectory(root);
+    for(const dir of [...directories,paperDirectory,'abstract-library','knowledge_base'].map(dir=>projectLibraryPath(root,dir))){
       let path=root;
       for(const part of dir.split('/')){
         path=join(path,part);
@@ -117,25 +122,29 @@ export class ProjectWorkspaces {
     const readme=join(root,'README.md');
     if(!existsSync(readme))writeFileSync(readme,`# 论文工作区
 
-文献 literature/、项目知识 knowledge_base/、代码 code/、共享数据 data/、实验 experiments/、稿件 manuscript/。
+文献资料库 library/ 收纳原文、摘要和项目知识。代码 code/、共享数据 data/、实验 experiments/、稿件 ${paperDirectory}/。
 
-支持多个研究方向：wiki/directions/<方向ID>.md、code/directions/<方向ID>/、experiments/<方向ID>/<方案ID>/runs/<运行ID>/。
+对话中明确要求保存的研究想法、方案和讨论笔记直接放在 research/。
+
+论文仓库通过论文页创建或绑定。项目内仓库放在 code/papers/<paper_id>/，复现源码放在 code/reproductions/。
+
+研究方向说明在 wiki/directions/<方向ID>.md，实验方案和运行归档在 experiments/<方向ID>/<方案ID>/runs/<运行ID>/。
 
 在文件模块使用“研究目录”创建方向、实验方案和运行批次；目录创建不代表已执行实验。
 平台运行记录保存在 .trash/runtime/；旧项目内部路径继续兼容，不自动移动。子目录按需创建，数据和公共代码使用引用避免重复复制。
 `,{flag:'wx',mode:0o600});
     // Keep legacy artifact references valid while originals live in the public layout.
-    const raw=join(root,'raw'),originals=join(root,'literature','originals');
-    if(existsSync(raw)&&lstatSync(raw).isSymbolicLink()&&readlinkSync(raw)!=='literature/originals')fail('WORKSPACE_RESERVED_SYMLINK');
+    const raw=join(root,'raw'),originalsPath=projectLibraryPath(root,'literature/originals'),originals=join(root,originalsPath);
+    if(existsSync(raw)&&lstatSync(raw).isSymbolicLink()&&readlinkSync(raw)!==originalsPath)fail('WORKSPACE_RESERVED_SYMLINK');
     if(existsSync(raw)&&!lstatSync(raw).isSymbolicLink()){
       if(readdirSync(originals).length)fail('WORKSPACE_ORIGINALS_CONFLICT');
       rmSync(originals,{recursive:true});renameSync(raw,originals);
     }
-    if(!existsSync(raw))symlinkSync('literature/originals',raw,'dir');
-    const drafts=join(root,'agent-workspace','manuscripts'),manuscript=join(root,'manuscript');
+    if(!existsSync(raw))symlinkSync(originalsPath,raw,'dir');
+    const drafts=join(root,'agent-workspace','manuscripts'),manuscript=join(root,paperDirectory);
     if(existsSync(drafts)&&!lstatSync(drafts).isSymbolicLink()&&readdirSync(manuscript).length===0){
       if(lstatSync(join(root,'agent-workspace')).isSymbolicLink())fail('WORKSPACE_RESERVED_SYMLINK');
-      rmSync(manuscript,{recursive:true});renameSync(drafts,manuscript);symlinkSync('../manuscript',drafts,'dir');
+      rmSync(manuscript,{recursive:true});renameSync(drafts,manuscript);symlinkSync('../'+paperDirectory,drafts,'dir');
     }
   }
   private materialize(id:string){
@@ -147,8 +156,8 @@ export class ProjectWorkspaces {
         this.knowledge.materializeHistory(id,history);
       }
     }
-    for(const source of this.store.listSources(id))json(join(this.anchor(id),'literature','parsed',source.source_id+'.json'),{source,segments:this.store.listSourceSegments(source.source_id)});
-    const tables=['projects','sources','artifacts','knowledge_versions','knowledge_keys','knowledge_metrics','knowledge_tasks','experiment_repositories','experiment_datasets','experiment_environments','experiment_plans','experiment_runs'];
+    for(const source of this.store.listSources(id))json(join(this.anchor(id),projectLibraryPath(this.anchor(id),'literature/parsed'),source.source_id+'.json'),{source,segments:this.store.listSourceSegments(source.source_id)});
+    const tables=['projects','sources','artifacts','knowledge_versions','knowledge_keys','knowledge_metrics','knowledge_tasks','experiment_repositories','experiment_datasets','experiment_environments','experiment_plans','experiment_runs','experiment_method_snapshots'];
     const snapshot=Object.fromEntries(tables.map(table=>[table,this.store.db.prepare(`SELECT * FROM ${table} WHERE project_id=?`).all(id)]));
     const details={
       source_details:this.store.db.prepare('SELECT d.* FROM source_details d JOIN sources s ON s.source_id=d.source_id WHERE s.project_id=?').all(id),
@@ -237,11 +246,27 @@ export class ProjectWorkspaces {
   private rebind(id:string,source:string,target:string){
     const map=(value:unknown):unknown=>typeof value==='string'&&inside(source,value)?target+value.slice(source.length):Array.isArray(value)?value.map(map):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,map(entry)])):value;
     this.store.db.transaction(()=>{
-      for(const table of ['experiment_repositories','experiment_datasets','experiment_plans','experiment_runs']){
+      for(const table of ['experiment_repositories','project_code_repositories','experiment_datasets','experiment_plans','experiment_runs']){
         const rows=this.store.db.prepare(`SELECT rowid,data FROM ${table} WHERE project_id=?`).all(id) as {rowid:number;data:string}[];
         for(const row of rows)this.store.db.prepare(`UPDATE ${table} SET data=? WHERE rowid=?`).run(JSON.stringify(map(JSON.parse(row.data))),row.rowid);
       }
     })();
+    for(const [folder,pattern] of [
+      ['reproductions',/^repro_[a-f0-9-]+\.json$/],
+      ['code/reproductions',/^repro_[a-f0-9-]+\.json$/],
+      ['.trash/runtime/reproductions',/^repro_[a-f0-9-]+\.json$/],
+      ['.trash/code-migrations',/^(?:repository|reproduction)-[a-f0-9]{64}\.json$/]
+    ] as const){
+      const directory=join(target,folder);
+      if(!existsSync(directory)||!lstatSync(directory).isDirectory())continue;
+      for(const name of readdirSync(directory).filter(name=>pattern.test(name))){
+        const file=join(directory,name);
+        if(!lstatSync(file).isFile())continue;
+        const before=JSON.parse(readFileSync(file,'utf8')),after=map(before);
+        if(JSON.stringify(before)!==JSON.stringify(after))json(file,after);
+      }
+    }
+
   }
   cleanup(id:string,jobId:string){
     const file=join(this.jobRoot(),jobId+'.json');

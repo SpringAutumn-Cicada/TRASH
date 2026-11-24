@@ -1,18 +1,21 @@
 import React, { useRef, useState } from 'react';
 import { FileText, ImagePlus, LoaderCircle, Paperclip, X } from 'lucide-react';
+import type { ChatDraftStore } from './chat-drafts.js';
 export type ChatAttachment={id:string;name:string;size:number;mime:string;image:boolean};
 const size=(bytes:number)=>bytes<1048576?`${Math.ceil(bytes/1024)} KiB`:`${(bytes/1048576).toFixed(1)} MiB`;
-export function useChatAttachments(base:string,conversation:string,onError:(message:string)=>void){
-  const [drafts,setDrafts]=useState<Record<string,ChatAttachment[]>>({}),[uploading,setUploading]=useState(false),[dragging,setDragging]=useState(false);
-  const locked=useRef(false),alive=useRef(true);
+export function useChatAttachments(base:string,conversation:string,entries:ChatAttachment[],store:ChatDraftStore,onError:(message:string)=>void){
+  const [dragging,setDragging]=useState(false);
+  const alive=useRef(true);
   React.useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
-  const entries=drafts[conversation]??[];
   const upload=async(files:File[])=>{
     if(!files.length)return;
-    if(locked.current){onError('附件正在上传，请稍候再添加。');return;}
-    if(files.length+entries.length>10){onError('每条消息最多添加 10 个附件。');return;}
+    const state=store.getSnapshot();
+    if(state.uploading[conversation]){onError('附件正在上传，请稍候再添加。');return;}
+    if(state.sending[conversation])return;
+    if(files.length+(state.messages[conversation]?.attachments?.length??0)>10){onError('每条消息最多添加 10 个附件。');return;}
     if(files.some(file=>file.size===0||file.size>20*1048576)){onError('请选择非空附件，单文件不能超过 20 MiB。');return;}
-    locked.current=true;setUploading(true);let added=0;
+    if(state.conversation===undefined)store.choose(conversation);
+    store.setPending('uploading',conversation,true);let added=0;
     try{for(const file of files){
       const response=await fetch(base+`/chat/attachments?name=${encodeURIComponent(file.name||'pasted-image.png')}`,{method:'POST',body:file});
       let data:{error?:string;attachment?:ChatAttachment};
@@ -23,11 +26,14 @@ export function useChatAttachments(base:string,conversation:string,onError:(mess
       }
       if(!data.attachment)throw new Error('附件接口未返回有效记录，请更新并重启后端。');
       const attachment=data.attachment;
-      if(alive.current)setDrafts(old=>({...old,[conversation]:[...(old[conversation]??[]),attachment]}));added++;
+      store.update(conversation,draft=>({...draft,attachments:[...(draft.attachments??[]),attachment]}));added++;
     }}catch(cause){if(alive.current)onError(`${cause instanceof TypeError?'无法连接附件接口，请确认本分支后端服务已启动。':cause instanceof Error?cause.message:'附件上传失败。'}${added?` 已保留 ${added} 个上传成功的附件。`:''}`);}
-    finally{locked.current=false;if(alive.current)setUploading(false);}
+    finally{store.setPending('uploading',conversation,false);}
   };
-  return {entries,uploading,dragging,setDragging,upload,hasDrafts:Object.values(drafts).some(list=>list.length>0),remove:(id:string)=>setDrafts(old=>({...old,[conversation]:(old[conversation]??[]).filter(item=>item.id!==id)})),clear:()=>setDrafts(old=>({...old,[conversation]:[]})),
+  return {entries,dragging,setDragging,upload,remove:(id:string)=>{
+      const {sending,uploading}=store.getSnapshot();
+      if(!sending[conversation]&&!uploading[conversation])store.update(conversation,draft=>({...draft,attachments:draft.attachments?.filter(item=>item.id!==id)}));
+    },
     paste:(event:React.ClipboardEvent)=>{const files=Array.from(event.clipboardData.files);if(files.length){event.preventDefault();void upload(files);}},
     drop:(event:React.DragEvent)=>{event.preventDefault();setDragging(false);void upload(Array.from(event.dataTransfer.files));}
   };

@@ -1,0 +1,43 @@
+import { lstatSync } from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+
+export const manuscriptsDirectory = 'manuscripts';
+const legacyManuscriptDirectory = 'manuscript';
+export const isManuscriptDirectory = (name:string) =>
+  name===manuscriptsDirectory||name===legacyManuscriptDirectory;
+
+function directoryEntry(root:string,name:string){
+  try{return lstatSync(join(root,name));}
+  catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+}
+
+export function manuscriptDirectory(root:string){
+  return !directoryEntry(root,manuscriptsDirectory)&&directoryEntry(root,legacyManuscriptDirectory)
+    ?legacyManuscriptDirectory:manuscriptsDirectory;
+}
+
+export function projectManuscriptPath(root:string,path:string){
+  const first=path.split('/',1)[0];
+  if(!isManuscriptDirectory(first)||directoryEntry(root,first))return path;
+  const directory=manuscriptDirectory(root);
+  return directory+path.slice(first.length);
+}
+
+export const manuscriptId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/);
+export const manuscriptTitle = z.string().trim().min(1).max(160);
+export const manuscriptStatus = z.enum(["draft", "revision", "submitted"]);
+export const manuscriptSection = z.enum(["drafts", "figures", "equations", "tables", "references", "exports", "work"]);
+export const manuscriptDraftPath = z.string().max(4096).refine(value =>
+  value.startsWith("drafts/") && !/[\\\x00-\x1f]/.test(value) && value.split("/").every(part => part && !part.startsWith("."))
+);
+export const manuscriptManifest = z.object({
+  format_version: z.literal(1),
+  paper_id: manuscriptId.optional(),
+  title: manuscriptTitle,
+  status: manuscriptStatus,
+  current: manuscriptDraftPath.nullable()
+}).strict();
+
+// Keep the managed YAML file in YAML's JSON-compatible subset.
+export const manuscriptDocument = (record: z.infer<typeof manuscriptManifest>) => JSON.stringify(record, null, 2) + "\n";

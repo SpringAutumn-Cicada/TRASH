@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["markdown", "summary", "questions"],
+  "properties": {
+    "markdown": { "type": ["string", "null"] },
+    "summary": { "type": "string" },
+    "questions": { "type": "array", "items": { "type": "string" } }
+  }
+}

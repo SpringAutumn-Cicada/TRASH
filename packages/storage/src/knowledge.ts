@@ -6,10 +6,13 @@ import { parseKnowledge, type KnowledgeKind, type KnowledgeVersion, type Knowled
 import type Database from "better-sqlite3";
 
 const fail = (code: string, statusCode: number): never => { throw Object.assign(new Error(code), { statusCode }); };
-export interface KnowledgeTask { task_id: string; project_id: string; input: KnowledgeTaskInput; snapshot: unknown; fingerprint: string; status: string; created_at: string; output_id?: string; output_version?: number; error?: string; attempt_of?: string }
+export interface KnowledgeTask { task_id: string; project_id: string; input: KnowledgeTaskInput; snapshot: unknown; fingerprint: string; status: string; created_at: string; output_id?: string; output_version?: number; error?: string; attempt_of?: string; topic_draft?:{files:{path:string;hash:string}[]} }
 export class KnowledgeStore {
   private syncing = false;
-  constructor(readonly db: Database.Database) {}
+  constructor(readonly db: Database.Database, private changes?: {
+    task:(task:KnowledgeTask)=>void;
+    event:(taskId:string,message:string)=>void;
+  }) {}
   private workspace(projectId:string):string|undefined {
     const file=(this.db.pragma('database_list') as {name:string;file:string}[]).find(row=>row.name==='main')?.file;
     if(!file)return;
@@ -112,6 +115,11 @@ export class KnowledgeStore {
       if (!this.db.prepare("SELECT 1 FROM projects WHERE project_id=?").get(projectId)) fail("PROJECT_NOT_FOUND", 404);
       const content = parseKnowledge(kind, input.content);
       this.validateRefs(projectId, kind, content);
+      if (kind === "experiment-result" && "comparison" in content && content.comparison) {
+        const {object_id, version} = content.comparison;
+        if (object_id === input.object_id || !this.get(projectId, "experiment-result", object_id, version))
+          fail("COMPARISON_INVALID", 400);
+      }
       if (kind === "literature-card" && "source_id" in content) {
         const sourceRow = this.db.prepare("SELECT data FROM sources WHERE source_id=? AND project_id=?").get(content.source_id,projectId) as {data:string};
         const hash = (JSON.parse(sourceRow.data) as {imported_file_sha256?:string}).imported_file_sha256;
@@ -176,11 +184,16 @@ export class KnowledgeStore {
   tasks(projectId: string): KnowledgeTask[] {
     return (this.db.prepare("SELECT data FROM knowledge_tasks WHERE project_id=? ORDER BY created_at DESC").all(projectId) as { data: string }[]).map(r => JSON.parse(r.data) as KnowledgeTask);
   }
+  task(projectId: string, taskId: string): KnowledgeTask | undefined {
+    const row = this.db.prepare("SELECT data FROM knowledge_tasks WHERE task_id=? AND project_id=?").get(taskId,projectId) as {data:string}|undefined;
+    return row && JSON.parse(row.data) as KnowledgeTask;
+  }
   saveTask(task: KnowledgeTask): void {
-    this.db.prepare("INSERT INTO knowledge_tasks VALUES (?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET data=excluded.data").run(task.task_id, task.project_id, task.status, task.created_at, JSON.stringify(task));
-    this.db.prepare("UPDATE knowledge_tasks SET status=? WHERE task_id=?").run(task.status, task.task_id);
+    this.db.prepare("INSERT INTO knowledge_tasks VALUES (?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET data=excluded.data,status=excluded.status").run(task.task_id, task.project_id, task.status, task.created_at, JSON.stringify(task));
+    this.changes?.task(task);
   }
   event(taskId: string, message: string): void {
     this.db.prepare("INSERT INTO knowledge_task_events(task_id,at,message) VALUES (?,?,?)").run(taskId, new Date().toISOString(), message.slice(0, 10000));
+    this.changes?.event(taskId,message);
   }
 }

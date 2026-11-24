@@ -2,8 +2,10 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { makeId, researchProjectSchema, sourceSchema, type Artifact, type EvidencePassage, type ResearchProject, type Source, type SourceLocator } from "@trash/protocol";
+import { projectLibraryPath } from "./library-layout.js";
+export * from "./library-layout.js";
 
 export interface SourceSegmentInput {
   locator: SourceLocator;
@@ -46,8 +48,8 @@ export class TrashStore {
 
   migrate(): void {
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 3) throw new Error("DATABASE_VERSION_TOO_NEW");
-    if (version === 3) return;
+    if (version > 8) throw new Error("DATABASE_VERSION_TOO_NEW");
+    if (version === 8) return;
     if (version === 2) this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v3-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
     if (version === 1) {
       this.db.exec(`VACUUM INTO '${join(this.root, `workspace-before-v2-${Date.now()}.sqlite`).replace(/'/g, "''")}'`);
@@ -113,7 +115,7 @@ export class TrashStore {
       PRAGMA user_version = 2;
       COMMIT;
     `);
-    this.db.exec(`
+    if (version < 3) this.db.exec(`
       BEGIN EXCLUSIVE;
       CREATE TABLE experiment_repositories(project_id TEXT PRIMARY KEY REFERENCES projects(project_id),data TEXT NOT NULL);
       CREATE TABLE experiment_profiles(profile_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(project_id),data TEXT NOT NULL);
@@ -126,6 +128,92 @@ export class TrashStore {
       PRAGMA user_version = 3;
       COMMIT;
     `);
+    const selectTaskSummary = `
+      SELECT task_id, project_id, status, created_at,
+        json_extract(data,'$.input.title'), json_extract(data,'$.input.kind'),
+        json_extract(data,'$.input.source_ids'), json_extract(data,'$.input.abstract_mode'),
+        json_extract(data,'$.input.include_source_wiki'), json_extract(data,'$.input.wiki_level'),
+        json_extract(data,'$.attempt_of'), json_extract(data,'$.output_id'),
+        substr(json_extract(data,'$.error'),1,500),
+        json_extract(data,'$.snapshot.prompt_version'),
+        coalesce(json_extract(data,'$.archived_duplicate'),0),
+        json_extract(data,'$.deleted_at'), coalesce(json_extract(data,'$.dismissed_reanalysis'),0)
+      FROM knowledge_tasks`;
+    if (version < 4) this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE knowledge_task_summaries (
+        task_id TEXT PRIMARY KEY REFERENCES knowledge_tasks(task_id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+        title TEXT, kind TEXT, source_ids TEXT, abstract_mode INTEGER, include_source_wiki INTEGER,
+        wiki_level TEXT, attempt_of TEXT, output_id TEXT, error TEXT, prompt_version INTEGER,
+        archived_duplicate INTEGER NOT NULL, deleted_at TEXT, dismissed_reanalysis INTEGER NOT NULL
+      );
+      CREATE INDEX task_summaries_project ON knowledge_task_summaries(project_id,created_at,task_id);
+      CREATE INDEX task_events_task_seq ON knowledge_task_events(task_id,seq);
+      INSERT INTO knowledge_task_summaries ${selectTaskSummary};
+      PRAGMA user_version = 4;
+      COMMIT;
+    `);
+    if (version < 5) this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE source_analysis_display (
+        source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL, data TEXT NOT NULL, idcard_hash TEXT
+      );
+      CREATE INDEX source_analysis_display_project ON source_analysis_display(project_id);
+      CREATE INDEX task_summaries_paper ON knowledge_task_summaries(
+        project_id,json_extract(source_ids,'$[0]'),created_at DESC,task_id DESC
+      ) WHERE include_source_wiki=1;
+      CREATE TABLE IF NOT EXISTS source_bibliography(source_id TEXT PRIMARY KEY,data TEXT NOT NULL);
+      PRAGMA user_version = 5;
+      COMMIT;
+    `);
+    const summaryFields = [
+      "project_id", "status", "created_at", "title", "kind", "source_ids", "abstract_mode",
+      "include_source_wiki", "wiki_level", "attempt_of", "output_id", "error", "prompt_version",
+      "archived_duplicate", "deleted_at", "dismissed_reanalysis",
+    ];
+    // An outer UPSERT can override a trigger's OR REPLACE conflict policy.
+    const upsertTaskSummary = `
+      INSERT INTO knowledge_task_summaries(task_id,${summaryFields.join(",")})
+      ${selectTaskSummary} WHERE task_id=NEW.task_id
+      ON CONFLICT(task_id) DO UPDATE SET ${summaryFields.map(field => `${field}=excluded.${field}`).join(", ")};`;
+    if (version < 7) this.db.exec(`
+      BEGIN EXCLUSIVE;
+      DROP TRIGGER IF EXISTS task_summary_insert;
+      DROP TRIGGER IF EXISTS task_summary_update;
+      CREATE TRIGGER task_summary_insert AFTER INSERT ON knowledge_tasks BEGIN
+        ${upsertTaskSummary}
+      END;
+      CREATE TRIGGER task_summary_update AFTER UPDATE ON knowledge_tasks BEGIN
+        ${upsertTaskSummary}
+      END;
+      PRAGMA user_version = 6;
+      COMMIT;
+    `);
+    if (version < 7) this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE IF NOT EXISTS project_code_repositories(
+        repository_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+        data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS project_code_repositories_project ON project_code_repositories(project_id);
+      INSERT OR IGNORE INTO project_code_repositories
+        SELECT json_extract(data,'$.repository_id'),project_id,data FROM experiment_repositories;
+      PRAGMA user_version = 7;
+      COMMIT;
+    `);
+    this.db.exec(`
+      BEGIN EXCLUSIVE;
+      CREATE TABLE experiment_method_snapshots(
+        project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+        sha256 TEXT NOT NULL, content TEXT NOT NULL, PRIMARY KEY(project_id,sha256)
+      );
+      PRAGMA user_version = 8;
+      COMMIT;
+    `);
+
   }
 
   createProject(input: Omit<ResearchProject, "protocol_version" | "project_id" | "status" | "created_at" | "updated_at">): ResearchProject {
@@ -259,7 +347,7 @@ export class TrashStore {
     for(const source of sources){
       const root=join(this.root,'projects',source.project_id);
       if(existsSync(join(root,'project.yaml'))){
-        const directory=join(root,source.material_scope==='abstract'?'abstract-library':'literature','parsed');mkdirSync(directory,{recursive:true});
+        const directory=join(root,projectLibraryPath(root,source.material_scope==='abstract'?'abstract-library/parsed':'literature/parsed'));mkdirSync(directory,{recursive:true});
         const path=join(directory,source.source_id+'.json');writeFileSync(path+'.tmp',JSON.stringify({source,segments:segmentsBySource.get(source.source_id)??[]},null,2));renameSync(path+'.tmp',path);
       }
     }
@@ -310,7 +398,11 @@ export class TrashStore {
     if (!row) return undefined;
     const artifact = JSON.parse(row.data) as Artifact;
     const managed = this.db.prepare("SELECT relative_path FROM managed_files WHERE artifact_id=?").get(artifactId) as { relative_path: string } | undefined;
-    const path = managed ? resolve(this.root, managed.relative_path) : join(this.root, "projects", projectId, "files", `${artifactId}-${artifact.name}`);
+    const projectRoot = join(this.root, "projects", projectId);
+    const recordedPath = managed ? resolve(this.root, managed.relative_path) : join(projectRoot, "files", `${artifactId}-${artifact.name}`);
+    const path = recordedPath.startsWith(projectRoot+sep)
+      ? join(projectRoot,projectLibraryPath(projectRoot,relative(projectRoot,recordedPath).split(sep).join('/')))
+      : recordedPath;
     if (!path.startsWith(`${this.root}${sep}`) || !existsSync(path)) return undefined;
     return { artifact, path };
   }

@@ -86,7 +86,7 @@ test('upload chunks survive service recreation and reject wrong offsets without 
 
 test('dataset deletion refuses shared paths and interrupted upload ownership',async()=>{
  const { deleteDatasetFiles }=await import('../src/experiment/delete-dataset.js');let released=0;
- const dataset={dataset_id:'one',profile_id:'host',path:'/root/project/datasets/trace',transfer_status:'ready'};
+ const dataset={dataset_id:'one',profile_id:'host',path:'/root/project/data/trace',transfer_status:'ready'};
  const records=[dataset,{...dataset,dataset_id:'two'}];
  const service={reproductions:{acquire:()=>()=>{released++;},list:()=>[]},data:{datasets:()=>records,runs:()=>[]},datasetUploads:{busy:()=>false},datasetUploadSessions:{busy:()=>false},deployments:{busyProject:()=>false},reproductionQueues:{list:()=>[]},workspaces:{get:()=>({root:'/root/project'})}} as unknown as import('../src/experiment/service.js').ExperimentService;
  await assert.rejects(deleteDatasetFiles(service,'project','one',dataset.path),/DATASET_PATH_SHARED/);

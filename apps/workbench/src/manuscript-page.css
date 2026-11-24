@@ -1,0 +1,26 @@
+.manuscript-page { display: grid; gap: 13px; min-width: 0; }
+.manuscript-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.manuscript-heading > div { flex: 1; min-width: 160px; }
+.manuscript-heading h2 { margin: 0 0 4px; overflow-wrap: anywhere; }
+.manuscript-heading code, .manuscript-panel code { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.manuscript-symbol { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 11px; background: var(--accent-soft); color: var(--accent); }
+.manuscript-panel { padding: 13px; margin: 0; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--ink); }
+.manuscript-panel h3 { margin: 0 0 9px; font-size: 14px; }
+.manuscript-panel p { margin: 5px 0; color: var(--muted); }
+.manuscript-list { display: grid; gap: 8px; }
+.manuscript-list:empty { display: none; }
+.manuscript-list button { display: flex; align-items: center; gap: 10px; text-align: start; cursor: pointer; }
+.manuscript-list button:hover { background: var(--surface-soft); }
+.manuscript-list button > span { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.manuscript-list button > small { color: var(--accent); flex: none; }
+.manuscript-page svg { flex: none; }
+.manuscript-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.manuscript-current form { margin-top: 11px; }
+.manuscript-settings label { display: grid; gap: 4px; flex: 1; min-width: min(100%, 150px); font-size: 12px; }
+.manuscript-settings input, .manuscript-settings select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--surface-soft); }
+.manuscript-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr)); gap: 7px; }
+.manuscript-sections .secondary-button { justify-content: flex-start; }
+.manuscript-sections code { margin-inline-start: auto; }
+.manuscript-history { display: grid; justify-items: start; gap: 5px; }
+.manuscript-page .text-button { text-align: start; overflow-wrap: anywhere; }
+.manuscript-legacy { justify-self: start; }

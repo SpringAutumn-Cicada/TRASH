@@ -1,6 +1,6 @@
 import {knowledgePath} from '@trash/protocol';
 import {migrationManifest,safeKnowledgeFile} from './knowledge-base-migration.js';
-import {readFileSync,writeFileSync,mkdirSync,existsSync,lstatSync,renameSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,existsSync,renameSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
@@ -12,10 +12,8 @@ export function abstractFile(store:TrashStore,project:string,source:string,area:
   const root=join(store.root,'projects',project);
   if((area==='notes'||area==='wiki')&&migrationManifest(root)){const target=safeKnowledgeFile(root,knowledgePath('abstract-library/'+area+'/'+source+'.md'));mkdirSync(dirname(target),{recursive:true});return target;}
   if(area==='history'&&migrationManifest(root)){if(version&&!/^[a-f0-9]{64}$/.test(version))throw new Error('KNOWLEDGE_PATH_INVALID');const target=safeKnowledgeFile(root,'.trash/abstract-history/'+source+(version?'-'+version:'')+'.md');mkdirSync(dirname(target),{recursive:true});return target;}
-  const parts=['abstract-library',area];let dir=root;
-  for(const part of parts){dir=join(dir,part);if(existsSync(dir)&&lstatSync(dir).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');mkdirSync(dir,{recursive:true});}
-  const target=join(dir,source+(version?'-'+version:'')+'.md');
-  if(existsSync(target)&&lstatSync(target).isSymbolicLink())throw new Error('KNOWLEDGE_PATH_INVALID');
+  const target=safeKnowledgeFile(root,'abstract-library/'+area+'/'+source+(version?'-'+version:'')+'.md');
+  mkdirSync(dirname(target),{recursive:true});
   return target;
 }
 export function abstractText(store:TrashStore,project:string,source:string,area:'notes'|'wiki'='notes'){const file=abstractFile(store,project,source,area);return existsSync(file)?readFileSync(file,'utf8'):'';}

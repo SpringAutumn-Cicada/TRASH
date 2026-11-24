@@ -58,6 +58,25 @@ export async function discoverPythonInterpreters(remote:RemoteConnection){
  if(!interpreters.length)experimentError("ENVIRONMENT_PYTHON_NOT_FOUND",422);
  return {interpreters,recommended:interpreters[0].path};
 }
+export async function resolveRemotePython(remote:RemoteConnection,signal:AbortSignal):Promise<string>{
+ signal.throwIfAborted();
+ const {interpreters}=await discoverPythonInterpreters(remote);
+ for(const {path} of interpreters){
+  signal.throwIfAborted();
+  try{
+   const output=await remote.exec([path,"-I","-B","-c",
+    "import fcntl, hashlib, json, pathlib, shutil, subprocess, sys, tempfile; assert sys.version_info >= (3, 8); print('TRASH_PYTHON_READY')"],
+    undefined,5000,16384);
+   signal.throwIfAborted();
+   if(output.split(/\r?\n/).includes("TRASH_PYTHON_READY"))return path;
+  }catch(error){
+   // A candidate may only work with environment variables set by the login shell.
+   if(!(error instanceof Error&&error.message.startsWith("REMOTE_COMMAND_FAILED:")))throw error;
+  }
+ }
+ experimentError("GIT_SYNC_PYTHON_UNUSABLE",422);
+}
+
 export async function compareEnvironment(remote:RemoteConnection,report:CodeEnvironmentReport,profile:string,python:string):Promise<HostEnvironmentComparison>{
  if(!python||/[\x00-\x1f]/.test(python))experimentError("ENVIRONMENT_PYTHON_INVALID",400);
  let environment:Record<string,unknown>;

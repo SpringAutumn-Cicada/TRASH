@@ -4,8 +4,8 @@ const text = z.string().trim().min(1).max(500);
 export const commitShaSchema = z.string().regex(/^[a-f0-9]{40}([a-f0-9]{24})?$/);
 export const remotePathSchema = z.string().min(2).max(2048).refine(p => p.startsWith("/") && !p.split("/").includes("..") && !Array.from(p).some(c => c.charCodeAt(0) < 32), "必须为无上级跳转的绝对路径");
 export const outputPathSchema = z.string().min(1).max(1024).refine(p => !p.startsWith("/") && !p.split(/[\\/]/).some(s => s === ".." || s === ".git") && !p.includes("\\") && !Array.from(p).some(c => c.charCodeAt(0) < 32), "必须为运行目录内的相对路径");
-export const repositoryInputSchema = z.object({ path: z.string().min(1).max(4096), editor: z.object({ executable: text, args: z.array(z.string().max(2000)).max(30) }).optional() }).strict();
-export type ProjectRepository = z.infer<typeof repositoryInputSchema> & { repository_id: string; project_id: string; bound_at: string };
+export const repositoryInputSchema = z.object({ path: z.string().min(1).max(4096), name: z.string().trim().min(1).max(120).optional(), editor: z.object({ executable: text, args: z.array(z.string().max(2000)).max(30) }).optional() }).strict();
+export type ProjectRepository = z.infer<typeof repositoryInputSchema> & { repository_id: string; project_id: string; bound_at: string; paper_id?: string };
 export const sshProfileInputSchema = z.object({ name: text, host: z.string().regex(/^[A-Za-z0-9.:-]+$/).max(253), port: z.number().int().min(1).max(65535), username: z.string().regex(/^[A-Za-z0-9_.-]+$/), remote_root: remotePathSchema.refine(p => p !== "/" && p.split("/").filter(Boolean).length >= 2, "请选择平台专属子目录"), auth: z.enum(["password", "key", "agent"]), key_path: z.string().min(1).max(4096).optional() }).strict();
 export type SshProfile = z.infer<typeof sshProfileInputSchema> & { profile_id: string; project_id: string; fingerprint?: string; created_at: string };
 export const sessionCredentialSchema = z.object({ password: z.string().min(1).max(10000).optional(), passphrase: z.string().max(10000).optional() }).strict();
@@ -13,6 +13,9 @@ export const datasetInputSchema = z.object({ name: text, version: text, path: re
 export type DatasetRef = z.infer<typeof datasetInputSchema> & { dataset_id: string; project_id: string; verification_status: "unverified" | "verified"; verified_at?: string; verification_progress?: {status:"running"|"completed"|"failed"|"unavailable";checked:number;total:number;message:string}; transfer_status?:"uploading"|"ready"|"failed"|"cancelled"|"interrupted";transfer_stage?:string;transfer_request_id?:string;transfer_sent?:number;transfer_total?:number;transfer_message?:string };
 export const experimentPlanInputSchema = z.object({
   title: text, purpose: z.string().max(20000), method: text, baseline: z.string().max(2000).default(""), evaluation_protocol: z.string().max(20000),
+  repository_id:text.optional(),
+  direction_id:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
+  scheme_id:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
   code_source:z.enum(["git","reproduction"]).default("git"), reproduction_id:text.optional(), snapshot_id:text.optional(),
   deployed_directory:remotePathSchema.optional(),
   data_mappings:z.array(z.object({path:outputPathSchema,dataset_id:text,subpath:executionRelativePathSchema.optional()}).strict()).max(30).optional(),
@@ -25,11 +28,15 @@ export const experimentPlanInputSchema = z.object({
   execution_steps:z.array(executionStepSchema).min(1).max(60).optional(),result_collection:resultCollectionSchema.optional(),dataset_subdirectory:executionRelativePathSchema.optional(),required_dataset_paths:z.array(executionRelativePathSchema).max(100).optional(),
   commit_sha: z.union([commitShaSchema,z.literal("")]).default(""), profile_id: text, dataset_ids: z.array(text).max(50), python: remotePathSchema,
   command: z.array(z.string().min(1).max(4096)).min(1).max(100), env: z.record(z.string().max(4096)).default({}),
+  source_config_path: outputPathSchema.refine(path=>path.startsWith("experiments/")&&path.endsWith(".json")).optional(),
+  input_revisions: z.record(z.string().trim().min(1).max(512)).refine(value=>Object.keys(value).length<=32).optional(),
   config: z.record(z.unknown()).default({}), seed: z.number().int().optional(), gpu: z.string().regex(/^(cpu|\d+(,\d+)*)$/),
   timeout_seconds: z.number().int().min(10).max(604800).default(7200),
   metrics_path: outputPathSchema.default("outputs/metrics.json"), expected_metrics: z.array(z.object({ name: text, unit: z.string().max(100) }).strict()).max(100),
   artifact_paths: z.array(outputPathSchema).max(100).default([]), preparation_script: outputPathSchema.optional()
 }).strict().superRefine((input, ctx) => {
+  if(Boolean(input.direction_id)!==Boolean(input.scheme_id))ctx.addIssue({code:z.ZodIssueCode.custom,path:["scheme_id"],message:"方向及方案目录必须一同填写"});
+  if(input.code_source==="reproduction"&&input.repository_id)ctx.addIssue({code:z.ZodIssueCode.custom,path:["repository_id"],message:"复现应选择快照"});
   if(input.code_source==="git"&&!commitShaSchema.safeParse(input.commit_sha).success)ctx.addIssue({code:z.ZodIssueCode.custom,path:["commit_sha"],message:"实验代码需要完整 commit"});
   if(input.code_source==="reproduction"&&(!input.reproduction_id||!input.snapshot_id))ctx.addIssue({code:z.ZodIssueCode.custom,path:["snapshot_id"],message:"请选择复现代码快照"});
   if(input.deployed_directory&&input.code_source!=='reproduction')ctx.addIssue({code:z.ZodIssueCode.custom,path:['deployed_directory'],message:'仅复现代码可复用部署目录'});
@@ -39,19 +46,34 @@ export const experimentPlanInputSchema = z.object({
   }
 });
 export type ExperimentPlanContent = z.infer<typeof experimentPlanInputSchema>;
-export interface ExperimentPlanVersion { plan_id: string; project_id: string; version: number; status: "draft" | "confirmed" | "superseded"; repository: ProjectRepository; reproduction?:ReproductionSnapshot; profile: SshProfile; datasets: DatasetRef[]; content: ExperimentPlanContent; created_at: string; confirmed_at?: string }
+export interface ExperimentPlanVersion { source_config_sha256?:string; draft_request_sha256?:string; method_sha256?:string; plan_id: string; project_id: string; version: number; status: "draft" | "confirmed" | "superseded"; repository: ProjectRepository; reproduction?:ReproductionSnapshot; profile: SshProfile; datasets: DatasetRef[]; content: ExperimentPlanContent; created_at: string; confirmed_at?: string }
 export const experimentRunStateSchema = z.enum(["queued", "preflight", "syncing", "running", "collecting", "completed", "failed", "cancel_requested", "cancelled", "disconnected", "unknown_remote_state"]);
 export type ExperimentRunState = z.infer<typeof experimentRunStateSchema>;
 export const ACTIVE_EXPERIMENT_STATES = ["queued", "preflight", "syncing", "running", "collecting", "cancel_requested", "disconnected", "unknown_remote_state"] as const;
 export interface ExperimentArtifact { path: string; size_bytes: number; sha256: string; downloaded: boolean; artifact_id?: string; reason?: string }
-export interface ExperimentRun { failure_analysis?:{status:"analyzing"|"completed"|"failed";created_at:string;summary?:string;evidence?:string[];suggestions?:string[];uncertainties?:string[];error?:string}; run_id: string; project_id: string; profile_id: string; host_key: string; plan: ExperimentPlanVersion; idempotency_key: string; status: ExperimentRunState; remote_dir: string; token: string; created_at: string; updated_at: string; started_at?: string; finished_at?: string; exit_code?: number; error?: string; process_status?: string; collection_status?: string; metrics_status?: string; result_id?: string; artifacts: ExperimentArtifact[]; retry_of?: string; preparation: boolean; remote_status?: Record<string, unknown> }
+export interface ExperimentRun { version_receipt?:{commit_sha?:string;config_sha256:string;bundle_sha256:string}; archive_path?:string; archive_error?:string; failure_analysis?:{status:"analyzing"|"completed"|"failed";created_at:string;summary?:string;evidence?:string[];suggestions?:string[];uncertainties?:string[];error?:string}; run_id: string; project_id: string; profile_id: string; host_key: string; plan: ExperimentPlanVersion; idempotency_key: string; status: ExperimentRunState; remote_dir: string; token: string; created_at: string; updated_at: string; started_at?: string; finished_at?: string; exit_code?: number; error?: string; process_status?: string; collection_status?: string; metrics_status?: string; result_id?: string; artifacts: ExperimentArtifact[]; retry_of?: string; preparation: boolean; remote_status?: Record<string, unknown> }
 export const runSubmitSchema = z.object({ plan_id: text, version: z.number().int().positive(), idempotency_key: z.string().uuid(), confirm: z.literal(true), preparation: z.boolean().default(false) }).strict();
 
-export interface ReproductionCode {id:string;project_id:string;name:string;archive_name?:string;path:string;source_id?:string;source_url:string;notes:string;created_at:string;imported:boolean;uploads?:{profile_id:string;path:string;snapshot_id:string;sha256:string;at:string}[]}
-export interface ReproductionSnapshot {analysis_files?:{path:string;size_bytes:number;sha256:string}[];analysis_excluded?:{path:string;reason:string}[];snapshot_id:string;reproduction_id:string;name:string;archive_name?:string;source_id?:string;sha256:string;created_at:string;size_bytes:number;files:{path:string;size_bytes:number;sha256:string}[]}
+export interface ReproductionCode {id:string;project_id:string;name:string;remote_directory?:string;archive_name?:string;path:string;source_id?:string;source_url:string;notes:string;created_at:string;imported:boolean;upstream_commit?:string;uploads?:{profile_id:string;path:string;snapshot_id:string;sha256:string;at:string}[]}
+export interface ReproductionSnapshot {analysis_files?:{path:string;size_bytes:number;sha256:string}[];analysis_excluded?:{path:string;reason:string}[];snapshot_id:string;reproduction_id:string;name:string;remote_directory?:string;archive_name?:string;source_id?:string;sha256:string;created_at:string;size_bytes:number;files:{path:string;size_bytes:number;sha256:string}[]}
 
 export interface RemoteWorkspace {project_id:string;profile_id:string;root:string;updated_at:string;initialized_at?:string;adopted_at?:string;source_profile_id?:string;source_root?:string;experiment_uploads?:{name:string;path:string;commit:string;snapshot_id:string;at:string}[]}
 
 export interface WorkspaceRecognition {root:string;profile_id:string;source_profile_id?:string;source_root?:string;recognized:boolean;directories:{name:string;path:string;exists:boolean}[];resources:{kind:"dataset"|"reproduction"|"experiment";id:string;name:string;path:string;matched:boolean;baseline_generated?:boolean;reason:string}[]}
 
 export interface PackageInstallProgress {phase:"resolving"|"downloading"|"cached"|"satisfied"|"building"|"installing"|"installed"|"failed";package?:string;filename?:string;downloaded_bytes?:number;total_bytes?:number;speed_bytes_per_second?:number;eta_seconds?:number;approximate?:boolean;detail?:string;updated_at?:number}
+
+export interface ExperimentCatalogEntry {
+  direction_id: string;
+  scheme_id: string;
+  title: string;
+  repository_id?: string;
+  entrypoint?: string;
+  paper_id?: string;
+}
+
+export interface DiscoveredExperiment {
+  name: string;
+  path: string;
+  has_git: boolean;
+}

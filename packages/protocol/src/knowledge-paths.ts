@@ -1,6 +1,6 @@
 /** Stable IDs stay independent of the readable knowledge_base directory layout. */
 export const legacyKnowledgePath=/^(?:literature\/cards|wiki)\/[A-Za-z0-9_-]+\.md$/;
-export const knowledgeBasePath=/^knowledge_base\/(?:(?:papers\/source_[A-Za-z0-9_-]+\/(?!.*--)(?:[a-z][a-z0-9_-]*\/){0,3}[a-z][a-z0-9_-]*|abstracts\/source_[A-Za-z0-9_-]+\/(?:interpretation|memory)|(?:topics|hypotheses|discoveries|summaries)\/wiki-[A-Za-z0-9_-]+|overview)\.md)$/;
+export const knowledgeBasePath=/^knowledge_base\/(?:(?:papers\/source_[A-Za-z0-9_-]+\/(?!.*--)(?:[a-z][a-z0-9_-]*\/){0,3}[a-z][a-z0-9_-]*|abstracts\/source_[A-Za-z0-9_-]+\/(?:interpretation|memory)|(?:topics|hypotheses|discoveries|summaries)\/wiki-[A-Za-z0-9_-]+|explorations\/(?:index|wiki-exploration-[a-f0-9]{20})|overview)\.md)$/;
 export function knowledgeDocumentId(path:string):string|undefined{
  if(legacyKnowledgePath.test(path))return path.split('/').at(-1)!.slice(0,-3);
  const paper=path.match(/^knowledge_base\/papers\/(source_[A-Za-z0-9_-]+)\/(basic|key|detail|memory)\.md$/);
@@ -9,6 +9,7 @@ export function knowledgeDocumentId(path:string):string|undefined{
  if(node)return 'wiki-'+node[1]+'--'+node[2].replaceAll('/','--');
  const abstract=path.match(/^knowledge_base\/abstracts\/(source_[A-Za-z0-9_-]+)\/(interpretation|memory)\.md$/);
  if(abstract)return (abstract[2]==='memory'?'abstract-wiki-':'abstract-note-')+abstract[1];
+ if(path==='knowledge_base/explorations/index.md')return 'wiki-exploration-index';
  if(path==='knowledge_base/overview.md')return 'wiki-project-overview';
  if(knowledgeBasePath.test(path))return path.split('/').at(-1)!.slice(0,-3);
 }
@@ -32,4 +33,10 @@ export function legacyPath(path:string):string{
  if(!id)return path;
  if(path.includes('/abstracts/'))return 'abstract-library/'+(path.endsWith('/memory.md')?'wiki':'notes')+'/'+path.split('/')[2]+'.md';
  return (id.startsWith('card-')?'literature/cards/':'wiki/')+id+'.md';
+}
+
+/** Protocol paths retain their existing namespace when the on-disk library moves. */
+export function libraryLogicalPath(path:string):string {
+ return path.replace(/^library\/(?=(?:literature|knowledge_base|abstract_library)(?:\/|$))/,'')
+   .replace(/^abstract_library(?=\/|$)/,'abstract-library');
 }

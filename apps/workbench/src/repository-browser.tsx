@@ -7,7 +7,7 @@ type Entry = { name: string; path: string; directory: boolean; symlink: boolean 
 type Preview = { path: string; preview: boolean; text?: string; reason?: string; size_bytes: number };
 const languages: Record<string, string> = { py: "Python", ts: "TypeScript", tsx: "TSX", js: "JavaScript", jsx: "JSX", json: "JSON", md: "Markdown", yml: "YAML", yaml: "YAML", sh: "Shell", css: "CSS", html: "HTML", toml: "TOML", txt: "文本" };
 const language = (path: string) => languages[path.split(".").pop()?.toLowerCase() ?? ""] ?? "文本";
-export function RepositoryBrowser({ projectId, repositoryPath, endpoint }: { projectId: string; repositoryPath: string; endpoint?:string }) {
+export function RepositoryBrowser({ projectId, repositoryPath, endpoint, repositoryId }: { projectId: string; repositoryPath: string; endpoint?:string; repositoryId?:string }) {
   const [entries, setEntries] = useState<Entry[]>([]), [directory, setDirectory] = useState(""), [filter, setFilter] = useState("");
   const [preview, setPreview] = useState<Preview>(), [loading, setLoading] = useState(false), [opening, setOpening] = useState(false), [error, setError] = useState(""), [copied, setCopied] = useState(false), [lineLimit, setLineLimit] = useState(2000);
   const directoryRequest = useRef(0), fileRequest = useRef(0);
@@ -19,14 +19,14 @@ export function RepositoryBrowser({ projectId, repositoryPath, endpoint }: { pro
   };
   const openDirectory = async (path: string) => {
     const id = ++directoryRequest.current; setLoading(true); setError("");
-    try { const data = await read<{ entries: Entry[] }>(`/tree?path=${encodeURIComponent(path)}`); if (directoryRequest.current === id) { setEntries(data.entries.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name, "zh-CN", { numeric: true }))); setDirectory(path); setFilter(""); } }
+    try { const data = await read<{ entries: Entry[] }>(`/tree?path=${encodeURIComponent(path)}${repositoryId?`&repository_id=${encodeURIComponent(repositoryId)}`:""}`); if (directoryRequest.current === id) { setEntries(data.entries.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name, "zh-CN", { numeric: true }))); setDirectory(path); setFilter(""); } }
     catch (cause) { if (directoryRequest.current === id) setError(cause instanceof Error ? cause.message : "读取目录失败。"); }
     finally { if (directoryRequest.current === id) setLoading(false); }
   };
   useEffect(() => { void openDirectory(""); return () => { directoryRequest.current++; fileRequest.current++; }; }, [projectId, repositoryPath, endpoint]);
   const openFile = async (path: string) => {
     const id = ++fileRequest.current; setOpening(true); setError(""); setCopied(false);
-    try { const data = await read<Preview>(`/file?path=${encodeURIComponent(path)}`); if (fileRequest.current === id) { setPreview({ ...data, path }); setLineLimit(2000); } }
+    try { const data = await read<Preview>(`/file?path=${encodeURIComponent(path)}${repositoryId?`&repository_id=${encodeURIComponent(repositoryId)}`:""}`); if (fileRequest.current === id) { setPreview({ ...data, path }); setLineLimit(2000); } }
     catch (cause) { if (fileRequest.current === id) setError(cause instanceof Error ? cause.message : "读取文件失败。"); }
     finally { if (fileRequest.current === id) setOpening(false); }
   };

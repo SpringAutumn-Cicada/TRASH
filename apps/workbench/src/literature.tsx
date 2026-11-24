@@ -1,6 +1,5 @@
 import {ResearchExplorationButton} from './research-exploration.js';
 import {LibraryDeleteManager} from './library-delete-manager.js';
-import {AbstractLibrary} from './abstract-library.js';
 import { ErrorNotice } from "./error-notice.js";
 import React, { useEffect, useRef, useState } from "react";
 import "./literature-ui.css";
@@ -13,7 +12,7 @@ import type { LiteratureSearchResult, ResearchProject, Source, SourceLocator } f
 import { api, uiError } from "./api.js";
 import { SourceManager } from "./knowledge.js";
 import { projectPath, useUnsavedChanges } from "./navigation.js";
-interface SourceAnalysisState {bibliography?:{title?:string;authors?:string[];publication_date?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
+interface SourceAnalysisState {metadata?:{title:string;authors:string[]|null;year:number|null;publication_date:string|null};bibliography?:{title?:string;authors?:string[];publication_date?:string};source_id:string;status?:string;error?:string;hasOutputs:boolean;hasBasic?:boolean;metadataPending?:boolean;hasCards?:boolean;hasWiki?:boolean;stale?:boolean;task_id?:string;can_resume?:boolean;hasKey?:boolean;hasDetail?:boolean}
 interface ProjectDetail { project: ResearchProject; sources: Source[] }
 interface OpenAlexResponse { provider_id: string; results: LiteratureSearchResult[] }
 interface PassageResponse { source: Source; locator: SourceLocator; text: string; rank: number }
@@ -35,13 +34,12 @@ function sourceTypeLabel(sourceType: Source["source_type"]): string {
   return labels[sourceType];
 }
 
-export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void}) {
+export function LiteraturePage({projectId, action, focusId, onChanged, searchOnly=false, onOpenSource,onOpenSettings,onOpenReproduction,projectUpdatedAt}: {projectId:string;action?:string;focusId?:string;onChanged:()=>void;searchOnly?:boolean;onOpenSource?:(source:Source)=>void;onOpenSettings?:()=>void;onOpenReproduction?:(sourceId:string)=>void;projectUpdatedAt?:string}) {
   const [detail, setDetail] = useState<ProjectDetail>();
   const [searchScope,setSearchScope]=useState<'project'|'external'>('project');
   const [projectSearched,setProjectSearched]=useState(false),[externalSearched,setExternalSearched]=useState(false);
   const [fileDragging,setFileDragging]=useState(false);
   const dragDepth=useRef(0),uploadLock=useRef(false);
-  const [libraryScope,setLibraryScope]=useState<'fulltext'|'abstract'>('fulltext');
   const [libraryQuery,setLibraryQuery]=useState("");
   const [importOpen,setImportOpen]=useState(false);
   const [regenerateTarget,setRegenerateTarget]=useState<Source>();
@@ -64,32 +62,41 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
   const [analyses,setAnalyses]=useState<SourceAnalysisState[]>([]);
   const [submitting,setSubmitting]=useState<string[]>([]);
   const submissionLock=useRef(new Set<string>());
-  const completedAnalysis=useRef('');
   useEffect(()=>{
-    let active=true,loadingStatus=false;
-    type KnowledgeSummary={source_id?:string;kind:string;card_type?:string;stale?:boolean};
-    const load=async()=>{
-      if(loadingStatus)return;loadingStatus=true;
-      try{
-        const base=`/projects/${encodeURIComponent(projectId)}`;
-        const [result,first]=await Promise.all([api<SourceAnalysisState[]>(`${base}/source-analyses`),api<{documents:KnowledgeSummary[];total:number}>(`${base}/markdown-knowledge?limit=100&page=1`)]);
-        const documents=[...first.documents];
-        for(let page=2;documents.length<first.total;page++){const next=await api<{documents:KnowledgeSummary[]}>(`${base}/markdown-knowledge?limit=100&page=${page}`);if(!next.documents.length)break;documents.push(...next.documents);}
-        const completion=result.filter(item=>item.status==='completed').map(item=>item.task_id).sort().join(',');
-        if(active&&completion!==completedAnalysis.current){completedAnalysis.current=completion;const updated=await api<ProjectDetail>(`${base}`);if(active)setDetail(updated);}
-        if(active)setAnalyses(result.map(item=>{const docs=documents.filter(d=>d.source_id===item.source_id);return {...item,hasKey:docs.some(d=>d.card_type==='key'),hasDetail:docs.some(d=>d.card_type==='detail'),hasCards:['detail','key'].every(type=>docs.some(d=>d.card_type===type)),hasWiki:item.hasWiki??docs.some(d=>d.kind==='wiki-page'),stale:item.stale??docs.some(d=>d.stale)};}));
-      }catch(cause){if(active)setError(uiError(cause,'无法读取单篇分析状态。'));}
-      finally{loadingStatus=false;}
+    if(searchOnly)return;
+    const base=`/projects/${encodeURIComponent(projectId)}/source-analyses`;
+    const abort=new AbortController();
+    const stream=new EventSource(`/api/v1${base}/stream`);
+    let fallback:AbortController|undefined;
+    stream.addEventListener('snapshot',event=>{
+      fallback?.abort();
+      fallback=undefined;
+      const {analyses}=JSON.parse((event as MessageEvent).data) as {analyses:SourceAnalysisState[]};
+      if(!abort.signal.aborted)setAnalyses(analyses);
+    });
+    stream.addEventListener('change',event=>{
+      const {analyses,removed}=JSON.parse((event as MessageEvent).data) as {analyses:SourceAnalysisState[];removed:string[]};
+      if(abort.signal.aborted)return;
+      const changed=new Set([...removed,...analyses.map(item=>item.source_id)]);
+      setAnalyses(previous=>[...previous.filter(item=>!changed.has(item.source_id)),...analyses]);
+    });
+    stream.onerror=()=>{
+      if(abort.signal.aborted||fallback)return;
+      const pending=new AbortController();
+      fallback=pending;
+      void api<SourceAnalysisState[]>(base,{signal:pending.signal}).then(result=>{
+        if(!pending.signal.aborted)setAnalyses(result);
+      }).catch(cause=>{if(!pending.signal.aborted)setError(uiError(cause,'无法读取单篇分析状态。'));});
     };
-    void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer);};
-  },[projectId]);
+    return()=>{abort.abort();fallback?.abort();stream.close();};
+  },[projectId,searchOnly]);
   const analyzeSource=async(source:Source,confirmed=false)=>{
     if(submissionLock.current.has(source.source_id))return;
     const previous=analyses.find(item=>item.source_id===source.source_id);
     const resume=!confirmed&&['failed','interrupted','cancelled'].includes(previous?.status??'');
     if(!confirmed&&!resume&&previous?.hasOutputs){setRegenerateError('');setRegenerateTarget(source);return false;}
     submissionLock.current.add(source.source_id);setSubmitting([...submissionLock.current]);setError('');setRegenerateError('');
-    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs),resume})});if(alive.current)setAnalyses(items=>[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);return true;}
+    try{const task=await api<{task_id:string;status:string}>(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/analyze`,{method:'POST',body:JSON.stringify({confirm:true,regenerate:Boolean(previous?.hasOutputs),resume})});if(alive.current)setAnalyses(items=>items.some(item=>item.source_id===source.source_id&&item.task_id===task.task_id)?items:[...items.filter(item=>item.source_id!==source.source_id),{...previous,source_id:source.source_id,hasOutputs:previous?.hasOutputs??false,...task}]);return true;}
     catch(cause){if(alive.current){const message=uiError(cause,'无法启动这篇论文的分析，请稍后重试。');if(confirmed)setRegenerateError(message);else setError(message);}return false;}
     finally{submissionLock.current.delete(source.source_id);if(alive.current)setSubmitting([...submissionLock.current]);}
   };
@@ -104,10 +111,10 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     if (action === "import") document.querySelector<HTMLInputElement>('[aria-label="导入文献文件"]')?.focus();
   }, [action, loading]);
   useEffect(() => {
-    if (!focusId) return;
+    if (!focusId||action==='directions-from-topic') return;
     const source = detail?.sources.find(item => item.source_id === focusId);
     if (source) void openSource(source);
-  }, [focusId, detail?.sources]);
+  }, [action, focusId, detail?.sources]);
   const refresh = async (quiet=false) => {
     if(!quiet)setLoading(true);
     try { const result = await api<ProjectDetail>(`/projects/${encodeURIComponent(projectId)}`); if (alive.current) { setDetail(result); setError(""); } }
@@ -191,25 +198,30 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
     return next;
   });
 
-  const librarySources=(detail?.sources??[]).map(source=>{const bibliography=analyses.find(item=>item.source_id===source.source_id)?.bibliography;return {...source,...(bibliography?.title?{title:bibliography.title}:{}),...(bibliography?.authors?{authors:bibliography.authors}:{}),...(bibliography?.publication_date?{publication_date:bibliography.publication_date,year:Number(bibliography.publication_date.slice(0,4))}:{})};});
+  const analysisBySource=new Map(analyses.map(item=>[item.source_id,item]));
+  const librarySources=(detail?.sources??[]).map(source=>{
+    const state=analysisBySource.get(source.source_id),metadata=state?.metadata,bibliography=state?.bibliography;
+    return {...source,title:bibliography?.title??metadata?.title??source.title,
+      authors:bibliography?.authors??(metadata?metadata.authors??[]:source.authors),
+      publication_date:bibliography?.publication_date??(metadata?metadata.publication_date??undefined:source.publication_date),
+      year:bibliography?.publication_date?Number(bibliography.publication_date.slice(0,4)):metadata?metadata.year??undefined:source.year};
+  });
   if (loading) return <div className="loading-screen"><LoaderCircle className="spin" />正在打开项目</div>;
   const keepOriginal=async(source:Source,item:SourceAnalysisState)=>{
     if(!item.task_id||submissionLock.current.has(source.source_id))return;
     submissionLock.current.add(source.source_id);setSubmitting(previous=>[...previous,source.source_id]);
-    try{await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/keep-original`,{method:'POST',body:JSON.stringify({confirm:true,task_id:item.task_id})});setAnalyses(previous=>previous.map(entry=>entry.source_id===source.source_id?{...entry,status:'completed',error:undefined,task_id:undefined,can_resume:false}:entry));}
+    try{await api(`/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(source.source_id)}/keep-original`,{method:'POST',body:JSON.stringify({confirm:true,task_id:item.task_id})});}
     catch(cause){setError(uiError(cause,'无法退出重新分析，请刷新任务状态。'));}
     finally{submissionLock.current.delete(source.source_id);setSubmitting(previous=>previous.filter(id=>id!==source.source_id));}
   };
   if (!detail) return <ErrorNotice >{error || "未找到该项目。"}</ErrorNotice>;
-  return <section className={`literature-page ${fileDragging?'literature-file-dragging':''}`} onDragEnter={event=>{if(searchOnly||libraryScope==='abstract'||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current++;setFileDragging(true);}} onDragOver={event=>{if(searchOnly||libraryScope==='abstract'||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.dataTransfer.dropEffect=importing?'none':'copy';}} onDragLeave={event=>{if(searchOnly)return;event.preventDefault();dragDepth.current=Math.max(0,dragDepth.current-1);if(!dragDepth.current)setFileDragging(false);}} onDrop={event=>{if(searchOnly||libraryScope==='abstract'||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.stopPropagation();dragDepth.current=0;setFileDragging(false);if(importing||uploadLock.current)return;void uploadFiles(event.dataTransfer.files);}}>
+  return <section className={`literature-page ${fileDragging?'literature-file-dragging':''}`} onDragEnter={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current++;setFileDragging(true);}} onDragOver={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.dataTransfer.dropEffect=importing?'none':'copy';}} onDragLeave={event=>{if(searchOnly)return;event.preventDefault();dragDepth.current=Math.max(0,dragDepth.current-1);if(!dragDepth.current)setFileDragging(false);}} onDrop={event=>{if(searchOnly||!event.dataTransfer.types.includes('Files'))return;event.preventDefault();event.stopPropagation();dragDepth.current=0;setFileDragging(false);if(importing||uploadLock.current)return;void uploadFiles(event.dataTransfer.files);}}>
     {fileDragging&&!searchOnly&&<div className="literature-drop-overlay" role="status"><FileUp size={30}/><strong>{importing?'正在导入，请稍候':'松开以导入文献'}</strong><span>PDF · BibTeX · RIS · Markdown · 支持多个文件</span></div>}
     {regenerateTarget&&<RegenerateSourceDialog source={regenerateTarget} busy={submitting.includes(regenerateTarget.source_id)} error={regenerateError} onClose={()=>{if(!submissionLock.current.has(regenerateTarget.source_id))setRegenerateTarget(undefined);}} onConfirm={()=>{void analyzeSource(regenerateTarget,true).then(ok=>{if(ok&&alive.current)setRegenerateTarget(undefined);});}}/>}
     {documentTarget&&<LiteratureDocumentDialog key={documentTarget.source.source_id} projectId={projectId} source={documentTarget.source} initialType={documentTarget.type} onClose={()=>setDocumentTarget(undefined)} onSaved={()=>{void refresh(true);onChanged();}}/>}
     {error && <ErrorNotice  className="notice error-notice">{error}</ErrorNotice>}
         <div className="literature-grid literature-module-content">
           <section className="literature-main" hidden={searchOnly}>
-            <div className="abstract-library-tabs" role="group" aria-label="文献材料范围"><button type="button" aria-pressed={libraryScope==='fulltext'} onClick={()=>setLibraryScope('fulltext')}>全文库</button><button type="button" aria-pressed={libraryScope==='abstract'} onClick={()=>setLibraryScope('abstract')}>摘要库</button></div>
-            {libraryScope==='abstract'?<AbstractLibrary projectId={projectId}/>:<>
             <header className="library-heading"><div><h2>文献库 <span>{detail.sources.length}</span></h2><p>阅读原文，整理每一篇论文的研究知识。</p></div></header>
             <div className="library-toolbar">
               <label className="library-filter"><Search size={16}/><input aria-label="筛选已导入文献" value={libraryQuery} onChange={event=>setLibraryQuery(event.target.value)} placeholder="搜索已导入的标题、作者…"/>{libraryQuery&&<button type="button" aria-label="清空文献筛选" onClick={()=>setLibraryQuery('')}><X size={14}/></button>}</label>
@@ -217,12 +229,15 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                 <button type="button" className="primary-button" aria-expanded={importOpen} aria-controls="literature-import-panel" onClick={()=>{setImportOpen(v=>!v);}}><Plus size={15}/>导入文献<ChevronDown size={12}/></button>
                 {importOpen&&<div id="literature-import-panel" className="library-popover library-import-panel"><strong>添加到文献库</strong><label className="library-file-picker"><FileUp size={17}/><span>{importing?'正在导入…':'选择本地文件'}<small>PDF、BibTeX、RIS、Markdown，也可拖入页面</small></span><input aria-label="导入文献文件" type="file" multiple accept=".pdf,.bib,.bibtex,.ris,.md,.markdown" disabled={importing} onChange={event=>{void uploadFiles(event.target.files);event.currentTarget.value='';}}/></label><form className="url-import" onSubmit={event=>void importUrl(event)}><label htmlFor="library-url">或导入公开网页</label><div><Link size={14}/><input id="library-url" type="url" required value={urlValue} onChange={event=>setUrlValue(event.target.value)} placeholder="https://…"/><button type="submit" aria-label="添加网页" title="添加网页" disabled={importing}>{importing?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>}</button></div></form></div>}
               </div><LibraryDeleteManager projectId={projectId} sources={detail.sources} disabled={importing||searching} blockedIds={[...submitting,...analyses.filter(item=>['queued','running'].includes(item.status??'')).map(item=>item.source_id)]} onBusyChange={busy=>setDeleting(busy?'batch':undefined)} onDeleted={onSourceDeleted}/></div>
-              <ResearchExplorationButton projectId={projectId} sources={detail.sources}/><LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
+              <div className="library-research-actions">
+                <ResearchExplorationButton projectId={projectId} onOpenSettings={onOpenSettings} projectUpdatedAt={projectUpdatedAt} sources={detail.sources} initialTopicId={action==='directions-from-topic'?focusId:undefined} initialQuestion={action==='directions-from-topic'?new URLSearchParams(window.location.search).get('question')??undefined:undefined}/>
+                <LiteratureAnalysisButton projectId={projectId} sourceCount={detail.sources.length} blocked={importing||Boolean(deleting)} onChanged={onChanged}/>
+              </div>
             </div>
             {detail.sources.length===0?<div className="library-empty"><BookOpen size={28}/><strong>从第一篇论文开始</strong><p>导入 PDF，阅读原文并生成卡片与 Wiki。</p><button type="button" className="secondary-button" onClick={()=>setImportOpen(true)}>导入文献</button></div>:<div className="library-table">
               <div className="library-table-heading"><span>标题 / 作者</span><span>内容</span><span>状态 / 操作</span></div>
               {librarySources.filter(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase())).map(source=>{
-                const item=analyses.find(entry=>entry.source_id===source.source_id);
+                const item=analysisBySource.get(source.source_id);
                 const activeTaskId=item?.task_id;
                 const fullPending=submitting.includes(source.source_id)||['queued','running'].includes(item?.status??'');
                 const pending=fullPending;
@@ -236,7 +251,7 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
                     <span className={`file-type type-${source.source_type}`}>{source.source_type==='pdf'?'PDF':source.source_type==='openalex'?'OA':source.source_type.slice(0,2).toUpperCase()}</span><span><strong>{source.title}</strong><small className="library-bibliography" title={[date,source.authors.join(', ')].filter(Boolean).join(' · ')}>{date&&<><time>{date}</time><span aria-hidden="true">·</span></>}<span>{source.authors.join(', ')||'作者信息未提供'}</span></small></span>
                   </button>
                   <div className="library-document-modules" aria-label="论文内容">
-                    {item?.hasWiki&&<button type="button" className="wiki-entry-button" onClick={()=>setDocumentTarget({source,type:'wiki'})}>Wiki</button>}
+                    {item?.hasWiki?<button type="button" className="wiki-entry-button" onClick={()=>setDocumentTarget({source,type:'wiki'})}>Wiki</button>:<span className="library-content-empty"><span aria-hidden="true">—</span><span className="sr-only">暂无 Wiki</span></span>}
                   </div>
                   <div className="library-row-controls">
                     <div className="library-state"><span className={`library-status ${tone}`}>{tone==='done'?<CircleCheck size={13} strokeWidth={2.2} aria-hidden="true"/>:<i aria-hidden="true"/>}{status}</span></div>
@@ -247,11 +262,11 @@ export function LiteraturePage({projectId, action, focusId, onChanged, searchOnl
               {detail.sources.length>0&&!librarySources.some(source=>(source.title+' '+source.authors.join(' ')+' '+(source.doi??'')).toLowerCase().includes(libraryQuery.trim().toLowerCase()))&&<div className="library-empty library-no-results"><Search size={23}/><strong>没有找到匹配的文献</strong><button type="button" className="text-button" onClick={()=>setLibraryQuery('')}>清空筛选</button></div>}
             </div>}
             {selectedSource && <section className="source-detail"><div className="source-detail-heading"><div><div className="eyebrow">来源详情</div><h3>{selectedSource.source.title}</h3><p>{selectedSource.source.source_url ?? selectedSource.source.doi ?? sourceTypeLabel(selectedSource.source.source_type)}</p></div><button className="icon-button" aria-label="关闭来源详情" title="关闭来源详情" onClick={() => { sourceRequest.current++;setSelectedSource(undefined); }}><X size={16}/></button></div>
+              {onOpenReproduction&&<button type="button" className="secondary-button" onClick={()=>onOpenReproduction(selectedSource.source.source_id)}>查看复现</button>}
               <SourceManager key={selectedSource.source.source_id} projectId={projectId} source={selectedSource.source} onSaved={() => { void refresh(); onChanged(); void openSource(selectedSource.source); }} />
               {selectedSource.source.abstract && <p className="source-abstract">{selectedSource.source.abstract}</p>}
               {selectedSource.segments.length ? <details><summary>查看解析文字（搜索索引，非原文排版）</summary><div className="segment-list">{selectedSource.segments.map((segment, index) => <article key={`${segment.locator.kind}-${index}`}><span>{locatorLabel(segment.locator)}</span><p>{segment.text}</p></article>)}</div></details> : <div className="metadata-note">{selectedSource.source.parse_status === "no_text" ? "未能从该来源提取文本。" : "该记录仅包含元数据。"}</div>}
             </section>}
-            </>}
           </section>
           <aside className="literature-tools literature-discovery" hidden={!searchOnly}>
             <header className="library-heading"><h2>搜索文献</h2><p>查找项目资料，或发现新的研究来源。</p></header>

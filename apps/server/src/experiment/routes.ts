@@ -1,24 +1,28 @@
+import type { ProjectFiles } from "../project-files.js";
+import { createExperiment, discoverExperiments, experimentCatalogUpdate, listExperiments, registerExperiment, setExperimentCode } from "./catalog.js";
+import { experimentSchemes } from './run-archive.js';
 import { startDirectoryRepair, directoryRepair, applyDirectoryRepair, stopDirectoryRepair, resumeDirectoryRepair } from './directory-repair.js';
 import { discoverComputeResources } from './compute-resources.js';
 import { remoteDirectories } from './remote-directories.js';
 import { loadExperimentBindings, saveExperimentBindings, prepareAutomaticExperiment, createAutomaticExperiment, modelFileCandidates } from './automatic-experiment.js';
 import { deleteDatasetFiles } from "./delete-dataset.js";
 import { recognizeWorkspace, adoptWorkspace } from "./workspace-migration.js";
-import { directoryLabel, ensureRemoteDirectory } from "./workspace.js";
-import { posix } from "node:path";
+import { ensureRemoteDirectory } from "./workspace.js";
+import { uploadExperimentCode } from "./experiment-code-upload.js";
+import { join, posix } from "node:path";
 /* eslint-disable no-control-regex -- Reject control characters in filesystem paths and interpreter names. */
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { datasetInputSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
+import { autoDLDirectories, autoDLReproductionDirectory, datasetInputSchema, remotePathSchema, runSubmitSchema, sshProfileInputSchema, sessionCredentialSchema, type ExperimentRun } from "@trash/protocol";
 import { experimentError } from "@trash/storage";
 import { ExperimentService } from "./service.js";
 import { browseDirectories, createDirectory, selectDirectory } from "./directories.js";
 import { parseSshLogin, sshLoginInputSchema } from "./ssh-login.js";
 import { discoverPythonInterpreters } from "./environment-host.js";
 export function publicRun(run:ExperimentRun):unknown {const {token:_token,...safe}=run;return safe;}
-export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void):Promise<boolean>{
+export async function experimentRoute(request:IncomingMessage,response:ServerResponse,url:URL,projectId:string,subpath:string,service:ExperimentService,readJson:(r:IncomingMessage)=>Promise<unknown>,send:(r:ServerResponse,status:number,value:unknown)=>void,files:ProjectFiles):Promise<boolean>{
   const method=request.method??"GET",parts=subpath.split("/");
   if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='model-candidates'&&method==='GET'){send(response,200,{models:modelFileCandidates(service,projectId,parts[1],z.string().min(1).parse(url.searchParams.get('profile_id')))});return true;}
   if(parts[0]==='reproductions'&&parts.length===3&&parts[2]==='experiment-bindings'){
@@ -56,7 +60,11 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{workspace:service.workspaces.get(projectId,profileId)??null,suggested_root:service.workspaces.suggested(projectId),sources:service.data.profiles(projectId).filter(item=>item.profile_id!==profileId).flatMap(item=>{const workspace=service.workspaces.get(projectId,item.profile_id);return workspace?[{profile_id:item.profile_id,root:workspace.root}]:[]})});return true;}
     if(parts.length===1&&method==="PUT"){const input=z.object({root:z.string().trim().min(1).max(2048)}).strict().parse(await readJson(request));if(service.reproductions.busy(projectId)||service.datasetUploads.busy(projectId)||service.deployments.busyProject(projectId)||service.data.runs(projectId).some(run=>service.data.active(run)))experimentError('WORKSPACE_BUSY',409);send(response,200,{workspace:service.workspaces.save(projectId,profileId,input.root)});return true;}
     if(parts.length===2&&['recognize','adopt'].includes(parts[1])&&method==='POST'){const input=z.object({root:z.string().trim().min(1).max(2048),source_profile_id:z.string().min(1).optional(),confirm:z.literal(true)}).strict().parse(await readJson(request));if(input.source_profile_id)service.data.profile(projectId,input.source_profile_id);if(parts[1]==='recognize')send(response,200,{recognition:await recognizeWorkspace(service,projectId,profileId,input.root,input.source_profile_id)});else send(response,200,await adoptWorkspace(service,projectId,profileId,input.root,input.source_profile_id));return true;}
-    if(parts.length===2&&parts[1]==="initialize"&&method==="POST"){z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,200,{workspace:await service.workspaces.initialize(projectId,profileId,service.terminals.connection(projectId,profileId))});return true;}
+    if(parts.length===2&&parts[1]==="initialize"&&method==="POST"){
+      const input=z.object({confirm:z.literal(true),root:remotePathSchema.optional()}).strict().parse(await readJson(request));
+      const workspace=await service.workspaces.initialize(projectId,profileId,()=>service.terminals.connection(projectId,profileId),input.root);
+      send(response,200,{workspace});return true;
+    }
   }
   if(parts.length===1&&parts[0]==="terminals"&&method==="GET"){response.setHeader("cache-control","no-store");send(response,200,{terminals:service.terminals.list(projectId)});return true;}
   if(parts[0]==="terminals"&&parts[1]){
@@ -77,12 +85,8 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===2&&parts[1]==="upload-progress"&&method==="GET"){const id=z.string().uuid().parse(url.searchParams.get('request_id'));send(response,200,{progress:service.reproductions.progress(projectId,'experiment-code',id)});return true;}
     if(parts.length===2&&parts[1]==="cancel-upload"&&method==="POST"){const input=z.object({request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));send(response,202,service.reproductions.cancelUpload(projectId,'experiment-code',input.request_id));return true;}
     if(parts.length===2&&parts[1]==="upload"&&method==="POST"){
-      const input=z.object({profile_id:z.string(),name:z.string().trim().min(1).max(100),request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));service.data.profile(projectId,input.profile_id);
-      const workspace=service.workspaces.get(projectId,input.profile_id)??experimentError('WORKSPACE_REQUIRED',409),remote=service.terminals.connection(projectId,input.profile_id),release=service.reproductions.acquire(projectId),operation=service.reproductions.beginUpload(projectId,'experiment-code',input.request_id);
-      const report=(stage:string,sent=0,total=0)=>{if(operation.signal.aborted)experimentError('UPLOAD_CANCELLED',409);service.reproductions.report(projectId,'experiment-code',input.request_id,stage,sent,total);};
-      try{report('snapshot');const status=await service.repository.status(projectId);await service.repository.preflight(projectId,status.head);const name=directoryLabel(input.name);const snapshot=await service.reproductions.sourceSnapshot(projectId,service.repository.bound(projectId).path,name);await service.repository.preflight(projectId,status.head);if((await service.repository.status(projectId)).head!==status.head)experimentError('GIT_TREE_DIRTY',409);const parent=posix.join(workspace.root,'experiments');await ensureRemoteDirectory(remote,parent);const deployed=await service.reproductions.deploy(remote,projectId,snapshot,parent,report,operation.signal,name);service.workspaces.recordExperimentUpload(projectId,input.profile_id,workspace.root,{name,path:deployed.path,commit:status.head,snapshot_id:snapshot.snapshot_id,at:new Date().toISOString()});send(response,201,{...deployed,commit:status.head});}
-      catch(error){service.reproductions.report(projectId,'experiment-code',input.request_id,operation.signal.aborted?'cancelled':'failed');throw error;}
-      finally{operation.finish();release();}return true;
+      const input=z.object({repository_id:z.string().optional(),profile_id:z.string(),name:z.string().trim().min(1).max(100).optional(),request_id:z.string().uuid(),confirm:z.literal(true)}).strict().parse(await readJson(request));
+      send(response,201,await uploadExperimentCode(service,projectId,input));return true;
     }
   }
   if(parts[0]==="reproductions"){
@@ -160,7 +164,12 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     try{
     if(parts.length===1&&method==="GET"){send(response,200,{codes:service.reproductions.list(projectId)});return true;}
     if(parts.length===1&&method==="POST"){experimentError("REPRODUCTION_ZIP_REQUIRED",400);}
-    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")),z.string().max(255).optional().parse(url.searchParams.get("filename")??undefined))});return true;}
+    if(parts[1]==="git"&&parts.length===2&&method==="POST"){send(response,201,{code:await service.reproductions.registerGit(projectId,await readJson(request))});return true;}
+    if(parts.length===3&&parts[2]==="git"&&method==="POST"){
+      z.object({confirm:z.literal(true)}).strict().parse(await readJson(request));
+      send(response,200,{code:await service.reproductions.initializeGit(projectId,parts[1])});return true;
+    }
+    if(parts[1]==="import"&&method==="POST"){if(Number(request.headers["content-length"]??0)>200*1024*1024)experimentError("REQUEST_TOO_LARGE",413);send(response,201,{code:await service.reproductions.importZip(projectId,request,z.string().min(1).max(200).parse(url.searchParams.get("name")),z.string().max(255).optional().parse(url.searchParams.get("filename")??undefined),z.string().min(1).max(120).optional().parse(url.searchParams.get("source_id")??undefined))});return true;}
     if(parts[1]){
       service.reproductions.get(projectId,parts[1]);
       if(parts.length===2&&method==="PUT"){send(response,200,{code:service.reproductions.update(projectId,parts[1],await readJson(request))});return true;}
@@ -183,9 +192,9 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
           service.terminals.connection(projectId,profile.profile_id);
           const workspace=service.workspaces.get(projectId,profile.profile_id);
           if(input.layout==='workspace'&&!workspace)experimentError('WORKSPACE_REQUIRED',409);
-          const parent=input.layout==='workspace'?posix.join(workspace!.root,'reproductions'):input.directory;
+          const parent=input.layout==='workspace'?posix.join(workspace!.root,autoDLDirectories.reproductionCode):input.directory;
           if(input.layout==='workspace')await ensureRemoteDirectory(remote,parent);
-          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,parent,report,operation.signal,input.layout==='workspace'?directoryLabel(service.reproductions.get(projectId,parts[1]).name):undefined);
+          const deployed=await service.reproductions.deploy(remote,projectId,snapshot,parent,report,operation.signal,input.layout==='workspace'?snapshot.remote_directory??autoDLReproductionDirectory(snapshot.name,snapshot.reproduction_id):undefined);
           let record_saved=true;try{service.reproductions.recordUpload(projectId,parts[1],profile.profile_id,deployed);}catch{record_saved=false;}
           send(response,201,{...deployed,record_saved});
         }catch(error){
@@ -199,18 +208,28 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     }
     }finally{release();}
   }
+  if(parts.length===1&&parts[0]==="repositories"){
+    if(method==="GET"){send(response,200,{repositories:service.data.repositories(projectId),default_id:service.data.repository(projectId)?.repository_id??null});return true;}
+    if(method==="POST"){send(response,201,{repository:await service.repository.bind(projectId,await readJson(request),false)});return true;}
+    if(method==="PUT"){
+      const input=z.object({repository_id:z.string().min(1)}).strict().parse(await readJson(request));
+      const repository=service.repository.bound(projectId,input.repository_id);
+      service.data.setDefaultRepository(repository);send(response,200,{repository});return true;
+    }
+  }
   if(parts[0]==="repository"){
+    const repositoryId=url.searchParams.get('repository_id')??undefined;
     if(parts.length===3&&parts[1]==="directories"&&parts[2]==="select"&&method==="POST"){send(response,200,await selectDirectory(await readJson(request)));return true;}
     if(parts.length===2&&parts[1]==="directories"&&method==="GET"){send(response,200,await browseDirectories(url.searchParams.get("path")??undefined));return true;}
     if(parts.length===2&&parts[1]==="directories"&&method==="POST"){send(response,201,await createDirectory(await readJson(request)));return true;}
     if(parts.length===1&&method==="GET"){send(response,200,{repository:service.data.repository(projectId)??null});return true;}
     if(parts.length===1&&method==="PUT"){send(response,200,{repository:await service.repository.bind(projectId,await readJson(request))});return true;}
-    if(parts[1]==="status"&&method==="GET"){send(response,200,await service.repository.status(projectId));return true;}
-    if(parts[1]==="tree"&&method==="GET"){send(response,200,{entries:await service.repository.tree(projectId,url.searchParams.get("path")??"")});return true;}
-    if(parts[1]==="file"&&method==="GET"){send(response,200,await service.repository.file(projectId,url.searchParams.get("path")??""));return true;}
-    if(parts[1]==="history"&&method==="GET"){send(response,200,{commits:await service.repository.history(projectId,z.coerce.number().int().min(1).parse(url.searchParams.get("page")??1))});return true;}
-    if(parts[1]==="commit"&&method==="POST"){const input=z.object({message:z.string().trim().min(1).max(2000)}).strict().parse(await readJson(request));send(response,200,await service.repository.commit(projectId,input.message));return true;}
-    if(parts[1]==="editor"&&method==="POST"){await service.repository.editor(projectId);send(response,200,{started:true});return true;}
+    if(parts[1]==="status"&&method==="GET"){send(response,200,await service.repository.status(projectId,repositoryId));return true;}
+    if(parts[1]==="tree"&&method==="GET"){send(response,200,{entries:await service.repository.tree(projectId,url.searchParams.get("path")??"",repositoryId)});return true;}
+    if(parts[1]==="file"&&method==="GET"){send(response,200,await service.repository.file(projectId,url.searchParams.get("path")??"",repositoryId));return true;}
+    if(parts[1]==="history"&&method==="GET"){send(response,200,{commits:await service.repository.history(projectId,z.coerce.number().int().min(1).parse(url.searchParams.get("page")??1),repositoryId)});return true;}
+    if(parts[1]==="commit"&&method==="POST"){const input=z.object({message:z.string().trim().min(1).max(2000)}).strict().parse(await readJson(request));send(response,200,await service.repository.commit(projectId,input.message,repositoryId));return true;}
+    if(parts[1]==="editor"&&method==="POST"){await service.repository.editor(projectId,repositoryId);send(response,200,{started:true});return true;}
   }
   if(parts[0]==="ssh-profiles"){
     if(parts.length===2&&parts[1]==="from-command"&&method==="POST"){
@@ -292,6 +311,45 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
     if(parts.length===1&&method==="POST"){const value=datasetInputSchema.parse(await readJson(request));service.data.profile(projectId,value.profile_id);const dataset={...value,dataset_id:`dataset_${randomUUID()}`,project_id:projectId,verification_status:"unverified" as const};service.data.saveDataset(dataset);send(response,201,{dataset});return true;}
     if(parts[2]==="check"&&method==="POST"){send(response,202,{dataset:await service.checkDataset(projectId,parts[1])});return true;}
   }
+  if (subpath === "experiment-catalog/register" && method === "POST") {
+    const root = join(service.store.root, "projects", projectId);
+    const result = await registerExperiment(root, projectId, service.data, await readJson(request), () => files.recycled(projectId).entries);
+    send(response, 201, { ...result, default_id: service.data.repository(projectId)?.repository_id ?? null });
+    return true;
+  }
+  if (parts[0] === "experiment-catalog" && parts.length === 1) {
+    const root = join(service.store.root, "projects", projectId);
+    if (!service.store.getProject(projectId)) experimentError("PROJECT_NOT_FOUND", 404);
+    if (method === "GET") {
+      const experiments = listExperiments(root);
+      const discovered = discoverExperiments(root, service.data.repositories(projectId), experiments, files.recycled(projectId).entries);
+      send(response, 200, { experiments, discovered });
+      return true;
+    }
+    if (method === "POST") {
+      const created = await createExperiment(root, projectId, service.data, await readJson(request));
+      send(response, 201, { ...created, default_id: service.data.repository(projectId)?.repository_id ?? null });
+      return true;
+    }
+    if (method === "PUT") {
+      const input = experimentCatalogUpdate.parse(await readJson(request));
+      if (input.code.paper_id) files.manuscriptPath(projectId, input.code.paper_id);
+      if (input.code.repository_id) service.repository.bound(projectId, input.code.repository_id);
+      setExperimentCode(root, input);
+      send(response, 200, { experiments: listExperiments(root) });
+      return true;
+    }
+  }
+  if(parts[0]==="experiment-schemes"&&parts.length===1&&method==="GET"){
+    send(response,200,{schemes:experimentSchemes(join(service.store.root,'projects',projectId))});return true;
+  }
+  if (parts[0] === "experiment-method-snapshots" && parts.length === 2 && method === "GET") {
+    const hash = z.string().regex(/^[a-f0-9]{64}$/).parse(parts[1]);
+    const document = service.store.db.prepare("SELECT content FROM experiment_method_snapshots WHERE project_id=? AND sha256=?")
+      .get(projectId, hash) ?? experimentError("NOT_FOUND", 404);
+    send(response, 200, document);
+    return true;
+  }
   if(parts[0]==="experiment-plans"){
     if(parts.length===1&&method==="GET"){send(response,200,{plans:service.data.plans(projectId)});return true;}
     if(parts.length===1&&method==="POST"){const input=z.object({plan_id:z.string().optional(),base_version:z.number().int().nonnegative().default(0),content:z.record(z.unknown())}).strict().parse(await readJson(request));send(response,201,{plan:service.createPlan(projectId,input.content,input.plan_id,input.base_version)});return true;}
@@ -299,7 +357,7 @@ export async function experimentRoute(request:IncomingMessage,response:ServerRes
       const input=z.object({version:z.number().int().positive(),confirm:z.literal(true).optional()}).strict().parse(await readJson(request));const plan=service.data.plan(projectId,parts[1],input.version);
       if(parts[2]==="preflight"){send(response,200,{environment:await service.preflight(plan)});return true;}
       if(parts[2]==="confirm"){if(!input.confirm)experimentError("CONFIRM_REQUIRED");send(response,200,{plan:await service.confirmPlan(projectId,parts[1],input.version)});return true;}
-      if(parts[2]==="preparation"){if(!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");send(response,200,{script:await (plan.reproduction?service.reproductions.preparation(projectId,plan.reproduction,plan.content.preparation_script):service.repository.preparation(projectId,plan.content.commit_sha,plan.content.preparation_script)),commit:plan.content.commit_sha});return true;}
+      if(parts[2]==="preparation"){if(!plan.content.preparation_script)experimentError("PREPARATION_SCRIPT_REQUIRED");send(response,200,{script:await (plan.reproduction?service.reproductions.preparation(projectId,plan.reproduction,plan.content.preparation_script):service.repository.preparation(projectId,plan.content.commit_sha,plan.content.preparation_script,plan.repository.repository_id)),commit:plan.content.commit_sha});return true;}
     }
   }
   if(parts[0]==="experiment-runs"){

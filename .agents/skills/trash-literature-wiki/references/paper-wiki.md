@@ -8,7 +8,7 @@
 
 全部知识页使用 knowledge_version: 2、kind: wiki-page、source_id、level: single。ID以平台清单为准；新页按相对路径去.md并将/换为--，加wiki-<source_id>--。不改既有有效子页路径和ID；slug不使用连续--。
 
-先在任务根保存knowledge-plan.md，列职责页与必要子页、来源范围、人工内容归属及依据条目。生成时须完整阅读全部固定四页图文批次笔记，在同一次Wiki生成中综合全文、统一术语和条件，不单独生成paper-understanding.md，不新增整篇汇总调用。先生成知识与结果，再归并依据，最后生成whoami。原文章节与知识职责不同，不机械一章一页。计划先写明论文研究目标、贡献类型及最重要的论证问题，再决定各职责页的内容重点。
+先在任务根（input.json 同级、output/ 外）保存knowledge-plan.md，列职责页与必要子页、来源范围、人工内容归属及依据条目。生成时须完整阅读全部固定四页图文批次笔记，在同一次Wiki生成中综合全文、统一术语和条件，不单独生成paper-understanding.md，不新增整篇汇总调用。先生成知识与结果，再归并依据，最后生成whoami。原文章节与知识职责不同，不机械一章一页。计划先写明论文研究目标、贡献类型及最重要的论证问题，再决定各职责页的内容重点。
 
 ## 叙述视角与内容归属
 
@@ -44,7 +44,7 @@ evidence.md 仅为轻量目录，frontmatter 添加 page_role: evidence-index，
 
 每条依据保存到 evidence/ev-<slug>.md，frontmatter 添加 page_role: evidence、pdf_hash: 实际64位SHA256（原文件缺失填unknown）；id按路径规则生成，source_id与本篇一致。正文首行固定为 `[依据总览](../evidence.md)`，空一行后一级标题为文件名 ev-<slug>，标题后用 `**定位：**`、`**事实：**`、`**边界：**` 三个非空字段，不使用大号小节标题。记录支持的原文事实、实际PDF哈希和材料范围、PDF页序/印刷页标/章节/图表、可打开的原文链接、条件及未核实项。一个条目围绕正文实际使用的事实或密切相关的一组事实，不一页拆一个文件、不为数量凑条目。每个事实条目应能指出正文中的具体使用位置；只有目录链接而没有正文用途时，先判断是否重复或多余，合并或撤下，不能为了保留文件强塞引用。ev-reading-scope是公共范围元数据，通过scope_ref关联即可，不要求每页重复引用。推断只记录所依赖的事实，不能声称原文也得出该推断。
 
-知识正文使用 `[ev-threat-model](./evidence/ev-threat-model.md)`，子目录按相对路径计算。显示标签等于依据文件名，不写通用“依据”、不使用 evidence.md#ev-*。必要条件和指标口径仍保留在知识正文。材料不足也生成明确缺口条目，不伪造出处。每个条目保留source_id与pdf_hash；共同阅读范围集中在ev-reading-scope，其他条目元数据写scope_ref: ev-reading-scope，接口按需附带范围。verification记录unknown、not-reverified或verified，只有实际复核原文才能声明verified，默认unknown。条目特有缺口集中保留在依据边界；目录仅列链接。
+知识正文使用 `[ev-threat-model](./evidence/ev-threat-model.md)`，子目录按相对路径计算。显示标签可使用依据文件名或清晰的事实/机制名称，不写通用“依据”；链接直达独立文件，不使用锚点或 evidence.md#ev-*。必要条件和指标口径仍保留在知识正文。材料不足也生成明确缺口条目，不伪造出处。每个条目保留source_id与pdf_hash；共同阅读范围集中在ev-reading-scope，其他条目元数据写scope_ref: ev-reading-scope，接口按需附带范围。verification记录unknown、not-reverified或verified，只有实际复核原文才能声明verified，默认unknown。条目特有缺口集中保留在依据边界；目录仅列链接。
 
 独立evidence/ev-*.md依据文档先写依据总览链接，再写条目标题。其余子页（含evidence.md目录）依次为论文全名（普通文本，与whoami标题一致）、论文总览链接、当前页一级标题，各自单独成段；子目录使用../whoami.md。论文全名由界面放大显示，不增加标题标记。whoami 导航覆盖职责页与依据目录，目录覆盖全部依据。依据使用首行“依据总览”返回本篇evidence.md，不写返回某个知识段落的固定链接；不提供返回上一阅读位置按钮。Agent用反向引用中的来源页、章节及引用文字定位使用处，不能把链接存在当成已经查阅。
 
@@ -107,3 +107,83 @@ evidence.md 仅为轻量目录，frontmatter 添加 page_role: evidence-index，
 `ev-reading-scope`是Wiki材料使用说明，使用客观口吻，不套用“本论文提出”等研究作者口吻。保留依据总览链接与定位/事实/边界三字段：定位写实际覆盖页范围并只给一个原PDF入口，不逐页堆链接；事实简述实际材料类型和覆盖的正文、图表、附录等；边界明确生成Wiki是否复用笔记、是否重新查看原文图像、是否验证代码或复现实验，引用书目不算已读外部证据。区分原生成任务与当前整理，不用含混“本次”混淆两者，不将复用笔记写成重新读PDF；部分阅读须准确注明缺页，不能默认覆盖全文。
 
 批次文件名、页码清单、任务标识、哈希和过程细节留在元数据或历史，不反复写正文；不删除已有来源元数据。更新范围说明时，只有经核对同一PDF、同一覆盖范围、同一核验状态的等义整理才可同步相应依赖哈希。保留更新前正文和依赖备份，未确认的版本及其他实质性过时状态不清除；绝不自动给所有依赖盖最新版本。
+
+## 交付格式示例
+
+以下 source_example、论文全名及正文均为占位，必须替换为 input.json 的来源和实际材料；ID 按路径生成。每个文件首字符从元数据的 `---` 开始，不能先写论文名或标题。已知工作文件 knowledge-plan.md 保留在任务根目录，不进入发布目录；未知 Markdown 不会被当作工作文件自动忽略。
+
+总览 whoami.md（正文只保留题目、两个固定小节；九项导航均填写本篇实际说明）：
+
+```md
+---
+knowledge_version: 2
+kind: wiki-page
+source_id: source_example
+level: single
+id: wiki-source_example--whoami
+---
+# 论文全名
+
+## 一句话认识
+针对什么问题，采用什么核心方法。
+
+## 知识导航
+- [题录](./idcard.md)：发表信息。
+- [背景](./background.md)：核心矛盾与已有研究。
+- [研究问题](./research_problem.md)：任务与挑战。
+- [贡献](./contributions.md)：新增工作。
+- [方法](./method/method.md)：处理链路。
+- [实验与结果](./results/results.md)：主要验证发现。
+- [局限](./limitations.md)：原文明示限制。
+- [可复用认识](./insights.md)：设计经验与条件。
+- [依据总览](./evidence.md)：独立依据目录。
+```
+
+普通职责页，以 method/method.md 为例（其他职责页替换标题和路径，正文仍按各自职责组织）：
+
+```md
+---
+knowledge_version: 2
+kind: wiki-page
+source_id: source_example
+level: single
+id: wiki-source_example--method--method
+---
+论文全名
+
+[论文总览](../whoami.md)
+
+# 方法
+
+## 概览
+输入→表示→核心处理→输出，解释本篇具体机制与条件。[核心机制](../evidence/ev-mechanism.md)
+```
+
+独立依据 evidence/ev-mechanism.md（不添加论文全名或论文总览）：
+
+```md
+---
+knowledge_version: 2
+kind: wiki-page
+source_id: source_example
+level: single
+id: wiki-source_example--evidence--ev-mechanism
+page_role: evidence
+pdf_hash: unknown
+scope_ref: ev-reading-scope
+verification: unknown
+---
+[依据总览](../evidence.md)
+
+# ev-mechanism
+
+**定位：** 实际页码、章节和可打开的原文定位。
+
+**事实：** 已读材料支持的具体机制或结论。
+
+**边界：** 支持范围、适用条件与未核实项。
+```
+
+unknown 仅用于确实缺失哈希或未核验的情况；任务提供真实哈希时应填写真实值。scope_ref 指向实际生成的公共阅读范围条目，该条目自身不需要自引用。依据目录 evidence.md 使用普通职责页开头，元数据增加 page_role: evidence-index，一级标题后仅列独立依据链接。
+
+后台补救只修复列出的根因及必要关联，不重新执行生成流程、重读全文或增加任务。修复后报告改动路径和仍缺材料，不把结构通过称为事实核验。

@@ -1,5 +1,6 @@
 /* eslint-disable no-control-regex -- Explicitly reject control characters in paths and identifiers. */
 import { posix } from 'node:path';
+import { autoDLDirectories } from '@trash/protocol';
 import { experimentError } from '@trash/storage';
 import type { ExperimentService } from './service.js';
 export async function deleteDatasetFiles(service:ExperimentService,project:string,id:string,expectedPath:string){
@@ -14,8 +15,8 @@ export async function deleteDatasetFiles(service:ExperimentService,project:strin
  if(dataset.transfer_status&&dataset.transfer_status!=='ready')experimentError('DATASET_DELETE_UNSAFE',409);
  const target=posix.normalize(dataset.path),workspace=service.workspaces.get(project,dataset.profile_id);
  if(!dataset.path.startsWith('/')||dataset.path.split('/').includes('..')||/[\x00-\x1f]/.test(dataset.path)||target.split('/').filter(Boolean).length<3)experimentError('DATASET_DELETE_UNSAFE',409);
- if(!workspace||!target.startsWith(posix.join(workspace.root,'datasets')+'/'))experimentError('DATASET_DELETE_UNSAFE',409);
- const protectedPaths=['/','/root','/home','/tmp','/var','/usr','/etc','/opt','/mnt','/root/autodl-tmp',...(workspace?[workspace.root,...['datasets','reproductions','experiments','outputs'].map(name=>posix.join(workspace.root,name))]:[])];
+ if(!workspace||!target.startsWith(posix.join(workspace.root,autoDLDirectories.data)+'/'))experimentError('DATASET_DELETE_UNSAFE',409);
+ const protectedPaths=['/','/root','/home','/tmp','/var','/usr','/etc','/opt','/mnt','/root/autodl-tmp',...[workspace.root,...Object.values(autoDLDirectories).map(name=>posix.join(workspace.root,name))]];
  if(protectedPaths.some(path=>path===target||path.startsWith(target+'/')))experimentError('DATASET_DELETE_UNSAFE',409);
  const related=service.data.datasets(project).filter(item=>item.dataset_id!==id&&item.profile_id===dataset.profile_id);
  if(related.some(item=>{const path=posix.normalize(item.path);return path===target||path.startsWith(target+'/')||target.startsWith(path+'/');}))experimentError('DATASET_PATH_SHARED',409);
